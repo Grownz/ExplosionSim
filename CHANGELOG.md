@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.3.0] - 2026-10-25
 
 ### Added
 
@@ -138,5 +138,6 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
+[0.3.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.1.0
