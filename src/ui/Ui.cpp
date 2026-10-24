@@ -1,5 +1,7 @@
 #include "ui/Ui.h"
 
+#include "Version.h"
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -384,7 +386,7 @@ UiActions Draw(UiContext& context) {
     ImGui::TextUnformatted("EXPLOSION SIMULATOR");
     ImGui::PopStyleColor();
     ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
-    ImGui::TextUnformatted("Physically based blast visualisation");
+    ImGui::Text("v%s  ·  Physically based blast visualisation", EXPLOSION_VERSION_STRING);
     ImGui::PopStyleColor();
 
     ImGui::Spacing();

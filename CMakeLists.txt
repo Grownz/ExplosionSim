@@ -28,6 +28,12 @@ option(EXPLOSION_BUILD_TESTS "Build the physics unit tests" ON)
 option(EXPLOSION_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
 # ---------------------------------------------------------------------------
+# Generated version metadata
+# ---------------------------------------------------------------------------
+configure_file(cmake/Version.h.in ${CMAKE_BINARY_DIR}/generated/Version.h @ONLY)
+configure_file(cmake/ExplosionSim.rc.in ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc @ONLY)
+
+# ---------------------------------------------------------------------------
 # Third-party dependencies
 # ---------------------------------------------------------------------------
 include(FetchContent)
@@ -86,9 +92,10 @@ add_executable(ExplosionSim WIN32
     src/gfx/Camera.cpp
     src/gfx/Shader.cpp
     src/gfx/ImageIO.cpp
-    src/ui/Ui.cpp)
+    src/ui/Ui.cpp
+    ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc)
 
-target_include_directories(ExplosionSim PRIVATE src)
+target_include_directories(ExplosionSim PRIVATE src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(ExplosionSim PRIVATE
     explosion_core
     imgui

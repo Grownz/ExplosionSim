@@ -1,5 +1,6 @@
 #include "app/App.h"
 
+#include "Version.h"
 #include "core/Log.h"
 #include "gfx/ImageIO.h"
 #include "gfx/Shader.h"
@@ -24,7 +25,6 @@ namespace ex::app {
 namespace {
 
 constexpr wchar_t kWindowClass[] = L"ExplosionSimulatorWindow";
-constexpr wchar_t kWindowTitle[] = L"Explosion Simulator";
 
 class Clock {
 public:
@@ -120,7 +120,10 @@ bool App::CreateMainWindow() {
     const int x = workArea.left + ((workArea.right - workArea.left) - windowWidth) / 2;
     const int y = workArea.top + ((workArea.bottom - workArea.top) - windowHeight) / 2;
 
-    window_ = CreateWindowExW(extendedStyle, kWindowClass, kWindowTitle, style, x, y, windowWidth,
+    const std::wstring title =
+        std::wstring(L"Explosion Simulator ") + EXPLOSION_VERSION_WSTRING;
+
+    window_ = CreateWindowExW(extendedStyle, kWindowClass, title.c_str(), style, x, y, windowWidth,
                               windowHeight, nullptr, nullptr, instance, this);
     if (!window_) {
         LogError("Failed to create the application window.");
@@ -130,7 +133,7 @@ bool App::CreateMainWindow() {
     const BOOL darkMode = TRUE;
     DwmSetWindowAttribute(window_, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
 
-    SetWindowTextW(window_, kWindowTitle);
+    SetWindowTextW(window_, title.c_str());
     ShowWindow(window_, SW_SHOW);
     UpdateWindow(window_);
     return true;
