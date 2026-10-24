@@ -147,9 +147,19 @@ first reduction result is available.
 
 ### Domain and boundaries
 
-The domain is a cube of side `2 * 5 * R_fireball` with the ground at `y = 0`. The ground
+The domain is a cube of side `2 * 3 * R_fireball` with the ground at `y = 0`. The ground
 is a reflecting wall implemented by mirroring the ghost cell and reversing the vertical
 momentum; the lateral and top boundaries are zero-gradient outflows.
+
+### Auto-scale (domain expansion)
+
+When auto-scale is enabled and the fireball, smoke envelope or base dust reaches 70 % of
+the domain half extent (or the cloud reaches 70 % of the top), `RescaleDomain` grows the
+box by 1.3× (up to an accuracy factor of 8). A compute pass resamples the six conserved
+variables trilinearly onto the new grid (ambient outside the old domain) using the
+existing ping-pong state textures. Because the voxel count is fixed, `dx` grows, the CFL
+step grows and the number of steps for a physical time interval drops. The renderer
+reports the domain, voxel size, accuracy factor and expansion count.
 
 ### Integration with the application
 

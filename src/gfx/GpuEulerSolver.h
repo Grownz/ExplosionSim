@@ -35,6 +35,11 @@ struct SolverStats {
     float dt = 0.0f;
     float maxSpeed = 0.0f;
     long long steps = 0;
+    float domainHalfExtent = 0.0f;
+    float domainTop = 0.0f;
+    float voxelSize = 0.0f;
+    float accuracyFactor = 1.0f;
+    int expansions = 0;
 };
 
 // Finite-volume compressible Euler solver running on the GPU (D3D11 compute).
@@ -50,6 +55,7 @@ public:
     bool Reset(const EulerConfig& config);
     void Step(int steps);
     void UpdateRenderVolume();
+    bool RescaleDomain(float factor);
 
     // Simulated time advanced since the last call (used to keep the reduced
     // order model and the particles in sync with the solver).
@@ -70,6 +76,8 @@ private:
         DirectX::XMFLOAT4 charge;
         DirectX::XMFLOAT4 physics;
         DirectX::XMFLOAT4 extra;
+        DirectX::XMFLOAT4 oldDomainMin;
+        DirectX::XMFLOAT4 oldDomainMax;
     };
 
     struct VolumeTexture {
@@ -108,9 +116,11 @@ private:
     ComPtr<ID3D11ComputeShader> sourceShader_;
     ComPtr<ID3D11ComputeShader> reduceShader_;
     ComPtr<ID3D11ComputeShader> renderShader_;
+    ComPtr<ID3D11ComputeShader> rescaleShader_;
 
     ComPtr<ID3D11Buffer> constantBuffer_;
     Constants constants_{};
+    ComPtr<ID3D11SamplerState> linearSampler_;
 
     VolumeTexture stateA_[2];
     VolumeTexture stateB_[2];
@@ -125,7 +135,11 @@ private:
 
     EulerConfig config_{};
     sim::VolumeBounds bounds_{};
+    sim::VolumeBounds oldBounds_{};
     float dx_ = 0.1f;
+    float oldDx_ = 0.1f;
+    float initialDx_ = 0.1f;
+    int expansions_ = 0;
     float depositRadius_ = 0.1f;
     float extinctionScale_ = 1.0f;
     double time_ = 0.0;

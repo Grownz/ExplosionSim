@@ -21,7 +21,11 @@ cbuffer SolverConstants : register(b0)
     float4 Charge;      // mass, energy, radius, height of burst
     float4 Physics;     // gravity, gas constant, cooling, simulation time
     float4 Extra;       // reserved
+    float4 OldDomainMin; // xyz = old lower corner, w = old dx (for rescaling)
+    float4 OldDomainMax; // xyz = old upper corner
 };
+
+SamplerState LinearSampler : register(s0);
 
 Texture3D<float4> StateA : register(t0);
 Texture3D<float4> StateB : register(t1);

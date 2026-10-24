@@ -68,8 +68,10 @@ bool GpuEulerSolver::CreateComputeShaders() {
     auto sourceBlob = compile(L"assets\\shaders\\euler_source.hlsl", "CSSource");
     auto reduceBlob = compile(L"assets\\shaders\\euler_reduce.hlsl", "CSReduce");
     auto renderBlob = compile(L"assets\\shaders\\euler_render.hlsl", "CSRender");
+    auto rescaleBlob = compile(L"assets\\shaders\\euler_rescale.hlsl", "CSRescale");
 
-    if (!initBlob || !sweepBlob || !sourceBlob || !reduceBlob || !renderBlob) {
+    if (!initBlob || !sweepBlob || !sourceBlob || !reduceBlob || !renderBlob ||
+        !rescaleBlob) {
         LogError("High-fidelity solver: shader compilation failed.");
         return false;
     }
@@ -82,7 +84,7 @@ bool GpuEulerSolver::CreateComputeShaders() {
 
     if (!create(initBlob.Get(), initShader_) || !create(sweepBlob.Get(), sweepShader_) ||
         !create(sourceBlob.Get(), sourceShader_) || !create(reduceBlob.Get(), reduceShader_) ||
-        !create(renderBlob.Get(), renderShader_)) {
+        !create(renderBlob.Get(), renderShader_) || !create(rescaleBlob.Get(), rescaleShader_)) {
         LogError("High-fidelity solver: failed to create compute shader objects.");
         return false;
     }
@@ -130,6 +132,17 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     stagingDesc.StructureByteStride = sizeof(uint32_t);
     if (FAILED(device_->CreateBuffer(&stagingDesc, nullptr, &maxSpeedStaging_))) {
         LogError("High-fidelity solver: max-speed staging buffer creation failed.");
+        return false;
+    }
+
+    D3D11_SAMPLER_DESC samplerDesc{};
+    samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+    samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(device_->CreateSamplerState(&samplerDesc, &linearSampler_))) {
+        LogError("High-fidelity solver: sampler creation failed.");
         return false;
     }
     return true;
@@ -188,6 +201,8 @@ void GpuEulerSolver::Shutdown() {
     maxSpeedUAV_.Reset();
     maxSpeedBuffer_.Reset();
     constantBuffer_.Reset();
+    linearSampler_.Reset();
+    rescaleShader_.Reset();
     renderShader_.Reset();
     reduceShader_.Reset();
     sourceShader_.Reset();
@@ -210,6 +225,10 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
     constants_.physics = XMFLOAT4(float(config_.gravity), float(config_.gasConstant), kCooling,
                                   float(time_));
     constants_.extra = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+    constants_.oldDomainMin =
+        XMFLOAT4(oldBounds_.min.x, oldBounds_.min.y, oldBounds_.min.z, oldDx_);
+    constants_.oldDomainMax =
+        XMFLOAT4(oldBounds_.max.x, oldBounds_.max.y, oldBounds_.max.z, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     if (SUCCEEDED(context_->Map(constantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
@@ -346,6 +365,10 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     lastDt_ = 0.0f;
     stagingReady_ = false;
     hasVolume_ = false;
+    oldBounds_ = bounds_;
+    oldDx_ = dx_;
+    initialDx_ = dx_;
+    expansions_ = 0;
 
     // Initial condition.
     context_->CSSetShader(initShader_.Get(), nullptr, 0);
@@ -363,6 +386,11 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     stats_.dt = 0.0f;
     stats_.maxSpeed = maxSpeed_;
     stats_.steps = 0;
+    stats_.domainHalfExtent = float(half);
+    stats_.domainTop = bounds_.max.y;
+    stats_.voxelSize = dx_;
+    stats_.accuracyFactor = 1.0f;
+    stats_.expansions = 0;
     return true;
 }
 
@@ -405,6 +433,57 @@ void GpuEulerSolver::UpdateRenderVolume() {
     }
     DispatchRender();
     hasVolume_ = true;
+}
+
+bool GpuEulerSolver::RescaleDomain(float factor) {
+    if (!initialized_ || !hasVolume_ || factor <= 1.0f) {
+        return false;
+    }
+
+    const sim::VolumeBounds previous = bounds_;
+    const float previousDx = dx_;
+    const float centerX = 0.5f * (bounds_.min.x + bounds_.max.x);
+    const float centerZ = 0.5f * (bounds_.min.z + bounds_.max.z);
+    const float half = 0.5f * (bounds_.max.x - bounds_.min.x);
+    const float newHalf = half * factor;
+    const float newTop = bounds_.max.y * factor;
+
+    bounds_.min = XMFLOAT3(centerX - newHalf, 0.0f, centerZ - newHalf);
+    bounds_.max = XMFLOAT3(centerX + newHalf, newTop, centerZ + newHalf);
+    dx_ = 2.0f * newHalf / float(resolution_);
+
+    // The remap reads the old state and writes the other ping-pong set. The
+    // constants carry both the old and the new domain.
+    oldBounds_ = previous;
+    oldDx_ = previousDx;
+
+    context_->CSSetShader(rescaleShader_.Get(), nullptr, 0);
+    UpdateConstants(0, 0.0f);
+    BindStateSRV(stateIndex_);
+    BindStateUAV(1 - stateIndex_);
+    ID3D11SamplerState* sampler = linearSampler_.Get();
+    context_->CSSetSamplers(0, 1, &sampler);
+    Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    UnbindAll();
+    ID3D11SamplerState* nullSampler = nullptr;
+    context_->CSSetSamplers(0, 1, &nullSampler);
+    stateIndex_ = 1 - stateIndex_;
+
+    oldBounds_ = bounds_;
+    oldDx_ = dx_;
+    ++expansions_;
+    UpdateRenderVolume();
+
+    stats_.domainHalfExtent = newHalf;
+    stats_.domainTop = newTop;
+    stats_.voxelSize = dx_;
+    stats_.accuracyFactor = dx_ / std::max(initialDx_, 1e-6f);
+    stats_.expansions = expansions_;
+
+    LogInfo("High-fidelity domain expanded: half %.2f m, top %.2f m, voxel %.1f mm, "
+            "accuracy x%.2f",
+            newHalf, newTop, dx_ * 1000.0f, stats_.accuracyFactor);
+    return true;
 }
 
 double GpuEulerSolver::ConsumeAdvance() {

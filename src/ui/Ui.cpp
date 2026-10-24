@@ -323,6 +323,10 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
             actions.applySimulationSettings = true;
         }
 
+        if (ImGui::Checkbox("Solver auto-scale", &settings.simulation.solverAutoScale)) {
+            actions.applySimulationSettings = true;
+        }
+
         if (settings.simulation.solverResolution >= 256) {
             Hint("Solver grids of 256³ and 512³ need several GB of VRAM and are not "
                  "real-time; reduce steps/frame.");
@@ -333,6 +337,11 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
         Readout("Time step", "%.2f us", stats.dt * 1e6f);
         Readout("Max signal speed", "%.0f m/s", stats.maxSpeed);
         Readout("Solver steps", "%lld", stats.steps);
+        Readout("Domain", "%.2f m half", stats.domainHalfExtent);
+        Readout("Domain top", "%.2f m", stats.domainTop);
+        Readout("Voxel size", "%.1f mm", stats.voxelSize * 1000.0f);
+        Readout("Accuracy", "x%.2f", stats.accuracyFactor);
+        Readout("Expansions", "%d", stats.expansions);
 
         Hint("Compressible Euler solver (HLLC + MUSCL) running on the GPU. It uses the "
              "moist-air density and virtual temperature; wind drifts the rendered volume. "

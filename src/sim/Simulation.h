@@ -37,6 +37,7 @@ struct SimulationSettings {
     SimulationMode mode = SimulationMode::ReducedOrder;
     int solverResolution = 128;
     int solverStepsPerFrame = 24;
+    bool solverAutoScale = true;
 
     // Performance
     int particleBudget = 40000;

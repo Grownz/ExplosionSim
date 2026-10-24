@@ -105,6 +105,7 @@ private:
     bool EnsureTargets(int width, int height);
     bool CreateTarget(Target& target, int width, int height);
     EulerConfig MakeEulerConfig(const sim::Simulation& simulation) const;
+    void MaybeExpandSolver(const sim::Simulation& simulation);
     void UploadVolume(const sim::VolumeFrame& frame);
     void UploadParticles(const std::vector<sim::ParticleInstance>& instances,
                          ComPtr<ID3D11Buffer>& buffer);

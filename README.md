@@ -111,6 +111,8 @@ The application opens a window, arms the 200 g charge and detonates after two se
 --solver-resolution   solver grid resolution (64, 96 or 128)
 --solver-steps        solver steps per frame (default 24)
 --solver-time <s>     solver time for headless captures
+--solver-auto-scale   expand the Euler domain before the field hits the edge
+--no-solver-auto-scale  keep a fixed Euler domain
 --volume-resolution <n>  volume grid: 64, 96, 128, 160, 192, 256, 512 or 1024
 --no-auto-scale       keep a fixed volume box instead of following the cloud
 --no-vsync            disable vertical synchronisation
@@ -163,10 +165,16 @@ High-fidelity settings (Physics & Effects panel):
 - Grid resolution: 64³ / 96³ / 128³ / 192³ / 256³ / 512³ (256³ and 512³ need several GB
   of VRAM and are not real-time)
 - Solver steps per frame: 4–64
-- Domain: ten times the analytic fireball radius, cubic, with a reflecting ground and
-  open lateral/top boundaries
+- Domain: six times the analytic fireball radius (half extent 3×), cubic, with a
+  reflecting ground and open lateral/top boundaries
 - Uses the moist-air density and virtual temperature; wind drifts the rendered volume
 - Shares the domain-warped detail noise with the reduced-order volume
+- **Solver auto-scale** – when the fireball, smoke envelope or base dust reaches 70 % of
+  the solver domain, the domain grows by 1.3× and the conservative state is resampled
+  onto the new grid on the GPU. The voxel count stays fixed, so the effective accuracy
+  drops while the CFL step grows; the UI shows the domain, voxel size, accuracy factor
+  and number of expansions. Can be disabled in the high-fidelity panel or with
+  `--no-solver-auto-scale`.
 - 1024³ is not available for the solver: four RGBA32F ping-pong state volumes plus the
   render volume would need about 76 GB of VRAM
 

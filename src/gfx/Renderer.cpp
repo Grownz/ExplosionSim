@@ -716,7 +716,7 @@ EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
     config.resolution = std::clamp(simulation.Settings().solverResolution, 32, 512);
 
     const double fireball = std::max(blast.FireballMaxRadiusM(), 0.1);
-    config.domainHalfExtent = std::clamp(5.0 * fireball, 1.0, 30.0);
+    config.domainHalfExtent = std::clamp(3.0 * fireball, 1.0, 30.0);
     config.chargeMassKg = std::max(charge.tntMassKg, 1e-6);
     config.chargeEnergyJ = charge.EnergyJ();
     config.heightOfBurstM =
@@ -731,6 +731,32 @@ EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
     return config;
 }
 
+void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
+    if (!simulation.Settings().solverAutoScale || !solver_.HasVolume()) {
+        return;
+    }
+    if (solver_.Stats().accuracyFactor >= 8.0f) {
+        return;
+    }
+
+    const sim::BlastState& state = simulation.Blast().State();
+    const sim::VolumeBounds& bounds = solver_.Bounds();
+    const float half = 0.5f * (bounds.max.x - bounds.min.x);
+    const float top = bounds.max.y;
+
+    // The volume field contains the fireball, its smoke envelope and the base
+    // dust. Expand before any of them reaches the boundary.
+    const double requiredHalf = std::max({state.fireballRadius * 2.4,
+                                          state.cloudRadius * 1.35, 0.5});
+    const double requiredTop =
+        std::max({state.fireballCenterY + state.fireballRadius * 2.0,
+                  state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
+
+    if (requiredHalf > half * 0.70f || requiredTop > top * 0.70f) {
+        solver_.RescaleDomain(1.3f);
+    }
+}
+
 void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTime) {
     if (!solver_.Reset(MakeEulerConfig(simulation))) {
         LogError("High-fidelity solver could not be initialised.");
@@ -742,6 +768,7 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
     const auto start = std::chrono::steady_clock::now();
     int guard = 0;
     while (solver_.Stats().time < targetTime && guard++ < 4096) {
+        MaybeExpandSolver(simulation);
         solver_.Step(16);
         const double elapsed = std::chrono::duration<double>(
                                    std::chrono::steady_clock::now() - start)
@@ -800,6 +827,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
             if (solver_.HasVolume()) {
                 if (!solverPrepared_ && !solverPaused_) {
+                    MaybeExpandSolver(simulation);
                     solver_.Step(std::clamp(simulation.Settings().solverStepsPerFrame, 1, 96));
                 }
                 solverVolume = solver_.VolumeSRV();

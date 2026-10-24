@@ -90,6 +90,9 @@ int App::Run(const LaunchOptions& options) {
     if (options_.autoScaleVolumeSet) {
         settings_.simulation.autoScaleVolume = options_.autoScaleVolume;
     }
+    if (options_.solverAutoScaleSet) {
+        settings_.simulation.solverAutoScale = options_.solverAutoScale;
+    }
 
     if (!options_.headless && !CreateMainWindow()) {
         return 1;
@@ -251,8 +254,11 @@ void App::FrameCamera() {
     const sim::Charge& charge = blast.GetCharge();
 
     if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
-        const float half =
-            std::clamp(5.0f * float(blast.FireballMaxRadiusM()), 1.0f, 30.0f);
+        float half = std::clamp(3.0f * float(blast.FireballMaxRadiusM()), 1.0f, 30.0f);
+        const gfx::SolverStats& solverStats = renderer_.Solver();
+        if (solverStats.active && solverStats.domainHalfExtent > 0.1f) {
+            half = solverStats.domainHalfExtent;
+        }
         camera_.SetTarget(DirectX::XMFLOAT3(0.0f, half * 0.45f, 0.0f), half * 1.3f);
         if (options_.headless) {
             camera_.SetOrientation(options_.azimuth, options_.elevation);

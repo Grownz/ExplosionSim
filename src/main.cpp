@@ -43,6 +43,8 @@ void PrintUsage() {
     LogInfo("  --volume-resolution <n>  Volume grid (64, 96, 128, 160, 192, 256, 512, 1024).");
     LogInfo("  --no-auto-scale      Keep a fixed volume box instead of following the cloud.");
     LogInfo("  --auto-scale         Force the adaptive volume box (default).");
+    LogInfo("  --solver-auto-scale  Expand the Euler solver domain before the field hits the edge.");
+    LogInfo("  --no-solver-auto-scale  Keep a fixed Euler solver domain.");
     LogInfo("  --no-vsync            Disable vertical synchronisation.");
     LogInfo("  --debug               Enable the D3D11 debug layer.");
     LogInfo("  --help                Show this help.");
@@ -144,6 +146,12 @@ ParsedArguments ParseCommandLine() {
         } else if (argument == L"--auto-scale") {
             result.options.autoScaleVolume = true;
             result.options.autoScaleVolumeSet = true;
+        } else if (argument == L"--solver-auto-scale") {
+            result.options.solverAutoScale = true;
+            result.options.solverAutoScaleSet = true;
+        } else if (argument == L"--no-solver-auto-scale") {
+            result.options.solverAutoScale = false;
+            result.options.solverAutoScaleSet = true;
         } else if (argument == L"--no-vsync") {
             result.options.vsync = false;
         } else if (argument == L"--debug") {

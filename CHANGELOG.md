@@ -17,6 +17,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Solver auto-scale: the Euler solver domain expands by 1.3× when the fireball, smoke
+  envelope or base dust reaches 70 % of the box. The conserved state is resampled on the
+  GPU into the larger grid (fixed voxel count); `dx` and the CFL step grow, so the
+  effective accuracy drops while the performance is preserved. UI readouts show domain,
+  voxel size, accuracy factor and expansions; `--solver-auto-scale` /
+  `--no-solver-auto-scale` are available.
 - Auto-scale volume box in the Rendering panel: it always contains the fireball, smoke
   envelope, cloud cap and base dust, grows only when the field approaches the edge and
   keeps the bake cost constant by trading effective resolution for size.

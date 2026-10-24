@@ -132,6 +132,8 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
         std::clamp(ParseInt(values, "solverResolution", simulation.solverResolution), 32, 512);
     simulation.solverStepsPerFrame =
         std::clamp(ParseInt(values, "solverStepsPerFrame", simulation.solverStepsPerFrame), 1, 96);
+    simulation.solverAutoScale =
+        ParseBool(values, "solverAutoScale", simulation.solverAutoScale);
     simulation.loop = ParseBool(values, "loop", simulation.loop);
     simulation.particleBudget =
         std::clamp(ParseInt(values, "particleBudget", simulation.particleBudget), 4000, 400000);
@@ -183,6 +185,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "simulationMode=" << int(simulation.mode) << "\n";
     stream << "solverResolution=" << simulation.solverResolution << "\n";
     stream << "solverStepsPerFrame=" << simulation.solverStepsPerFrame << "\n";
+    stream << "solverAutoScale=" << (simulation.solverAutoScale ? "true" : "false") << "\n";
     stream << "loop=" << (simulation.loop ? "true" : "false") << "\n";
     stream << "particleBudget=" << simulation.particleBudget << "\n";
     stream << "volumeResolution=" << simulation.volumeResolution << "\n";
