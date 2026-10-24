@@ -26,6 +26,8 @@ start-up at 0.4 m above the ground**.
 - **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
   1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
   pressure waveform.
+- **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
+  sequence and keeps a readable size while zooming.
 - **2 s fuse** – the charge is armed on start-up, a countdown is shown, then the
   detonation is simulated in slow motion (time scale is adjustable).
 - **Headless capture** – deterministic PNG screenshots and a benchmark mode without a

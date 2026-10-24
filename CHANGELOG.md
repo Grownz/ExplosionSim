@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Adaptive metre scale bar in the lower-left corner when the grid overlay is enabled.
+  The bar length is snapped to a 1-2-5 sequence and clamped to a readable pixel size as
+  the camera zooms.
+
+### Fixed
+
+- Duplicate Dear ImGui widget IDs for the `Pause` button/checkbox and the `Bloom`
+  slider/checkbox, which triggered the "visible items with conflicting ID" warning.
+
 ## [0.1.0] - 2026-10-24
 
 First public version.

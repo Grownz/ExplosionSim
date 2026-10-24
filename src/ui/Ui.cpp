@@ -45,6 +45,101 @@ void Hint(const char* text) {
     ImGui::PopStyleColor();
 }
 
+// Bottom-left map scale for the active grid overlay. The bar length is snapped
+// to a 1-2-5 sequence and its pixel size is kept within a readable range as the
+// camera zooms.
+void DrawScaleBar(const gfx::Camera& camera, const ImVec2& displaySize) {
+    if (displaySize.x < 200.0f || displaySize.y < 200.0f) {
+        return;
+    }
+
+    const float distance = std::max(camera.Distance(), 0.1f);
+    const float worldHeight = 2.0f * distance * std::tan(camera.FovY() * 0.5f);
+    const float pixelsPerMeter = displaySize.y / std::max(worldHeight, 1e-4f);
+    if (!std::isfinite(pixelsPerMeter) || pixelsPerMeter <= 0.0f) {
+        return;
+    }
+
+    const float desiredPixels = std::clamp(displaySize.y * 0.13f, 80.0f, 190.0f);
+    const float rawMeters = desiredPixels / pixelsPerMeter;
+    const float exponent = std::floor(std::log10(std::max(rawMeters, 1e-5f)));
+    float base = std::pow(10.0f, exponent);
+
+    const float mantissa = rawMeters / base;
+    float nice = 1.0f;
+    if (mantissa >= 7.0f) {
+        nice = 10.0f;
+    } else if (mantissa >= 3.0f) {
+        nice = 5.0f;
+    } else if (mantissa >= 1.5f) {
+        nice = 2.0f;
+    }
+
+    float meters = nice * base;
+    float barPixels = meters * pixelsPerMeter;
+
+    for (int i = 0; i < 8 && barPixels > 280.0f; ++i) {
+        if (nice > 5.0f) {
+            nice = 5.0f;
+        } else if (nice > 2.0f) {
+            nice = 2.0f;
+        } else if (nice > 1.0f) {
+            nice = 1.0f;
+        } else {
+            nice = 5.0f;
+            base *= 0.1f;
+        }
+        meters = nice * base;
+        barPixels = meters * pixelsPerMeter;
+    }
+
+    for (int i = 0; i < 8 && barPixels < 60.0f; ++i) {
+        if (nice < 2.0f) {
+            nice = 2.0f;
+        } else if (nice < 5.0f) {
+            nice = 5.0f;
+        } else if (nice < 10.0f) {
+            nice = 10.0f;
+        } else {
+            nice = 1.0f;
+            base *= 10.0f;
+        }
+        meters = nice * base;
+        barPixels = meters * pixelsPerMeter;
+    }
+
+    char label[64];
+    if (meters >= 1000.0f) {
+        std::snprintf(label, sizeof(label), "%.3g km", meters / 1000.0f);
+    } else {
+        std::snprintf(label, sizeof(label), "%.3g m", meters);
+    }
+
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    const float fontSize = ImGui::GetFontSize();
+    const float margin = std::max(20.0f, fontSize * 1.2f);
+    const float baseline = displaySize.y - margin - fontSize * 1.2f;
+    const float x0 = margin;
+    const float x1 = x0 + barPixels;
+
+    const ImU32 color = IM_COL32(238, 241, 245, 235);
+    const ImU32 shadow = IM_COL32(0, 0, 0, 160);
+
+    drawList->AddRectFilled(ImVec2(x0 - 12.0f, baseline - fontSize * 2.4f),
+                            ImVec2(x1 + 12.0f, baseline + 12.0f),
+                            IM_COL32(8, 10, 14, 140), 6.0f);
+    drawList->AddLine(ImVec2(x0, baseline), ImVec2(x1, baseline), shadow, 4.0f);
+    drawList->AddLine(ImVec2(x0, baseline), ImVec2(x1, baseline), color, 2.0f);
+    drawList->AddLine(ImVec2(x0, baseline - 7.0f), ImVec2(x0, baseline + 7.0f), color, 2.0f);
+    drawList->AddLine(ImVec2(x1, baseline - 7.0f), ImVec2(x1, baseline + 7.0f), color, 2.0f);
+
+    const ImVec2 textSize = ImGui::CalcTextSize(label);
+    const ImVec2 textPosition((x0 + x1) * 0.5f - textSize.x * 0.5f,
+                              baseline - textSize.y - 9.0f);
+    drawList->AddText(ImVec2(textPosition.x + 1.0f, textPosition.y + 1.0f), shadow, label);
+    drawList->AddText(textPosition, color, label);
+}
+
 bool PhysSlider(const char* label, double* value, float minValue, float maxValue,
                 const char* format, ImGuiSliderFlags flags, UiActions& actions) {
     float temporary = float(*value);
@@ -99,7 +194,7 @@ void DrawDetonation(app::AppSettings& settings, UiActions& actions) {
     ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccent);
-    if (ImGui::Button("DETONATE", ImVec2(-1.0f, ImGui::GetFontSize() * 2.2f))) {
+    if (ImGui::Button("DETONATE##main_detonate", ImVec2(-1.0f, ImGui::GetFontSize() * 2.2f))) {
         actions.detonateNow = true;
     }
     ImGui::PopStyleColor(3);
@@ -137,7 +232,7 @@ void DrawAtmosphere(app::AppSettings& settings, UiActions& actions) {
 void DrawPlayback(app::AppSettings& settings, UiActions& actions, const sim::Simulation& simulation) {
     SectionHeader("PLAYBACK");
 
-    if (ImGui::Checkbox("Pause", &settings.paused)) {
+    if (ImGui::Checkbox("Pause##playback", &settings.paused)) {
     }
     ImGui::SameLine();
     if (ImGui::Button("Step")) {
@@ -254,7 +349,7 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
     gfx::RenderSettings& render = settings.render;
     ImGui::SliderFloat("Exposure", &render.exposure, 0.1f, 4.0f, "%.2f",
                        ImGuiSliderFlags_Logarithmic);
-    ImGui::SliderFloat("Bloom", &render.bloomStrength, 0.0f, 1.5f, "%.2f");
+    ImGui::SliderFloat("Bloom strength", &render.bloomStrength, 0.0f, 1.5f, "%.2f");
     ImGui::SliderInt("Ray steps", &render.raymarchSteps, 24, 192);
 
     float resolution = float(settings.simulation.volumeResolution);
@@ -391,15 +486,16 @@ UiActions Draw(UiContext& context) {
 
     ImGui::Spacing();
 
-    if (ImGui::Button(settings.paused ? "Resume" : "Pause", ImVec2(panelWidth * 0.30f, 0))) {
+    if (ImGui::Button(settings.paused ? "Resume##top_pause" : "Pause##top_pause",
+                      ImVec2(panelWidth * 0.30f, 0))) {
         settings.paused = !settings.paused;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Detonate", ImVec2(panelWidth * 0.30f, 0))) {
+    if (ImGui::Button("Detonate##top_detonate", ImVec2(panelWidth * 0.30f, 0))) {
         actions.detonateNow = true;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Frame", ImVec2(panelWidth * 0.24f, 0))) {
+    if (ImGui::Button("Frame##top_frame", ImVec2(panelWidth * 0.24f, 0))) {
         actions.frameCamera = true;
     }
 
@@ -428,6 +524,10 @@ UiActions Draw(UiContext& context) {
     ImGui::Separator();
     Hint("Space pause · R rearm · F frame · H hide UI");
     ImGui::End();
+
+    if (settings.render.showGrid) {
+        DrawScaleBar(context.camera, ImGui::GetIO().DisplaySize);
+    }
 
     // --- On-screen overlays -------------------------------------------------
     const ImGuiWindowFlags overlayFlags =
