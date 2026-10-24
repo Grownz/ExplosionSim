@@ -83,6 +83,10 @@ int App::Run(const LaunchOptions& options) {
     if (options_.solverSteps > 0) {
         settings_.simulation.solverStepsPerFrame = std::clamp(options_.solverSteps, 1, 96);
     }
+    if (options_.volumeResolution > 0) {
+        settings_.simulation.volumeResolution =
+            std::clamp(options_.volumeResolution, 32, 1024);
+    }
 
     if (!options_.headless && !CreateMainWindow()) {
         return 1;

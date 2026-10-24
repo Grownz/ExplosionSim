@@ -118,6 +118,8 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
         std::clamp(ParseDouble(values, "ambientTemperatureK", simulation.ambientTemperatureK), 200.0, 340.0);
     simulation.ambientPressurePa =
         std::clamp(ParseDouble(values, "ambientPressurePa", simulation.ambientPressurePa), 50000.0, 110000.0);
+    simulation.relativeHumidity =
+        std::clamp(ParseDouble(values, "relativeHumidity", simulation.relativeHumidity), 0.0, 1.0);
     simulation.windSpeedMs = std::clamp(ParseDouble(values, "windSpeedMs", simulation.windSpeedMs), 0.0, 60.0);
     simulation.windDirectionDeg =
         std::clamp(ParseDouble(values, "windDirectionDeg", simulation.windDirectionDeg), 0.0, 360.0);
@@ -134,7 +136,7 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
     simulation.particleBudget =
         std::clamp(ParseInt(values, "particleBudget", simulation.particleBudget), 4000, 400000);
     simulation.volumeResolution =
-        std::clamp(ParseInt(values, "volumeResolution", simulation.volumeResolution), 32, 192);
+        std::clamp(ParseInt(values, "volumeResolution", simulation.volumeResolution), 32, 1024);
     simulation.bakeVolume = ParseBool(values, "bakeVolume", simulation.bakeVolume);
 
     auto& render = settings.render;
@@ -172,6 +174,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "heightOfBurstM=" << simulation.heightOfBurstM << "\n";
     stream << "ambientTemperatureK=" << simulation.ambientTemperatureK << "\n";
     stream << "ambientPressurePa=" << simulation.ambientPressurePa << "\n";
+    stream << "relativeHumidity=" << simulation.relativeHumidity << "\n";
     stream << "windSpeedMs=" << simulation.windSpeedMs << "\n";
     stream << "windDirectionDeg=" << simulation.windDirectionDeg << "\n";
     stream << "timeScale=" << simulation.timeScale << "\n";

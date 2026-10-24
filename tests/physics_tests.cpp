@@ -6,6 +6,8 @@
 #include "sim/Simulation.h"
 #include "sim/VolumeBaker.h"
 
+#include <DirectXPackedVector.h>
+
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -49,6 +51,38 @@ void TestAtmosphere() {
     CHECK_NEAR(environment.AirDensity(), 1.225, 0.01);
     CHECK_NEAR(environment.SoundSpeed(), 340.3, 1.0);
     CHECK_NEAR(environment.SpecificHeatCp(), 1004.7, 3.0);
+
+    Environment dry{};
+    dry.relativeHumidity = 0.0;
+    Environment wet{};
+    wet.relativeHumidity = 1.0;
+    CHECK(wet.AirDensity() < dry.AirDensity());
+    CHECK(wet.SoundSpeed() > dry.SoundSpeed());
+    CHECK(wet.VaporPressurePa() > 1000.0);
+    CHECK(wet.SpecificHumidity() > 0.0);
+}
+
+void TestAltitudeScaling() {
+    Charge charge{};
+    charge.tntMassKg = 1.0;
+    charge.heightOfBurstM = 1.0;
+
+    Environment seaLevel{};
+    seaLevel.pressurePa = 101325.0;
+    Environment altitude{};
+    altitude.pressurePa = 50000.0;
+
+    BlastModel sea;
+    sea.Configure(charge, seaLevel);
+    BlastModel high;
+    high.Configure(charge, altitude);
+
+    // Sachs scaling: a charge at altitude produces a larger fireball; at a
+    // fixed physical range the absolute overpressure is lower because the
+    // ambient pressure is lower.
+    CHECK(high.FireballMaxRadiusM() > sea.FireballMaxRadiusM());
+    CHECK(high.PeakOverpressureAtDistance(100.0) < sea.PeakOverpressureAtDistance(100.0));
+    CHECK(high.State().shockSpeed > 0.0);
 }
 
 void TestOverpressureFit() {
@@ -171,9 +205,18 @@ void TestVolumeBaker() {
     CHECK(frame.bounds.max.x > frame.bounds.min.x);
 
     int occupied = 0;
-    for (size_t i = 0; i < frame.rgba.size(); i += 4) {
-        CHECK(std::isfinite(frame.rgba[i]));
-        if (frame.rgba[i] > 0.01f) {
+    for (size_t i = 0; i < frame.rgba.size(); i += size_t(frame.bytesPerVoxel)) {
+        float density = 0.0f;
+        if (frame.halfFloat) {
+            uint16_t bits = 0;
+            std::memcpy(&bits, &frame.rgba[i], sizeof(bits));
+            auto half = *reinterpret_cast<DirectX::PackedVector::HALF*>(&bits);
+            density = DirectX::PackedVector::XMConvertHalfToFloat(half);
+        } else {
+            density = float(frame.rgba[i]) / 255.0f;
+        }
+        CHECK(std::isfinite(density));
+        if (density > 0.01f) {
             ++occupied;
         }
     }
@@ -235,6 +278,7 @@ void TestFuseAndDetonation() {
 int main() {
     TestChargeScaling();
     TestAtmosphere();
+    TestAltitudeScaling();
     TestOverpressureFit();
     TestBlastEvolution();
     TestSmallChargeScaling();

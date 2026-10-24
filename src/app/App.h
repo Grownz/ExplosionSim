@@ -30,6 +30,7 @@ struct LaunchOptions {
     bool highFidelity = false;
     int solverResolution = 0;
     int solverSteps = 0;
+    int volumeResolution = 0;
     double solverTime = -1.0;
 };
 

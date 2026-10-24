@@ -2,7 +2,10 @@
 
 Texture3D<float4> VolumeTexture : register(t0);
 Texture2D<float> SceneDepth : register(t1);
+Texture3D<float4> NoiseTexture : register(t2);
+Texture3D<float4> VolumeAux : register(t3);
 SamplerState LinearSampler : register(s0);
+SamplerState NoiseSampler : register(s1);
 
 // Front-to-back emission/absorption raymarching through the baked blast field.
 // The result is premultiplied and blended with One / InvSrcAlpha.
@@ -45,9 +48,29 @@ float4 PSVolume(VSOut input) : SV_Target
     for (int i = 0; i < steps; ++i)
     {
         float3 position = rayOrigin + rayDirection * t;
-        float3 uvw = (position - VolumeMin.xyz) / max(boxSize, 1e-4);
 
-        float4 sample = VolumeTexture.SampleLevel(LinearSampler, uvw, 0);
+        // Domain warping with a tileable 3D noise texture. This breaks the
+        // smooth analytic iso-surfaces into filaments and adds sub-voxel
+        // detail without increasing the volume resolution.
+        float fireballScale = max(Misc2.z, 0.25);
+        float3 noiseCoordinate =
+            position * (0.85 / fireballScale) + float3(0.0, -Misc3.x * 0.05, 0.0);
+        float3 warp = NoiseTexture.SampleLevel(NoiseSampler, noiseCoordinate, 0).xyz - 0.5;
+        float3 warpedPosition = position + warp * (0.22 * fireballScale);
+
+        float3 uvw = (warpedPosition - VolumeMin.xyz) / max(boxSize, 1e-4);
+        float4 sample;
+        if (VolumeParams.y > 0.5)
+        {
+            // Split 1024³ volume: two RG8 planes.
+            float4 low = VolumeTexture.SampleLevel(LinearSampler, uvw, 0);
+            float4 high = VolumeAux.SampleLevel(LinearSampler, uvw, 0);
+            sample = float4(low.rg, high.rg);
+        }
+        else
+        {
+            sample = VolumeTexture.SampleLevel(LinearSampler, uvw, 0);
+        }
         float density = sample.r;
 
         if (density > 0.002)
@@ -56,15 +79,17 @@ float4 PSVolume(VSOut input) : SV_Target
             float soot = sample.a;
             float dust = sample.b;
 
-            // Billowing structure: modulate the density with a rising 3D noise
-            // field. The frequency adapts to the fireball size and the vertical
-            // stretch creates flame-like tongues.
-            float detailScale = 10.0 / max(Misc2.z, 0.25);
+            // Fine detail from the high-frequency channel of the noise volume.
+            float detailScale = 10.0 / fireballScale;
+            float4 noiseDetail =
+                NoiseTexture.SampleLevel(NoiseSampler, position * detailScale * 0.55 + 13.0, 0);
+
             float3 noisePosition = position * detailScale + windDrift;
             noisePosition.y *= 0.75;
             float structure = Fbm3(noisePosition);
             float fine = ValueNoise3(noisePosition * 3.0 + 11.0);
             density *= lerp(0.05, 2.40, structure) * (0.60 + 0.70 * fine);
+            density *= lerp(0.70, 1.35, noiseDetail.a);
             temperature *= lerp(0.55, 1.30, structure);
 
             float heat = smoothstep(550.0, 1250.0, temperature);
@@ -76,7 +101,7 @@ float4 PSVolume(VSOut input) : SV_Target
             float coldSoot = soot * saturate((2400.0 - temperature) / 1500.0);
             emission *= lerp(1.0, 0.10, coldSoot);
 
-            float3 albedo = lerp(float3(0.05, 0.045, 0.04), float3(0.22, 0.18, 0.13), dust);
+            float3 albedo = lerp(float3(0.05, 0.045, 0.04), float3(0.19, 0.16, 0.12), dust);
             float3 scattering = albedo * density * (sunLight + ambientLight);
 
             // Fireball light scattered by dust and smoke: warm near the blast,
@@ -84,7 +109,7 @@ float4 PSVolume(VSOut input) : SV_Target
             float3 toFireball = Fireball.xyz - position;
             float fireDistanceSq = dot(toFireball, toFireball);
             float fireRadius = max(Misc2.z, 0.2);
-            float fireLight = Fireball.w * 1.8 * fireRadius * fireRadius /
+            float fireLight = Fireball.w * 1.0 * fireRadius * fireRadius /
                               (fireDistanceSq + fireRadius * fireRadius * 1.2);
             scattering += albedo * density * fireLight * float3(1.0, 0.42, 0.12);
 

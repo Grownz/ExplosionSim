@@ -25,8 +25,17 @@ struct Environment {
     double gamma = 1.4;
     double gasConstant = 287.058; // dry air, J/(kg K)
 
-    double AirDensity() const { return pressurePa / (gasConstant * temperatureK); }
-    double SoundSpeed() const { return std::sqrt(gamma * gasConstant * temperatureK); }
+    // Magnus-Tetens saturation vapour pressure over water.
+    double SaturationVaporPressurePa() const;
+    double VaporPressurePa() const { return relativeHumidity * SaturationVaporPressurePa(); }
+    double SpecificHumidity() const;
+
+    // Moist-air density and sound speed. Humidity lowers the density and
+    // slightly raises the speed of sound.
+    double AirDensity() const;
+    double SoundSpeed() const;
+    double VirtualTemperatureK() const;
+
     double SpecificHeatCp() const { return gamma * gasConstant / (gamma - 1.0); }
     double WindX() const;
     double WindZ() const;

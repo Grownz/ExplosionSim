@@ -23,6 +23,7 @@ struct SimulationSettings {
     double heightOfBurstM = 0.4;
     double ambientTemperatureK = 288.15;
     double ambientPressurePa = 101325.0;
+    double relativeHumidity = 0.45;
     double windSpeedMs = 1.0;
     double windDirectionDeg = 40.0;
 

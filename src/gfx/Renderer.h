@@ -42,11 +42,11 @@ public:
     bool Initialize(GfxDevice& device);
     void Shutdown();
     void Resize(int width, int height);
-    void Render(const sim::Simulation& simulation, const Camera& camera, const RenderSettings& settings);
+    void Render(sim::Simulation& simulation, const Camera& camera, const RenderSettings& settings);
     void SetSolverPaused(bool paused) { solverPaused_ = paused; }
 
     // Advances the GPU solver to a target simulation time (headless captures).
-    void PrepareHighFidelity(const sim::Simulation& simulation, double targetTime);
+    void PrepareHighFidelity(sim::Simulation& simulation, double targetTime);
 
     // Simulated time advanced by the solver during the last frame.
     double ConsumeSolverAdvance();
@@ -101,6 +101,7 @@ private:
 
     bool CreatePipeline();
     bool CreateStates();
+    bool CreateNoiseTexture();
     bool EnsureTargets(int width, int height);
     bool CreateTarget(Target& target, int width, int height);
     EulerConfig MakeEulerConfig(const sim::Simulation& simulation) const;
@@ -123,14 +124,19 @@ private:
 
     ComPtr<ID3D11Texture3D> volumeTexture_;
     ComPtr<ID3D11ShaderResourceView> volumeSRV_;
+    ComPtr<ID3D11Texture3D> volumeAuxTexture_;
+    ComPtr<ID3D11ShaderResourceView> volumeAuxSRV_;
+    ComPtr<ID3D11ShaderResourceView> volumeDummySRV_;
     int volumeResolution_ = 0;
-    uint64_t uploadedVolumeVersion_ = ~uint64_t(0);
+    bool volumeHalfFloat_ = true;
+    bool volumeSplit_ = false;
     bool volumeValid_ = false;
 
     // Active volume source for the current frame (CPU bake or GPU solver).
     sim::VolumeBounds activeVolumeBounds_{};
     float activeVolumeExtinction_ = 0.1f;
     bool activeVolumeValid_ = false;
+    bool activeVolumeSplit_ = false;
 
     GpuEulerSolver solver_;
     uint64_t solverBlastSerial_ = ~uint64_t(0);
@@ -167,6 +173,9 @@ private:
     ComPtr<ID3D11PixelShader> compositePS_;
 
     ComPtr<ID3D11SamplerState> linearClamp_;
+    ComPtr<ID3D11SamplerState> noiseSampler_;
+    ComPtr<ID3D11Texture3D> noiseTexture_;
+    ComPtr<ID3D11ShaderResourceView> noiseSRV_;
     ComPtr<ID3D11BlendState> blendOpaque_;
     ComPtr<ID3D11BlendState> blendAlpha_;
     ComPtr<ID3D11BlendState> blendAdditive_;

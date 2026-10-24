@@ -19,6 +19,33 @@ double ClampPositive(double value) {
 
 } // namespace
 
+double Environment::SaturationVaporPressurePa() const {
+    // Magnus-Tetens over liquid water (valid for -45..60 degC).
+    const double celsius = temperatureK - 273.15;
+    return 610.94 * std::exp(17.625 * celsius / (celsius + 243.04));
+}
+
+double Environment::SpecificHumidity() const {
+    // Mass of water vapour per mass of moist air.
+    const double vapour = VaporPressurePa();
+    return 0.622 * vapour / std::max(pressurePa - 0.378 * vapour, 1.0);
+}
+
+double Environment::AirDensity() const {
+    const double vapour = VaporPressurePa();
+    const double dry = (pressurePa - vapour) / (gasConstant * temperatureK);
+    const double wet = vapour / (461.5 * temperatureK); // R_v for water vapour
+    return dry + wet;
+}
+
+double Environment::SoundSpeed() const {
+    return std::sqrt(gamma * pressurePa / std::max(AirDensity(), 1e-6));
+}
+
+double Environment::VirtualTemperatureK() const {
+    return pressurePa / std::max(AirDensity() * gasConstant, 1e-6);
+}
+
 double Environment::WindX() const {
     return windSpeedMs * std::cos(windDirectionDeg * M_PI / 180.0);
 }
@@ -49,6 +76,10 @@ void BlastModel::Configure(const Charge& charge, const Environment& environment)
     const double nuclearRadius = 50.0 * std::pow(kilotons, 0.4);
     const double conventionalRadius = 0.9 * std::pow(charge_.tntMassKg, 0.25);
     fireballMaxRadius_ = std::max(nuclearRadius, conventionalRadius);
+
+    // Sachs scaling: at lower ambient pressure the same yield produces a
+    // larger fireball (and a larger blast wave at a given distance).
+    fireballMaxRadius_ *= std::cbrt(101325.0 / std::max(environment_.pressurePa, 1.0));
 
     // Growth and cooling time scales, fitted to the observed behaviour of
     // nuclear and large conventional fireballs.
@@ -219,7 +250,13 @@ double BlastModel::PeakOverpressurePa(double scaledDistance, double ambientPress
 }
 
 double BlastModel::PeakOverpressureAtDistance(double distanceM) const {
-    return PeakOverpressurePa(charge_.ScaledDistance(std::max(distanceM, 0.01)), environment_.pressurePa);
+    // Sachs scaling: the effective scaled distance shrinks with the cube root
+    // of the ambient pressure ratio, so a charge at altitude has a stronger
+    // blast at the same physical range.
+    const double pressureRatio = environment_.pressurePa / 101325.0;
+    const double z =
+        charge_.ScaledDistance(std::max(distanceM, 0.01)) * std::cbrt(pressureRatio);
+    return PeakOverpressurePa(z, environment_.pressurePa);
 }
 
 double BlastModel::ShockSpeed(double radiusM) const {

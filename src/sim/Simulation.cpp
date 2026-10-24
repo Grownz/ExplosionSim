@@ -13,7 +13,8 @@ namespace {
 bool PhysicsChanged(const SimulationSettings& a, const SimulationSettings& b) {
     return a.chargeMassKg != b.chargeMassKg || a.heightOfBurstM != b.heightOfBurstM ||
            a.ambientTemperatureK != b.ambientTemperatureK ||
-           a.ambientPressurePa != b.ambientPressurePa || a.windSpeedMs != b.windSpeedMs ||
+           a.ambientPressurePa != b.ambientPressurePa ||
+           a.relativeHumidity != b.relativeHumidity || a.windSpeedMs != b.windSpeedMs ||
            a.windDirectionDeg != b.windDirectionDeg;
 }
 
@@ -44,6 +45,7 @@ void Simulation::Reset() {
     Environment environment{};
     environment.pressurePa = settings_.ambientPressurePa;
     environment.temperatureK = settings_.ambientTemperatureK;
+    environment.relativeHumidity = settings_.relativeHumidity;
     environment.windSpeedMs = settings_.windSpeedMs;
     environment.windDirectionDeg = settings_.windDirectionDeg;
 
@@ -202,11 +204,18 @@ void Simulation::ScheduleVolumeBake(double dtReal) {
     }
 
     bakeAccumulator_ += dtReal;
-    constexpr double interval = 1.0 / 30.0; // 30 volume updates per second
+    double interval = 1.0 / 30.0;
+    if (settings_.volumeResolution >= 1024) {
+        interval = 5.0;
+    } else if (settings_.volumeResolution >= 512) {
+        interval = 2.0;
+    } else if (settings_.volumeResolution >= 256) {
+        interval = 0.5;
+    }
     if (bakeAccumulator_ < interval) {
         return;
     }
-    if (volume_.Busy()) {
+    if (!volume_.CanStartBake()) {
         return;
     }
     bakeAccumulator_ = 0.0;

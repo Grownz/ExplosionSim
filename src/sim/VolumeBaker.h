@@ -19,19 +19,31 @@ struct VolumeBounds {
     DirectX::XMFLOAT3 max{1.0f, 1.0f, 1.0f};
 };
 
-// CPU-side volumetric field: RGB = (density, temperature/12kK, dust mask),
-// A = reserved. Resolution is uniform in all three axes.
+// CPU-side volumetric field in RGBA16F layout:
+//   R = density, G = temperature / 12kK, B = dust mask, A = soot mask.
+// Half precision halves the memory and upload bandwidth compared to RGBA32F,
+// which is essential for the 256³-1024³ options.
 struct VolumeFrame {
     int resolution = 0;
     VolumeBounds bounds{};
     float extinctionScale = 0.1f;
     uint64_t version = 0;
-    std::vector<float> rgba;
+    int bytesPerVoxel = 8;
+    bool halfFloat = true;
+    bool split = false;
+    std::vector<uint8_t> rgba;
+    std::vector<uint8_t> rgba2; // second RG8 plane (dust/soot) when split
 
-    bool empty() const { return resolution <= 0 || rgba.empty(); }
+    bool empty() const {
+        return resolution <= 0 || rgba.empty() || (split && rgba2.empty());
+    }
 };
 
 // Bakes the analytic blast field into a 3D texture on the thread pool.
+//
+// A single CPU buffer is used: a new bake may only start after the previous
+// frame has been uploaded to the GPU (MarkUploaded). This keeps the memory
+// footprint at one frame, which is what makes 512³ and 1024³ possible at all.
 class VolumeBaker {
 public:
     void Initialize(core::ThreadPool* pool, int resolution);
@@ -39,19 +51,18 @@ public:
     void SetResolution(int resolution);
     int Resolution() const { return resolution_; }
 
-    // Starts an asynchronous bake. Does nothing while another bake is running.
     void StartBake(const BlastModel& model);
-
-    // Bakes synchronously (used for deterministic screenshots / benchmarks).
     void BakeNow(const BlastModel& model);
 
-    // Adopts a finished bake. Returns true if a new frame became current.
     bool Poll();
+    bool HasNewFrame() const;
+    bool CanStartBake() const;
+    void MarkUploaded(uint64_t version);
 
     bool Busy() const { return inFlight_.load(std::memory_order_acquire); }
     bool HasData() const { return hasData_; }
-    const VolumeFrame& Current() const { return buffers_[currentIndex_]; }
-    uint64_t Version() const { return version_; }
+    const VolumeFrame& Current() const { return frame_; }
+    uint64_t Version() const { return frame_.version; }
     float LastBakeMilliseconds() const { return lastBakeMs_; }
     void WaitForIdle();
 
@@ -86,24 +97,26 @@ private:
         VolumeBounds bounds;
         float extinctionScale = 0.1f;
         int resolution = 0;
-        std::vector<float>* target = nullptr;
+        int bytesPerVoxel = 8;
+        bool halfFloat = true;
+        bool split = false;
+        std::vector<uint8_t>* target = nullptr;
+        std::vector<uint8_t>* target2 = nullptr;
     };
 
     void Dispatch(const BlastModel& model, bool synchronous);
     void BakeRange(int zBegin, int zEnd, const BakeJob& job);
-    void AdoptFinished();
+    void FinishBake();
 
     core::ThreadPool* pool_ = nullptr;
-    int resolution_ = 96;
+    int resolution_ = 128;
 
-    VolumeFrame buffers_[2];
-    int currentIndex_ = 0;
-    int writeIndex_ = 1;
+    VolumeFrame frame_;
     bool hasData_ = false;
-    uint64_t version_ = 0;
 
     std::atomic<bool> inFlight_{false};
     std::atomic<bool> ready_{false};
+    std::atomic<uint64_t> uploadedVersion_{0};
     BakeJob job_;
     float lastBakeMs_ = 0.0f;
 };

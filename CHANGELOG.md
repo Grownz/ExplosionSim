@@ -8,6 +8,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Volume resolutions 256³, 512³ and 1024³. 256³/512³ use RGBA16F; 1024³ is split into
+  two RG8 planes to stay within the Direct3D 11 4 GiB resource limit.
+- Tileable 3D noise texture with domain warping and fine density modulation for sharper
+  fireball, smoke and dust detail.
+- Physically active atmosphere: moist-air density (Magnus-Tetens), humidity-dependent
+  sound speed, Sachs pressure scaling for the blast and fireball, plus humidity controls
+  and derived readouts in the Atmosphere panel.
 - High-fidelity GPU mode: a 3D compressible Euler solver (HLLC Riemann solver,
   MUSCL/minmod reconstruction, CFL-adaptive time step, buoyancy and soot transport)
   running in Direct3D 11 compute shaders at 64³–128³. Selectable under

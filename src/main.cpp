@@ -40,6 +40,7 @@ void PrintUsage() {
     LogInfo("  --solver-resolution <n>  Solver grid resolution (64, 96 or 128).");
     LogInfo("  --solver-steps <n>    Solver steps per frame (default 24).");
     LogInfo("  --solver-time <s>     Solver time for headless captures.");
+    LogInfo("  --volume-resolution <n>  Volume grid (64, 96, 128, 160, 192, 256, 512, 1024).");
     LogInfo("  --no-vsync            Disable vertical synchronisation.");
     LogInfo("  --debug               Enable the D3D11 debug layer.");
     LogInfo("  --help                Show this help.");
@@ -133,6 +134,8 @@ ParsedArguments ParseCommandLine() {
             parseInt(result.options.solverSteps);
         } else if (argument == L"--solver-time") {
             parseDouble(result.options.solverTime);
+        } else if (argument == L"--volume-resolution") {
+            parseInt(result.options.volumeResolution);
         } else if (argument == L"--no-vsync") {
             result.options.vsync = false;
         } else if (argument == L"--debug") {

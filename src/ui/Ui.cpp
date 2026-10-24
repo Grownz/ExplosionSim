@@ -226,7 +226,28 @@ void DrawAtmosphere(app::AppSettings& settings, UiActions& actions) {
                ImGuiSliderFlags_None, actions);
     PhysSlider("Wind direction", &settings.simulation.windDirectionDeg, 0.0, 360.0, "%.0f°",
                ImGuiSliderFlags_None, actions);
-    Hint("Wind advects the rising cloud; the shock model itself assumes still air.");
+
+    float humidity = float(settings.simulation.relativeHumidity * 100.0);
+    if (ImGui::SliderFloat("Humidity", &humidity, 0.0f, 100.0f, "%.0f %%")) {
+        settings.simulation.relativeHumidity = double(humidity) / 100.0;
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        actions.applySimulationSettings = true;
+    }
+
+    // Derived quantities show the physical effect of the atmosphere.
+    sim::Environment environment{};
+    environment.pressurePa = settings.simulation.ambientPressurePa;
+    environment.temperatureK = settings.simulation.ambientTemperatureK;
+    environment.relativeHumidity = settings.simulation.relativeHumidity;
+    Readout("Air density", "%.4f kg/m³", environment.AirDensity());
+    Readout("Speed of sound", "%.1f m/s", environment.SoundSpeed());
+    Readout("Vapour pressure", "%.0f Pa", environment.VaporPressurePa());
+    Readout("Virtual temperature", "%.1f K", environment.VirtualTemperatureK());
+
+    Hint("Density and sound speed drive the blast integration (Sachs scaling). "
+         "Humidity lowers the density and raises the sound speed; wind advects the "
+         "rising cloud and particles.");
 }
 
 void DrawPlayback(app::AppSettings& settings, UiActions& actions, const sim::Simulation& simulation) {
@@ -393,13 +414,22 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
     ImGui::SliderFloat("Bloom strength", &render.bloomStrength, 0.0f, 1.5f, "%.2f");
     ImGui::SliderInt("Ray steps", &render.raymarchSteps, 24, 192);
 
-    float resolution = float(settings.simulation.volumeResolution);
-    if (ImGui::SliderFloat("Volume resolution", &resolution, 32.0f, 160.0f, "%.0f³",
-                           ImGuiSliderFlags_AlwaysClamp)) {
-        settings.simulation.volumeResolution = int(resolution + 0.5f);
+    const int resolutions[] = {64, 96, 128, 160, 192, 256, 512, 1024};
+    const char* resolutionLabels[] = {"64³", "96³", "128³", "160³",
+                                      "192³", "256³", "512³", "1024³"};
+    int resolutionIndex = 2;
+    for (int i = 0; i < 8; ++i) {
+        if (resolutions[i] == settings.simulation.volumeResolution) {
+            resolutionIndex = i;
+        }
     }
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
+    if (ImGui::Combo("Volume resolution", &resolutionIndex, resolutionLabels, 8)) {
+        settings.simulation.volumeResolution = resolutions[resolutionIndex];
         actions.applySimulationSettings = true;
+    }
+    if (settings.simulation.volumeResolution >= 512) {
+        Hint("Resolutions of 512³ and 1024³ require several GB of RAM/VRAM and are "
+             "baked at a reduced rate.");
     }
 
     ImGui::Checkbox("Volume", &render.enableVolume);

@@ -1,10 +1,15 @@
 #include "sim/VolumeBaker.h"
 
+#include "core/Log.h"
 #include "core/ThreadPool.h"
+
+#include <DirectXPackedVector.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
+#include <new>
 
 using namespace DirectX;
 
@@ -41,8 +46,7 @@ inline float HashCellFloat(int x, int y, int z) {
 }
 
 // Trilinear value noise, used to break up the analytic fireball surface.
-inline float ValueNoise(float x, float y, float z) {
-    const int xi = int(std::floor(x));
+inline float ValueNoise(float x, float y, float z) {    const int xi = int(std::floor(x));
     const int yi = int(std::floor(y));
     const int zi = int(std::floor(z));
     const float fx = x - float(xi);
@@ -70,29 +74,32 @@ inline float ValueNoise(float x, float y, float z) {
     return nxy0 + (nxy1 - nxy0) * uz;
 }
 
+inline uint16_t ToHalf(float value) {
+    const DirectX::PackedVector::HALF half = DirectX::PackedVector::XMConvertFloatToHalf(value);
+    uint16_t bits = 0;
+    std::memcpy(&bits, &half, sizeof(bits));
+    return bits;
+}
+
 } // namespace
 
 void VolumeBaker::Initialize(core::ThreadPool* pool, int resolution) {
     pool_ = pool;
-    resolution_ = std::max(16, resolution);
+    resolution_ = std::clamp(resolution, 16, 1024);
     Reset();
 }
 
 void VolumeBaker::Reset() {
     WaitForIdle();
     ready_.store(false, std::memory_order_release);
+    inFlight_.store(false, std::memory_order_release);
+    uploadedVersion_.store(0, std::memory_order_release);
     hasData_ = false;
-    version_ = 0;
-    currentIndex_ = 0;
-    writeIndex_ = 1;
-    for (auto& buffer : buffers_) {
-        buffer.resolution = 0;
-        buffer.rgba.clear();
-    }
+    frame_ = VolumeFrame{};
 }
 
 void VolumeBaker::SetResolution(int resolution) {
-    resolution = std::max(16, resolution);
+    resolution = std::clamp(resolution, 16, 1024);
     if (resolution == resolution_) {
         return;
     }
@@ -105,9 +112,10 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
         return;
     }
     if (ready_.load(std::memory_order_acquire)) {
-        // A finished frame is still waiting to be adopted; keep the newest one
-        // for the next update instead of overwriting it.
-        return;
+        return; // A finished frame is still waiting to be uploaded.
+    }
+    if (frame_.version != uploadedVersion_.load(std::memory_order_acquire)) {
+        return; // The previous frame has not been uploaded yet.
     }
 
     const BlastState& state = model.State();
@@ -162,22 +170,42 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
                                    std::max(float(fireballRadius) * 1.35f, 0.05f));
     params.cloudStrength = capRamp * capSize;
 
-    // Make sure the mesh contains the stem / ground interaction region.
-    params.cloudStrength = std::max(params.cloudStrength, 0.0f);
-
     job_.params = params;
     job_.bounds = bounds;
     job_.extinctionScale = params.extinctionScale;
     job_.resolution = resolution;
 
-    VolumeFrame& target = buffers_[writeIndex_];
-    target.resolution = resolution;
-    target.bounds = bounds;
-    target.extinctionScale = params.extinctionScale;
-    const size_t voxelCount = size_t(resolution) * size_t(resolution) * size_t(resolution);
-    target.rgba.resize(voxelCount * 4);
-    job_.target = &target.rgba;
+    frame_.resolution = resolution;
+    frame_.bounds = bounds;
+    frame_.extinctionScale = params.extinctionScale;
+    // 16-bit half floats up to 512³. 1024³ would exceed the 4 GiB D3D11
+    // resource limit as RGBA8, so it is split into two RG8 textures (2 GiB
+    // each): RG = density/temperature, RG = dust/soot.
+    frame_.split = resolution >= 1024;
+    frame_.halfFloat = resolution < 1024;
+    frame_.bytesPerVoxel = frame_.split ? 2 : (frame_.halfFloat ? 8 : 4);
+    job_.bytesPerVoxel = frame_.bytesPerVoxel;
+    job_.halfFloat = frame_.halfFloat;
+    job_.split = frame_.split;
 
+    const size_t voxelCount = size_t(resolution) * size_t(resolution) * size_t(resolution);
+    try {
+        frame_.rgba.resize(voxelCount * size_t(frame_.bytesPerVoxel));
+        if (frame_.split) {
+            frame_.rgba2.resize(voxelCount * 2);
+        } else {
+            frame_.rgba2.clear();
+        }
+    } catch (const std::bad_alloc&) {
+        LogError("Volume bake: out of memory for %d^3 (%.2f GB).", resolution,
+                 double(voxelCount) * double(frame_.bytesPerVoxel) *
+                     (frame_.split ? 2.0 : 1.0) / (1024.0 * 1024.0 * 1024.0));
+        return;
+    }
+    job_.target = &frame_.rgba;
+    job_.target2 = frame_.split ? &frame_.rgba2 : nullptr;
+
+    const uint64_t nextVersion = frame_.version + 1;
     inFlight_.store(true, std::memory_order_release);
     ready_.store(false, std::memory_order_release);
 
@@ -185,9 +213,11 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
     const int sliceChunk = std::max(1, resolution / (int(pool_->WorkerCount()) * 4));
     BakeJob* job = &job_;
 
-    auto finish = [this, start] {
+    auto finish = [this, start, nextVersion] {
         const auto end = std::chrono::high_resolution_clock::now();
         lastBakeMs_ = std::chrono::duration<float, std::milli>(end - start).count();
+        frame_.version = nextVersion;
+        hasData_ = true;
         inFlight_.store(false, std::memory_order_release);
         ready_.store(true, std::memory_order_release);
     };
@@ -197,7 +227,6 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
             BakeRange(begin, end, *job);
         });
         finish();
-        AdoptFinished();
     } else {
         pool_->ParallelForAsync(
             resolution, sliceChunk,
@@ -214,21 +243,23 @@ void VolumeBaker::BakeNow(const BlastModel& model) {
 }
 
 bool VolumeBaker::Poll() {
-    if (!ready_.load(std::memory_order_acquire)) {
-        return false;
-    }
-    AdoptFinished();
-    return hasData_;
+    return ready_.load(std::memory_order_acquire);
 }
 
-void VolumeBaker::AdoptFinished() {
-    if (!ready_.exchange(false, std::memory_order_acq_rel)) {
-        return;
-    }
-    currentIndex_ = writeIndex_;
-    writeIndex_ = 1 - currentIndex_;
-    hasData_ = true;
-    ++version_;
+bool VolumeBaker::HasNewFrame() const {
+    return ready_.load(std::memory_order_acquire) &&
+           frame_.version != uploadedVersion_.load(std::memory_order_acquire);
+}
+
+bool VolumeBaker::CanStartBake() const {
+    return !inFlight_.load(std::memory_order_acquire) &&
+           !ready_.load(std::memory_order_acquire) &&
+           frame_.version == uploadedVersion_.load(std::memory_order_acquire);
+}
+
+void VolumeBaker::MarkUploaded(uint64_t version) {
+    uploadedVersion_.store(version, std::memory_order_release);
+    ready_.store(false, std::memory_order_release);
 }
 
 void VolumeBaker::WaitForIdle() {
@@ -260,15 +291,22 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
     const float capX = p.cloudX;
     const float capZ = p.cloudZ;
 
-    std::vector<float>& target = *job.target;
+    std::vector<uint8_t>& target = *job.target;
+    std::vector<uint8_t>* target2 = job.target2;
+    const int bytesPerVoxel = job.bytesPerVoxel;
 
     for (int z = zBegin; z < zEnd; ++z) {
         const float worldZ = minZ + (float(z) + 0.5f) * sizeZ * invResolution;
-        float* rowZ = target.data() + size_t(z) * size_t(resolution) * size_t(resolution) * 4;
+        uint8_t* rowZ = target.data() + size_t(z) * size_t(resolution) * size_t(resolution) *
+                                            size_t(bytesPerVoxel);
+        uint8_t* rowZ2 = target2 ? target2->data() + size_t(z) * size_t(resolution) *
+                                                       size_t(resolution) * 2
+                                 : nullptr;
 
         for (int y = 0; y < resolution; ++y) {
             const float worldY = minY + (float(y) + 0.5f) * sizeY * invResolution;
-            float* rowY = rowZ + size_t(y) * size_t(resolution) * 4;
+            uint8_t* rowY = rowZ + size_t(y) * size_t(resolution) * size_t(bytesPerVoxel);
+            uint8_t* rowY2 = rowZ2 ? rowZ2 + size_t(y) * size_t(resolution) * 2 : nullptr;
 
             for (int x = 0; x < resolution; ++x) {
                 const float worldX = minX + (float(x) + 0.5f) * sizeX * invResolution;
@@ -301,7 +339,7 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                         const float effectiveRadius =
                             fireballRadius * (0.62f + 0.56f * lump);
                         const float q = fireballDistance / std::max(effectiveRadius, 0.01f);
-                        const float falloff = 1.0f - SmoothStep(0.35f, 1.10f, q);
+                        const float falloff = 1.0f - SmoothStep(0.25f, 1.20f, q);
 
                         if (falloff > 0.001f) {
                             // High-frequency detail: mottled temperature and
@@ -329,7 +367,7 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                                 Saturate(1.0f - 0.9f * q) * (0.70f + 0.55f * heatNoise);
                             const float hot = ambient +
                                               (p.fireballTemperature - ambient) *
-                                                  (0.22f + 1.20f * core) *
+                                                  (0.28f + 1.00f * core) *
                                                   (0.72f + 0.55f * detail);
                             temperature = std::max(temperature, hot);
 
@@ -477,17 +515,32 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                     }
                 }
 
-                float* out = rowY + size_t(x) * 4;
+                uint8_t* out = rowY + size_t(x) * size_t(bytesPerVoxel);
+                uint8_t* out2 = rowY2 ? rowY2 + size_t(x) * 2 : nullptr;
                 if (density > 0.002f) {
-                    out[0] = density;
-                    out[1] = Saturate(temperature / kTemperatureScale);
-                    out[2] = Saturate(dust);
-                    out[3] = Saturate(soot);
+                    const float values[4] = {density, Saturate(temperature / kTemperatureScale),
+                                             Saturate(dust), Saturate(soot)};
+                    if (job.split) {
+                        out[0] = uint8_t(Saturate(values[0]) * 255.0f + 0.5f);
+                        out[1] = uint8_t(Saturate(values[1]) * 255.0f + 0.5f);
+                        out2[0] = uint8_t(Saturate(values[2]) * 255.0f + 0.5f);
+                        out2[1] = uint8_t(Saturate(values[3]) * 255.0f + 0.5f);
+                    } else if (job.halfFloat) {
+                        for (int channel = 0; channel < 4; ++channel) {
+                            const uint16_t half = ToHalf(values[channel]);
+                            std::memcpy(out + channel * 2, &half, sizeof(half));
+                        }
+                    } else {
+                        for (int channel = 0; channel < 4; ++channel) {
+                            out[channel] = uint8_t(Saturate(values[channel]) * 255.0f + 0.5f);
+                        }
+                    }
                 } else {
-                    out[0] = 0.0f;
-                    out[1] = 0.0f;
-                    out[2] = 0.0f;
-                    out[3] = 0.0f;
+                    std::memset(out, 0, size_t(bytesPerVoxel));
+                    if (out2) {
+                        out2[0] = 0;
+                        out2[1] = 0;
+                    }
                 }
             }
         }

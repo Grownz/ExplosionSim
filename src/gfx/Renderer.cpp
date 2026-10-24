@@ -17,6 +17,72 @@ namespace {
 constexpr DXGI_FORMAT kHdrFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr int kParticleStride = sizeof(sim::ParticleInstance);
 
+float SmoothNoiseWeight(float t) {
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float LatticeHash(int x, int y, int z, int seed) {
+    uint32_t hash = uint32_t(x) * 374761393u + uint32_t(y) * 668265263u +
+                    uint32_t(z) * 2246822519u + uint32_t(seed) * 3266489917u;
+    hash = (hash ^ (hash >> 13)) * 1274126177u;
+    hash ^= hash >> 16;
+    return float(hash & 0xFFFFFFu) / 16777215.0f;
+}
+
+float PeriodicNoise(float x, float y, float z, int period, int seed) {
+    const int xi = int(std::floor(x));
+    const int yi = int(std::floor(y));
+    const int zi = int(std::floor(z));
+    const float fx = SmoothNoiseWeight(x - float(xi));
+    const float fy = SmoothNoiseWeight(y - float(yi));
+    const float fz = SmoothNoiseWeight(z - float(zi));
+
+    auto wrap = [period](int value) {
+        const int result = value % period;
+        return result < 0 ? result + period : result;
+    };
+
+    const int x0 = wrap(xi);
+    const int y0 = wrap(yi);
+    const int z0 = wrap(zi);
+    const int x1 = wrap(xi + 1);
+    const int y1 = wrap(yi + 1);
+    const int z1 = wrap(zi + 1);
+
+    const float n000 = LatticeHash(x0, y0, z0, seed);
+    const float n100 = LatticeHash(x1, y0, z0, seed);
+    const float n010 = LatticeHash(x0, y1, z0, seed);
+    const float n110 = LatticeHash(x1, y1, z0, seed);
+    const float n001 = LatticeHash(x0, y0, z1, seed);
+    const float n101 = LatticeHash(x1, y0, z1, seed);
+    const float n011 = LatticeHash(x0, y1, z1, seed);
+    const float n111 = LatticeHash(x1, y1, z1, seed);
+
+    const float nx00 = n000 + (n100 - n000) * fx;
+    const float nx10 = n010 + (n110 - n010) * fx;
+    const float nx01 = n001 + (n101 - n001) * fx;
+    const float nx11 = n011 + (n111 - n011) * fx;
+    const float nxy0 = nx00 + (nx10 - nx00) * fy;
+    const float nxy1 = nx01 + (nx11 - nx01) * fy;
+    return nxy0 + (nxy1 - nxy0) * fz;
+}
+
+float TileableFbm(float u, float v, float w, int basePeriod, int octaves, int seed) {
+    float sum = 0.0f;
+    float amplitude = 0.5f;
+    float normalization = 0.0f;
+    int period = basePeriod;
+    for (int i = 0; i < octaves; ++i) {
+        sum += amplitude *
+               PeriodicNoise(u * float(period), v * float(period), w * float(period), period,
+                             seed + i * 17);
+        normalization += amplitude;
+        amplitude *= 0.5f;
+        period *= 2;
+    }
+    return sum / std::max(normalization, 1e-6f);
+}
+
 bool CreateStructuredBuffer(ID3D11Device* device, int capacity, ComPtr<ID3D11Buffer>& buffer,
                             ComPtr<ID3D11ShaderResourceView>& srv) {
     buffer.Reset();
@@ -65,7 +131,7 @@ bool Renderer::Initialize(GfxDevice& device) {
         return false;
     }
 
-    if (!CreateStates() || !CreatePipeline() ||
+    if (!CreateStates() || !CreatePipeline() || !CreateNoiseTexture() ||
         !EnsureTargets(device_->Width(), device_->Height())) {
         return false;
     }
@@ -220,6 +286,82 @@ bool Renderer::CreatePipeline() {
     return true;
 }
 
+bool Renderer::CreateNoiseTexture() {
+    constexpr int kSize = 64;
+    std::vector<uint8_t> data(size_t(kSize) * kSize * kSize * 4);
+
+    for (int z = 0; z < kSize; ++z) {
+        const float w = (float(z) + 0.5f) / float(kSize);
+        for (int y = 0; y < kSize; ++y) {
+            const float v = (float(y) + 0.5f) / float(kSize);
+            for (int x = 0; x < kSize; ++x) {
+                const float u = (float(x) + 0.5f) / float(kSize);
+                const size_t index = (size_t(z) * kSize * kSize + size_t(y) * kSize + size_t(x)) * 4;
+                data[index + 0] = uint8_t(std::clamp(TileableFbm(u, v, w, 4, 4, 11), 0.0f, 1.0f) * 255.0f);
+                data[index + 1] = uint8_t(std::clamp(TileableFbm(u, v, w, 5, 4, 23), 0.0f, 1.0f) * 255.0f);
+                data[index + 2] = uint8_t(std::clamp(TileableFbm(u, v, w, 6, 4, 37), 0.0f, 1.0f) * 255.0f);
+                data[index + 3] = uint8_t(std::clamp(TileableFbm(u, v, w, 10, 5, 53), 0.0f, 1.0f) * 255.0f);
+            }
+        }
+    }
+
+    D3D11_TEXTURE3D_DESC desc{};
+    desc.Width = kSize;
+    desc.Height = kSize;
+    desc.Depth = kSize;
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA initial{};
+    initial.pSysMem = data.data();
+    initial.SysMemPitch = UINT(kSize) * 4;
+    initial.SysMemSlicePitch = UINT(kSize) * UINT(kSize) * 4;
+
+    if (FAILED(device_->Device()->CreateTexture3D(&desc, &initial, &noiseTexture_)) ||
+        FAILED(device_->Device()->CreateShaderResourceView(noiseTexture_.Get(), nullptr,
+                                                           &noiseSRV_))) {
+        LogError("Failed to create the detail noise texture.");
+        return false;
+    }
+
+    D3D11_SAMPLER_DESC samplerDesc{};
+    samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+    samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+    samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+    samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+    if (FAILED(device_->Device()->CreateSamplerState(&samplerDesc, &noiseSampler_))) {
+        LogError("Failed to create the detail noise sampler.");
+        return false;
+    }
+
+    // 1x1x1 placeholder bound to the auxiliary volume slot when the volume is
+    // not split into two RG8 planes.
+    D3D11_TEXTURE3D_DESC dummyDesc{};
+    dummyDesc.Width = 1;
+    dummyDesc.Height = 1;
+    dummyDesc.Depth = 1;
+    dummyDesc.MipLevels = 1;
+    dummyDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    dummyDesc.Usage = D3D11_USAGE_DEFAULT;
+    dummyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const uint8_t zero[4] = {0, 0, 0, 0};
+    D3D11_SUBRESOURCE_DATA dummyData{};
+    dummyData.pSysMem = zero;
+    dummyData.SysMemPitch = 4;
+    dummyData.SysMemSlicePitch = 4;
+    ComPtr<ID3D11Texture3D> dummyTexture;
+    if (FAILED(device_->Device()->CreateTexture3D(&dummyDesc, &dummyData, &dummyTexture)) ||
+        FAILED(device_->Device()->CreateShaderResourceView(dummyTexture.Get(), nullptr,
+                                                           &volumeDummySRV_))) {
+        LogError("Failed to create the dummy volume texture.");
+        return false;
+    }
+    return true;
+}
+
 bool Renderer::CreateTarget(Target& target, int width, int height) {
     target.Reset();
     width = std::max(1, width);
@@ -303,45 +445,77 @@ void Renderer::UploadVolume(const sim::VolumeFrame& frame) {
         return;
     }
 
-    if (!volumeTexture_ || volumeResolution_ != frame.resolution) {
+    const bool split = frame.split;
+    const bool halfFloat = frame.halfFloat;
+    const DXGI_FORMAT format = split ? DXGI_FORMAT_R8G8_UNORM
+                                     : (halfFloat ? DXGI_FORMAT_R16G16B16A16_FLOAT
+                                                  : DXGI_FORMAT_R8G8B8A8_UNORM);
+
+    if (!volumeTexture_ || volumeResolution_ != frame.resolution ||
+        volumeHalfFloat_ != halfFloat || volumeSplit_ != split) {
         volumeSRV_.Reset();
         volumeTexture_.Reset();
+        volumeAuxSRV_.Reset();
+        volumeAuxTexture_.Reset();
 
-        D3D11_TEXTURE3D_DESC desc{};
-        desc.Width = UINT(frame.resolution);
-        desc.Height = UINT(frame.resolution);
-        desc.Depth = UINT(frame.resolution);
-        desc.MipLevels = 1;
-        desc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-        desc.Usage = D3D11_USAGE_DEFAULT;
-        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        auto createVolume = [this](int resolution, DXGI_FORMAT textureFormat,
+                                   ComPtr<ID3D11Texture3D>& texture,
+                                   ComPtr<ID3D11ShaderResourceView>& srv) {
+            D3D11_TEXTURE3D_DESC desc{};
+            desc.Width = UINT(resolution);
+            desc.Height = UINT(resolution);
+            desc.Depth = UINT(resolution);
+            desc.MipLevels = 1;
+            desc.Format = textureFormat;
+            desc.Usage = D3D11_USAGE_DEFAULT;
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            if (FAILED(device_->Device()->CreateTexture3D(&desc, nullptr, &texture))) {
+                return false;
+            }
+            D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+            srvDesc.Format = textureFormat;
+            srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
+            srvDesc.Texture3D.MipLevels = 1;
+            return SUCCEEDED(
+                device_->Device()->CreateShaderResourceView(texture.Get(), &srvDesc, &srv));
+        };
 
-        if (FAILED(device_->Device()->CreateTexture3D(&desc, nullptr, &volumeTexture_))) {
-            LogError("Failed to create 3D volume texture.");
+        if (!createVolume(frame.resolution, format, volumeTexture_, volumeSRV_)) {
+            LogError("Failed to create 3D volume texture at %d^3.", frame.resolution);
             volumeValid_ = false;
             return;
         }
 
-        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-        srvDesc.Format = desc.Format;
-        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
-        srvDesc.Texture3D.MipLevels = 1;
-        if (FAILED(device_->Device()->CreateShaderResourceView(volumeTexture_.Get(), &srvDesc,
-                                                               &volumeSRV_))) {
-            LogError("Failed to create volume SRV.");
-            volumeValid_ = false;
-            return;
+        if (split) {
+            if (!createVolume(frame.resolution, DXGI_FORMAT_R8G8_UNORM, volumeAuxTexture_,
+                              volumeAuxSRV_)) {
+                LogError("Failed to create the auxiliary 3D volume texture at %d^3.",
+                         frame.resolution);
+                volumeValid_ = false;
+                return;
+            }
+        } else {
+            volumeAuxSRV_ = volumeDummySRV_;
         }
+
         volumeResolution_ = frame.resolution;
+        volumeHalfFloat_ = halfFloat;
+        volumeSplit_ = split;
     }
 
     const UINT resolution = UINT(frame.resolution);
-    const UINT rowPitch = resolution * 4 * sizeof(float);
+    const UINT rowPitch = resolution * UINT(frame.bytesPerVoxel);
     const UINT depthPitch = rowPitch * resolution;
     device_->Context()->UpdateSubresource(volumeTexture_.Get(), 0, nullptr, frame.rgba.data(),
                                           rowPitch, depthPitch);
 
-    uploadedVolumeVersion_ = frame.version;
+    if (split && volumeAuxTexture_) {
+        const UINT auxPitch = resolution * 2;
+        const UINT auxDepthPitch = auxPitch * resolution;
+        device_->Context()->UpdateSubresource(volumeAuxTexture_.Get(), 0, nullptr,
+                                              frame.rgba2.data(), auxPitch, auxDepthPitch);
+    }
+
     volumeValid_ = true;
 }
 
@@ -463,7 +637,8 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
 
     const bool highFidelity =
         simulation.Settings().mode == sim::SimulationMode::HighFidelity;
-    frameConstants_.volumeParams = XMFLOAT4(highFidelity ? 1.2f : 1.0f, 0.0f, 0.0f, 0.0f);
+    frameConstants_.volumeParams = XMFLOAT4(highFidelity ? 1.2f : 1.0f,
+                                            activeVolumeSplit_ ? 1.0f : 0.0f, 0.0f, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11DeviceContext* context = device_->Context();
@@ -546,7 +721,7 @@ EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
         std::clamp(charge.heightOfBurstM, 0.05, 2.0 * config.domainHalfExtent - 0.05);
     config.ambientDensity = environment.AirDensity();
     config.ambientPressure = environment.pressurePa;
-    config.ambientTemperature = environment.temperatureK;
+    config.ambientTemperature = environment.VirtualTemperatureK();
     config.gamma = environment.gamma;
     config.gasConstant = environment.gasConstant;
     config.gravity = environment.gravity;
@@ -554,7 +729,7 @@ EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
     return config;
 }
 
-void Renderer::PrepareHighFidelity(const sim::Simulation& simulation, double targetTime) {
+void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTime) {
     if (!solver_.Reset(MakeEulerConfig(simulation))) {
         LogError("High-fidelity solver could not be initialised.");
         solverPrepared_ = false;
@@ -590,7 +765,7 @@ void Renderer::StepSolverOnce(int steps) {
     solver_.Step(steps);
 }
 
-void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
+void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
                       const RenderSettings& settings) {
     if (!device_) {
         return;
@@ -633,10 +808,12 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
         activeVolumeValid_ = solverVolume != nullptr;
         activeVolumeBounds_ = solver_.Bounds();
         activeVolumeExtinction_ = solver_.ExtinctionScale();
+        activeVolumeSplit_ = false;
     } else {
         // CPU volume bake upload (only when a new bake is available).
-        if (volumeFrame.version != uploadedVolumeVersion_ && !volumeFrame.empty()) {
+        if (simulation.Volume().HasNewFrame() && !volumeFrame.empty()) {
             UploadVolume(volumeFrame);
+            simulation.Volume().MarkUploaded(volumeFrame.version);
         }
         if (!simulation.Volume().HasData()) {
             volumeValid_ = false;
@@ -645,6 +822,7 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
         activeVolumeValid_ = volumeValid_ && simulation.Volume().HasData();
         activeVolumeBounds_ = volumeFrame.bounds;
         activeVolumeExtinction_ = volumeFrame.extinctionScale;
+        activeVolumeSplit_ = volumeSplit_;
     }
 
     const int capacity = simulation.Particles().Capacity();
@@ -751,15 +929,20 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
     if (settings.enableVolume && activeVolumeValid_ && volumeView) {
         context->OMSetRenderTargets(1, &hdrRTV, nullptr);
         context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
-        ID3D11ShaderResourceView* srvs[2] = {volumeView, depthSample};
-        context->PSSetShaderResources(0, 2, srvs);
+        ID3D11ShaderResourceView* srvs[4] = {volumeView, depthSample, noiseSRV_.Get(),
+                                             volumeAuxSRV_ ? volumeAuxSRV_.Get()
+                                                           : volumeDummySRV_.Get()};
+        context->PSSetShaderResources(0, 4, srvs);
+        ID3D11SamplerState* samplers[2] = {linearClamp_.Get(), noiseSampler_.Get()};
+        context->PSSetSamplers(0, 2, samplers);
         context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
         context->OMSetBlendState(blendPremultiplied_.Get(), nullptr, 0xffffffff);
         context->PSSetShader(volumePS_.Get(), nullptr, 0);
         context->Draw(3, 0);
 
-        ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
-        context->PSSetShaderResources(0, 2, nullSRVs);
+        ID3D11ShaderResourceView* nullSRVs[4] = {nullptr, nullptr, nullptr, nullptr};
+        context->PSSetShaderResources(0, 4, nullSRVs);
+        context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());
     }
 
     // --- Particles ---------------------------------------------------------

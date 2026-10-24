@@ -17,8 +17,10 @@ start-up at 0.4 m above the ground**.
   speed, Sedov-like fireball growth, buoyant mushroom-cloud dynamics, thermal radiation
   and Gurney-driven debris. All parameters are in SI units and exposed in the UI.
 - **Real-time volumetric rendering** – the fireball, shock front and smoke field are
-  baked into a 3D texture on a worker pool and ray-marched on the GPU with
+  baked into a 3D texture (64³–1024³) on a worker pool and ray-marched on the GPU with
   emission/absorption, blackbody colour, single scattering and HDR bloom.
+- **Sub-voxel detail** – a tileable 3D noise texture warps the volume sample position
+  and adds fine structure, so even moderate volume resolutions look turbulent.
 - **Multithreading** – a work-stealing thread pool parallelises particle integration and
   volume baking; the render thread always participates in the work.
 - **Cinematic particles** – instanced billboards for glowing debris, sparks, turbulent
@@ -105,6 +107,7 @@ The application opens a window, arms the 200 g charge and detonates after two se
 --solver-resolution   solver grid resolution (64, 96 or 128)
 --solver-steps        solver steps per frame (default 24)
 --solver-time <s>     solver time for headless captures
+--volume-resolution <n>  volume grid: 64, 96, 128, 160, 192, 256, 512 or 1024
 --no-vsync            disable vertical synchronisation
 --debug               enable the D3D11 debug layer
 --help                show all options
@@ -173,6 +176,22 @@ Implemented effects:
 - Thermal radiation fluence and burn radius
 - Drag/gravity/bounce debris, sparks, soot and shock-lifted dust
 - Friedlander blast waveform for an observer at a chosen distance
+
+## Atmosphere
+
+Temperature, pressure, humidity and wind are physically active:
+
+- **Density** uses the moist-air equation with the Magnus-Tetens vapour pressure.
+- **Speed of sound** is derived from `sqrt(gamma p / rho)`, so humidity and temperature
+  change the shock Mach number and propagation speed.
+- **Pressure** drives the Sachs scaling: the effective scaled distance shrinks with
+  `(p/p0)^(1/3)`, and the fireball radius grows at altitude. Absolute overpressure at a
+  fixed range is lower in thin air.
+- **Wind** advects the rising cloud, the smoke and the dust (the shock model itself
+  assumes still air).
+
+The Atmosphere panel shows the resulting density, sound speed, vapour pressure and
+virtual temperature.
 
 ## Rendering
 

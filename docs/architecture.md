@@ -79,7 +79,14 @@ The volume is drawn before the smoke particles so soot composites over the fireb
 
 ### Volume texture
 
-- 128³ by default (32…160 configurable), `R32G32B32A32_FLOAT`
+- 128³ by default (64…1024 configurable), `RGBA16F` up to 512³ and two `RG8` planes
+  for 1024³ (the 4 GiB D3D11 per-resource limit makes a single 1024³ RGBA texture
+  impossible)
+- one CPU buffer with an upload handshake; high resolutions are baked at a reduced rate
+- a tileable 64³ RGBA8 noise volume provides domain warping and fine detail in the
+  raymarcher
+- the raymarcher binds the noise volume at `t2` and uses it both to warp the sample
+  position (filaments) and to modulate density at sub-voxel scale
 - updated with `UpdateSubresource` when the baker publishes a new version
 - linear clamp sampler, no mipmaps
 - the shader jitters ray start positions to hide slice banding and adds procedural noise

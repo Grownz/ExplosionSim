@@ -31,6 +31,31 @@ Distances are non-dimensionalised with the Hopkinson-Cranz cube-root scaling
 Z = R / W^(1/3)          [m/kg^(1/3)]
 ```
 
+and corrected for ambient pressure with the Sachs scaling
+
+```
+Z_eff = Z · (p0 / p_ref)^(1/3)
+```
+
+so a charge at altitude produces a larger fireball and a lower absolute overpressure at
+a fixed physical range. The ambient density (including humidity) and the speed of sound enter the shock
+integration and the particle drag.
+
+### Moist atmosphere
+
+The air density uses the partial pressures of dry air and water vapour:
+
+```
+p_sat = 610.94 · exp(17.625 · T_C / (T_C + 243.04))     [Pa]
+p_v   = RH · p_sat
+rho   = (p - p_v) / (R_d T) + p_v / (R_v T)             [kg/m³]
+c     = sqrt(gamma · p / rho)                            [m/s]
+```
+
+with `R_d = 287.058`, `R_v = 461.5` J/(kg K). Humidity therefore lowers the density
+and slightly raises the speed of sound. The high-fidelity solver uses the resulting
+virtual temperature so its ideal-gas equation of state remains consistent.
+
 The peak incident overpressure follows Brode's two-branch fit:
 
 ```
