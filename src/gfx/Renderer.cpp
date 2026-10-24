@@ -638,9 +638,12 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
 
     const bool highFidelity =
         simulation.Settings().mode == sim::SimulationMode::HighFidelity;
-    frameConstants_.volumeParams = XMFLOAT4(highFidelity ? 1.2f : 1.0f,
+    frameConstants_.volumeParams = XMFLOAT4(1.0f,
                                             activeVolumeSplit_ ? 1.0f : 0.0f,
-                                            highFidelity ? 0.5f : 1.0f, 0.0f);
+                                            1.0f, 1.0f);
+    frameConstants_.volumeParams2 =
+        XMFLOAT4(highFidelity ? 0.40f : 1.0f, highFidelity ? 0.16f : 1.0f,
+                 highFidelity ? 0.0f : 1.0f, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11DeviceContext* context = device_->Context();
@@ -735,25 +738,52 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
     if (!simulation.Settings().solverAutoScale || !solver_.HasVolume()) {
         return;
     }
-    if (solver_.Stats().accuracyFactor >= 8.0f) {
-        return;
+
+    constexpr double kTriggerFraction = 0.75;
+    constexpr float kExpansion = 1.3f;
+    constexpr float kMaxAccuracy = 16.0f;
+
+    // The analytic model is only a fallback for the first reduction pass. It
+    // consistently underestimates the rising Euler plume, which is exactly what
+    // used to get clipped at the top of the domain.
+    double requiredHalf = 0.0;
+    double requiredTop = 0.0;
+    if (solver_.HasFieldBounds()) {
+        requiredHalf = std::max(double(solver_.FieldRadius()) * 1.10, 0.5);
+        requiredTop = std::max(double(solver_.FieldTop()) * 1.10, 1.0);
+    } else {
+        const sim::BlastState& state = simulation.Blast().State();
+        requiredHalf = std::max({state.fireballRadius * 2.4,
+                                 state.cloudRadius * 1.35, 0.5});
+        requiredTop =
+            std::max({state.fireballCenterY + state.fireballRadius * 2.0,
+                      state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
     }
 
-    const sim::BlastState& state = simulation.Blast().State();
-    const sim::VolumeBounds& bounds = solver_.Bounds();
-    const float half = 0.5f * (bounds.max.x - bounds.min.x);
-    const float top = bounds.max.y;
-
-    // The volume field contains the fireball, its smoke envelope and the base
-    // dust. Expand before any of them reaches the boundary.
-    const double requiredHalf = std::max({state.fireballRadius * 2.4,
-                                          state.cloudRadius * 1.35, 0.5});
-    const double requiredTop =
-        std::max({state.fireballCenterY + state.fireballRadius * 2.0,
-                  state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
-
-    if (requiredHalf > half * 0.70f || requiredTop > top * 0.70f) {
-        solver_.RescaleDomain(1.3f);
+    // A single 1.3x step is not always enough after a fast plume rise, so keep
+    // expanding until the measured field fits with margin (or the accuracy
+    // budget is exhausted).
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const sim::VolumeBounds& bounds = solver_.Bounds();
+        const double half = 0.5 * (bounds.max.x - bounds.min.x);
+        const double top = bounds.max.y;
+        const bool tooWide = requiredHalf > half * kTriggerFraction;
+        const bool tooTall = requiredTop > top * kTriggerFraction;
+        if (!tooWide && !tooTall) {
+            break;
+        }
+        if (solver_.Stats().accuracyFactor >= kMaxAccuracy) {
+            if (!solverCapWarned_) {
+                LogWarn("High-fidelity auto-scale reached the accuracy budget (x%.1f); "
+                        "the plume may leave the domain.",
+                        solver_.Stats().accuracyFactor);
+                solverCapWarned_ = true;
+            }
+            break;
+        }
+        if (!solver_.RescaleDomain(kExpansion)) {
+            break;
+        }
     }
 }
 
@@ -764,6 +794,7 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
         return;
     }
     solverBlastSerial_ = simulation.BlastSerial();
+    solverCapWarned_ = false;
 
     const auto start = std::chrono::steady_clock::now();
     int guard = 0;
@@ -786,8 +817,48 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
             solver_.Stats().dt * 1e6f, solver_.Stats().maxSpeed);
 }
 
-double Renderer::ConsumeSolverAdvance() {
-    return solver_.ConsumeAdvance();
+void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long targetSteps) {
+    if (!solver_.Reset(MakeEulerConfig(simulation))) {
+        LogError("High-fidelity solver could not be initialised.");
+        solverPrepared_ = false;
+        return;
+    }
+    solverBlastSerial_ = simulation.BlastSerial();
+    solverCapWarned_ = false;
+
+    const auto start = std::chrono::steady_clock::now();
+    while (solver_.Stats().steps < targetSteps) {
+        MaybeExpandSolver(simulation);
+
+        const long long remaining = targetSteps - solver_.Stats().steps;
+        const int batch = int(std::min<long long>(remaining, 16));
+        solver_.Step(batch);
+
+        const double advance = solver_.ConsumeAdvance();
+        if (advance > 0.0) {
+            simulation.AdvanceExternal(advance);
+        }
+
+        const double elapsed = std::chrono::duration<double>(
+                                   std::chrono::steady_clock::now() - start)
+                                   .count();
+        if (elapsed > 180.0) {
+            LogWarn("High-fidelity capture stopped at step %lld (time budget reached).",
+                    solver_.Stats().steps);
+            break;
+        }
+    }
+    solverPrepared_ = true;
+
+    LogInfo("High-fidelity capture: %lld steps, t=%.4f s, domain half %.2f m, top %.2f m, "
+            "accuracy x%.2f, expansions %d, plume top %.2f m, radius %.2f m",
+            solver_.Stats().steps, solver_.Stats().time, solver_.Stats().domainHalfExtent,
+            solver_.Stats().domainTop, solver_.Stats().accuracyFactor,
+            solver_.Stats().expansions, solver_.Stats().plumeTop,
+            solver_.Stats().plumeRadius);
+}
+
+double Renderer::ConsumeSolverAdvance() {    return solver_.ConsumeAdvance();
 }
 
 void Renderer::StepSolverOnce(int steps) {
@@ -819,6 +890,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
             if (solverBlastSerial_ != simulation.BlastSerial()) {
                 if (solver_.Reset(MakeEulerConfig(simulation))) {
                     solverBlastSerial_ = simulation.BlastSerial();
+                    solverCapWarned_ = false;
                 } else {
                     LogWarn("High-fidelity solver reset failed.");
                 }

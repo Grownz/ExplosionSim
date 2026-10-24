@@ -153,13 +153,17 @@ momentum; the lateral and top boundaries are zero-gradient outflows.
 
 ### Auto-scale (domain expansion)
 
-When auto-scale is enabled and the fireball, smoke envelope or base dust reaches 70 % of
-the domain half extent (or the cloud reaches 70 % of the top), `RescaleDomain` grows the
-box by 1.3× (up to an accuracy factor of 8). A compute pass resamples the six conserved
-variables trilinearly onto the new grid (ambient outside the old domain) using the
-existing ping-pong state textures. Because the voxel count is fixed, `dx` grows, the CFL
-step grows and the number of steps for a physical time interval drops. The renderer
-reports the domain, voxel size, accuracy factor and expansion count.
+When auto-scale is enabled, the reduction pass also reports the bounding box of the
+visible detonation products (maximum height and maximum `|x|/|z|` radius, ignoring the
+thin ground layer). When the plume top or radius reaches 75 % of the domain, the renderer
+calls `RescaleDomain`, which grows the box by 1.3× (up to an accuracy factor of 16). The
+expansion is repeated if one step is not enough, so a fast plume rise is caught before it
+clips. Measuring the field directly is important because the analytic cloud estimate
+underestimates the Euler plume. A compute pass resamples the six conserved variables
+trilinearly onto the new grid (ambient outside the old domain) using the existing
+ping-pong state textures. Because the voxel count is fixed, `dx` grows, the CFL step grows
+and the number of steps for a physical time interval drops. The renderer reports the
+domain, voxel size, measured plume top/radius, accuracy factor and expansion count.
 
 ### Integration with the application
 

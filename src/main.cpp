@@ -37,9 +37,11 @@ void PrintUsage() {
     LogInfo("  --benchmark           Render frames offscreen and print timing.");
     LogInfo("  --frames <count>      Number of benchmark frames (default 120).");
     LogInfo("  --high-fidelity       Use the GPU Euler solver for the volume.");
+    LogInfo("  --reduced-order       Force the reduced-order blast model (overrides settings.ini).");
     LogInfo("  --solver-resolution <n>  Solver grid resolution (64, 96, 128, 192, 256, 512).");
     LogInfo("  --solver-steps <n>    Solver steps per frame (default 24).");
     LogInfo("  --solver-time <s>     Solver time for headless captures.");
+    LogInfo("  --solver-step-count <n>  Headless capture at an exact solver step count.");
     LogInfo("  --volume-resolution <n>  Volume grid (64, 96, 128, 160, 192, 256, 512, 1024).");
     LogInfo("  --no-auto-scale      Keep a fixed volume box instead of following the cloud.");
     LogInfo("  --auto-scale         Force the adaptive volume box (default).");
@@ -132,12 +134,24 @@ ParsedArguments ParseCommandLine() {
             parseInt(result.options.benchmarkFrames);
         } else if (argument == L"--high-fidelity") {
             result.options.highFidelity = true;
+        } else if (argument == L"--reduced-order") {
+            result.options.reducedOrder = true;
         } else if (argument == L"--solver-resolution") {
             parseInt(result.options.solverResolution);
         } else if (argument == L"--solver-steps") {
             parseInt(result.options.solverSteps);
         } else if (argument == L"--solver-time") {
             parseDouble(result.options.solverTime);
+        } else if (argument == L"--solver-step-count") {
+            const wchar_t* value = next(i);
+            wchar_t* end = nullptr;
+            const long long parsed = std::wcstoll(value, &end, 10);
+            if (end == value) {
+                result.valid = false;
+                result.error = "Invalid integer value.";
+            } else {
+                result.options.solverStepCount = parsed;
+            }
         } else if (argument == L"--volume-resolution") {
             parseInt(result.options.volumeResolution);
         } else if (argument == L"--no-auto-scale") {

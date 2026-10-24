@@ -48,6 +48,10 @@ public:
     // Advances the GPU solver to a target simulation time (headless captures).
     void PrepareHighFidelity(sim::Simulation& simulation, double targetTime);
 
+    // Advances the GPU solver to an exact step count, keeping the reduced-order
+    // model (camera and auto-scale trigger) in sync (headless captures).
+    void PrepareHighFidelitySteps(sim::Simulation& simulation, long long targetSteps);
+
     // Simulated time advanced by the solver during the last frame.
     double ConsumeSolverAdvance();
     void StepSolverOnce(int steps = 8);
@@ -92,6 +96,7 @@ private:
         DirectX::XMFLOAT4 rangeParams;
         DirectX::XMFLOAT4 fireball;
         DirectX::XMFLOAT4 volumeParams;
+        DirectX::XMFLOAT4 volumeParams2;
     };
 
     struct BloomConstants {
@@ -142,6 +147,7 @@ private:
     GpuEulerSolver solver_;
     uint64_t solverBlastSerial_ = ~uint64_t(0);
     bool solverPrepared_ = false;
+    bool solverCapWarned_ = false;
     bool solverPaused_ = false;
 
     // Copy of the depth buffer that can be sampled while the original is still

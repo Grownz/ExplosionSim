@@ -8,6 +8,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- High-fidelity auto-scale now triggers on the measured extent of the product field
+  instead of the analytic cloud estimate, which underestimated the rising Euler plume and
+  let its top clip at the domain boundary. The reduction pass reports the plume top and
+  radius, the trigger fires at 75 % of the domain, several 1.3× expansions can run in one
+  frame, and the accuracy budget is ×16. The panel shows the measured plume top/radius.
 - The initial fireball no longer follows the axis-aligned noise lattice: the lump noise
   uses a fixed world-space frequency and its amplitude fades in with the fireball
   radius, so the first milliseconds stay spherical. The domain warp is faded out for
@@ -17,6 +22,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- High-fidelity look development: the product incandescence now cools with the
+  simulation time and fades with altitude, scattering and emission are tuned
+  independently (`VolumeParams2`), the raymarch adds gradient-based sun shading for
+  volumetric structure, and the lowest voxel layer is faded so the ground-reflected
+  base surge no longer forms a hard star. `--reduced-order` forces the analytic model
+  when `settings.ini` selects the Euler solver.
 - Solver auto-scale: the Euler solver domain expands by 1.3× when the fireball, smoke
   envelope or base dust reaches 70 % of the box. The conserved state is resampled on the
   GPU into the larger grid (fixed voxel count); `dx` and the CFL step grow, so the

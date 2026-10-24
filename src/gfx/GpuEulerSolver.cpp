@@ -103,7 +103,7 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     }
 
     D3D11_BUFFER_DESC bufferDesc{};
-    bufferDesc.ByteWidth = sizeof(uint32_t);
+    bufferDesc.ByteWidth = 4 * sizeof(uint32_t);
     bufferDesc.Usage = D3D11_USAGE_DEFAULT;
     bufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
     bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -117,7 +117,7 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     uavDesc.Format = DXGI_FORMAT_UNKNOWN;
     uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
     uavDesc.Buffer.FirstElement = 0;
-    uavDesc.Buffer.NumElements = 1;
+    uavDesc.Buffer.NumElements = 4;
     if (FAILED(device_->CreateUnorderedAccessView(maxSpeedBuffer_.Get(), &uavDesc,
                                                   &maxSpeedUAV_))) {
         LogError("High-fidelity solver: max-speed UAV creation failed.");
@@ -125,7 +125,7 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     }
 
     D3D11_BUFFER_DESC stagingDesc{};
-    stagingDesc.ByteWidth = sizeof(uint32_t);
+    stagingDesc.ByteWidth = 4 * sizeof(uint32_t);
     stagingDesc.Usage = D3D11_USAGE_STAGING;
     stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -284,7 +284,6 @@ void GpuEulerSolver::DispatchSource(float dt) {
 void GpuEulerSolver::DispatchReduce() {
     const UINT zeros[4] = {0, 0, 0, 0};
     context_->ClearUnorderedAccessViewUint(maxSpeedUAV_.Get(), zeros);
-
     context_->CSSetShader(reduceShader_.Get(), nullptr, 0);
     UpdateConstants(0, 0.0f);
     BindStateSRV(stateIndex_);
@@ -322,13 +321,20 @@ float GpuEulerSolver::ReadMaxSpeed() {
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     if (SUCCEEDED(context_->Map(maxSpeedStaging_.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
-        uint32_t bits = 0;
-        memcpy(&bits, mapped.pData, sizeof(bits));
-        const float value = *reinterpret_cast<const float*>(&bits);
+        uint32_t values[4] = {0, 0, 0, 0};
+        memcpy(values, mapped.pData, sizeof(values));
+        context_->Unmap(maxSpeedStaging_.Get(), 0);
+
+        const float value = *reinterpret_cast<const float*>(&values[0]);
         if (std::isfinite(value) && value > 1.0f) {
             maxSpeed_ = value;
         }
-        context_->Unmap(maxSpeedStaging_.Get(), 0);
+
+        if (values[1] > 0 || values[2] > 0) {
+            stats_.plumeTop = float(values[1]) / kBoundScale;
+            stats_.plumeRadius = float(values[2]) / kBoundScale;
+            stats_.fieldBoundsValid = true;
+        }
     }
     stagingReady_ = false;
     return maxSpeed_;

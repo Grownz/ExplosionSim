@@ -63,9 +63,7 @@ bool RegisterWindowClass(HINSTANCE instance) {
 int App::Run(const LaunchOptions& options) {
     options_ = options;
 
-    if (!options_.headless) {
-        LoadSettings(settings_, DefaultSettingsPath());
-    }
+    LoadSettings(settings_, DefaultSettingsPath());
 
     if (options_.chargeMassKg > 0.0) {
         settings_.simulation.chargeMassKg = options_.chargeMassKg;
@@ -75,6 +73,8 @@ int App::Run(const LaunchOptions& options) {
     }
     if (options_.highFidelity) {
         settings_.simulation.mode = sim::SimulationMode::HighFidelity;
+    } else if (options_.reducedOrder) {
+        settings_.simulation.mode = sim::SimulationMode::ReducedOrder;
     }
     if (options_.solverResolution > 0) {
         settings_.simulation.solverResolution =
@@ -255,11 +255,16 @@ void App::FrameCamera() {
 
     if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
         float half = std::clamp(3.0f * float(blast.FireballMaxRadiusM()), 1.0f, 30.0f);
+        float top = 2.0f * half;
         const gfx::SolverStats& solverStats = renderer_.Solver();
         if (solverStats.active && solverStats.domainHalfExtent > 0.1f) {
             half = solverStats.domainHalfExtent;
+            top = solverStats.domainTop;
         }
-        camera_.SetTarget(DirectX::XMFLOAT3(0.0f, half * 0.45f, 0.0f), half * 1.3f);
+        const float centerY = top * 0.5f;
+        const float distance = std::max(top, 2.0f * half) * 1.25f *
+                               std::max(0.1f, options_.distanceScale);
+        camera_.SetTarget(DirectX::XMFLOAT3(0.0f, centerY, 0.0f), distance);
         if (options_.headless) {
             camera_.SetOrientation(options_.azimuth, options_.elevation);
         }
@@ -467,24 +472,27 @@ int App::RunHeadless() {
     settings_.simulation.fuseSeconds = 0.0;
     simulation_.ApplySettings(settings_.simulation);
 
-    simulation_.Volume().WaitForIdle();
-    simulation_.Volume().Poll();
+    const bool highFidelity =
+        simulation_.Settings().mode == sim::SimulationMode::HighFidelity;
+    const bool stepCapture = highFidelity && options_.solverStepCount > 0;
 
     const double step = 1.0 / 120.0;
     const double targetTime = std::max(0.0, options_.captureTime);
-    int guard = 0;
-    while (simulation_.Time() + 1e-9 < targetTime && guard++ < 200000) {
-        simulation_.StepFixed(std::min(step, targetTime - simulation_.Time()));
+    if (!stepCapture) {
+        int guard = 0;
+        while (simulation_.Time() + 1e-9 < targetTime && guard++ < 200000) {
+            simulation_.StepFixed(std::min(step, targetTime - simulation_.Time()));
+        }
     }
 
     simulation_.Volume().WaitForIdle();
     simulation_.Volume().Poll();
 
-    const bool highFidelity =
-        simulation_.Settings().mode == sim::SimulationMode::HighFidelity;
     const double solverTarget =
         options_.solverTime >= 0.0 ? options_.solverTime : targetTime;
-    if (highFidelity) {
+    if (stepCapture) {
+        renderer_.PrepareHighFidelitySteps(simulation_, options_.solverStepCount);
+    } else if (highFidelity) {
         renderer_.PrepareHighFidelity(simulation_, solverTarget);
     } else {
         simulation_.Volume().BakeNow(simulation_.Blast());

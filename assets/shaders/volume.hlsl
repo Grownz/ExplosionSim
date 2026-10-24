@@ -7,6 +7,16 @@ Texture3D<float4> VolumeAux : register(t3);
 SamplerState LinearSampler : register(s0);
 SamplerState NoiseSampler : register(s1);
 
+// Samples only the extinction channel. Used for the gradient-based shading.
+float SampleDensity(float3 uvw)
+{
+    if (VolumeParams.y > 0.5)
+    {
+        return VolumeTexture.SampleLevel(LinearSampler, uvw, 0).r;
+    }
+    return VolumeTexture.SampleLevel(LinearSampler, uvw, 0).r;
+}
+
 // Front-to-back emission/absorption raymarching through the baked blast field.
 // The result is premultiplied and blended with One / InvSrcAlpha.
 float4 PSVolume(VSOut input) : SV_Target
@@ -37,8 +47,8 @@ float4 PSVolume(VSOut input) : SV_Target
 
     float3 sunDirection = normalize(SunDirection.xyz);
     float phase = HenyeyGreenstein(dot(rayDirection, sunDirection), 0.35) * 4.0 * PI;
-    float3 sunLight = SunColor.rgb * phase * 1.5;
-    float3 ambientLight = float3(0.20, 0.21, 0.24);
+    float3 sunLight = SunColor.rgb * phase * 1.5 * VolumeParams2.x;
+    float3 ambientLight = float3(0.20, 0.21, 0.24) * VolumeParams2.x;
     float3 windDrift = float3(0.0, -Misc3.x * 0.06, 0.0);
 
     float3 accum = float3(0.0, 0.0, 0.0);
@@ -93,14 +103,18 @@ float4 PSVolume(VSOut input) : SV_Target
             float fine = ValueNoise3(noisePosition * 3.0 + 11.0);
             density *= lerp(0.05, 2.40, structure) * (0.60 + 0.70 * fine);
             float detailAmount = VolumeParams.z;
+            float structureAmount = VolumeParams.w;
+            density *= lerp(1.0 - 0.95 * structureAmount, 1.0 + 1.40 * structureAmount,
+                            structure);
             density *= lerp(1.0 - 0.25 * detailAmount, 1.0 + 0.35 * detailAmount,
                             noiseDetail.a);
-            temperature *= lerp(0.55, 1.30, structure);
+            temperature *= lerp(1.0 - 0.45 * structureAmount, 1.0 + 0.30 * structureAmount,
+                                structure);
 
             float heat = smoothstep(550.0, 1250.0, temperature);
             float3 blackbody = BlackbodyRGB(temperature);
             float coreBoost = 0.75 + 0.90 * smoothstep(2400.0, 4300.0, temperature);
-            float3 emission = blackbody * density * heat * coreBoost * 1.10 * VolumeParams.x;
+            float3 emission = blackbody * density * heat * coreBoost * 1.10 * VolumeParams2.y;
 
             // Cold soot absorbs the fireball light; hot soot glows.
             float coldSoot = soot * saturate((2400.0 - temperature) / 1500.0);
@@ -116,7 +130,27 @@ float4 PSVolume(VSOut input) : SV_Target
             float fireRadius = max(Misc2.z, 0.2);
             float fireLight = Fireball.w * 1.0 * fireRadius * fireRadius /
                               (fireDistanceSq + fireRadius * fireRadius * 1.2);
-            scattering += albedo * density * fireLight * float3(1.0, 0.42, 0.12);
+            scattering += albedo * density * fireLight * VolumeParams2.z * float3(1.0, 0.42, 0.12);
+
+            // Directional sun shading from the density gradient. Without it the
+            // single-scatter term lights the whole cloud uniformly and the
+            // billows vanish.
+            const float gradEps = 0.006;
+            float gx = SampleDensity(uvw + float3(gradEps, 0.0, 0.0)) -
+                       SampleDensity(uvw - float3(gradEps, 0.0, 0.0));
+            float gy = SampleDensity(uvw + float3(0.0, gradEps, 0.0)) -
+                       SampleDensity(uvw - float3(0.0, gradEps, 0.0));
+            float gz = SampleDensity(uvw + float3(0.0, 0.0, gradEps)) -
+                       SampleDensity(uvw - float3(0.0, 0.0, gradEps));
+            float3 gradient = float3(gx, gy, gz) / (2.0 * gradEps);
+            float gradientLength = length(gradient);
+            float3 normal = gradientLength > 1e-4 ? -gradient / gradientLength
+                                                  : float3(0.0, 1.0, 0.0);
+            float sunShade = saturate(dot(normal, sunDirection));
+            float skyShade = 0.5 + 0.5 * normal.y;
+            float shade = 0.45 + 0.85 * sunShade + 0.30 * skyShade;
+            scattering *= shade;
+            emission *= lerp(1.0, shade, 0.5);
 
             accum += transmittance * (emission + scattering) * stepSize;
             transmittance *= exp(-density * extinctionScale * stepSize);

@@ -342,6 +342,14 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
         Readout("Voxel size", "%.1f mm", stats.voxelSize * 1000.0f);
         Readout("Accuracy", "x%.2f", stats.accuracyFactor);
         Readout("Expansions", "%d", stats.expansions);
+        if (stats.fieldBoundsValid) {
+            Readout("Plume top", "%.2f m", stats.plumeTop);
+            Readout("Plume radius", "%.2f m", stats.plumeRadius);
+            if (stats.plumeTop > stats.domainTop * 0.9f) {
+                Hint("The plume is close to the top of the solver domain. Auto-scale "
+                     "expands it until the accuracy factor reaches x16.");
+            }
+        }
 
         Hint("Compressible Euler solver (HLLC + MUSCL) running on the GPU. It uses the "
              "moist-air density and virtual temperature; wind drifts the rendered volume. "

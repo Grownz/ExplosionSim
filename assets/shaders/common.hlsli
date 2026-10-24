@@ -25,6 +25,7 @@ cbuffer FrameConstants : register(b0)
     float4 RangeParams;      // x = near, y = far, z = volume enabled, w = particle scale
     float4 Fireball;         // xyz = centre, w = emitted light intensity
     float4 VolumeParams;     // x = emission gain, yzw = reserved
+    float4 VolumeParams2;    // x = scattering gain, y = emission gain, zw = reserved
 };
 
 cbuffer BloomConstants : register(b1)

@@ -40,6 +40,9 @@ struct SolverStats {
     float voxelSize = 0.0f;
     float accuracyFactor = 1.0f;
     int expansions = 0;
+    float plumeTop = 0.0f;
+    float plumeRadius = 0.0f;
+    bool fieldBoundsValid = false;
 };
 
 // Finite-volume compressible Euler solver running on the GPU (D3D11 compute).
@@ -66,6 +69,12 @@ public:
     const sim::VolumeBounds& Bounds() const { return bounds_; }
     float ExtinctionScale() const { return extinctionScale_; }
     const SolverStats& Stats() const { return stats_; }
+
+    // Measured extent of the visible product field (world units). Valid after
+    // at least one reduction pass; reset on Reset().
+    bool HasFieldBounds() const { return stats_.fieldBoundsValid; }
+    float FieldTop() const { return stats_.plumeTop; }
+    float FieldRadius() const { return stats_.plumeRadius; }
 
 private:
     struct Constants {
@@ -106,6 +115,8 @@ private:
     void DispatchReduce();
     void DispatchRender();
     float ReadMaxSpeed();
+
+    static constexpr float kBoundScale = 512.0f;
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* context_ = nullptr;

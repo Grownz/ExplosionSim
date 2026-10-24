@@ -28,6 +28,7 @@ struct LaunchOptions {
     int benchmarkFrames = 120;
     bool headless = false;
     bool highFidelity = false;
+    bool reducedOrder = false;
     int solverResolution = 0;
     int solverSteps = 0;
     int volumeResolution = 0;
@@ -35,6 +36,7 @@ struct LaunchOptions {
     bool autoScaleVolumeSet = false;
     bool solverAutoScale = true;
     bool solverAutoScaleSet = false;
+    long long solverStepCount = 0;
     double solverTime = -1.0;
 };
 
