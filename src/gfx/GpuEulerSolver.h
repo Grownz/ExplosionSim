@@ -121,7 +121,7 @@ private:
     bool PollReduction();
     void ConsumeStaging();
 
-    static constexpr float kBoundScale = 512.0f;
+    static constexpr float kBoundScale = 512.0f; // must match euler_reduce.hlsl
     static constexpr int kMaxBatchSteps = 8;
 
     ID3D11Device* device_ = nullptr;

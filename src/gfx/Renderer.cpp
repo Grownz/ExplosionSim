@@ -149,8 +149,10 @@ void Renderer::Shutdown() {
     volumeTexture_.Reset();
     particleSRVAdditive_.Reset();
     particleSRVAlpha_.Reset();
+    particleSRVFire_.Reset();
     particleBufferAdditive_.Reset();
     particleBufferAlpha_.Reset();
+    particleBufferFire_.Reset();
     hdr_.Reset();
     for (auto& target : bloom_) {
         target.Reset();
@@ -449,8 +451,7 @@ void Renderer::UploadVolume(const sim::VolumeFrame& frame) {
     const bool split = frame.split;
     const bool halfFloat = frame.halfFloat;
     const DXGI_FORMAT format = split ? DXGI_FORMAT_R8G8_UNORM
-                                     : (halfFloat ? DXGI_FORMAT_R16G16B16A16_FLOAT
-                                                  : DXGI_FORMAT_R8G8B8A8_UNORM);
+                                     : DXGI_FORMAT_R16G16B16A16_FLOAT;
 
     if (!volumeTexture_ || volumeResolution_ != frame.resolution ||
         volumeHalfFloat_ != halfFloat || volumeSplit_ != split) {
@@ -638,7 +639,7 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
 
     const bool highFidelity =
         simulation.Settings().mode == sim::SimulationMode::HighFidelity;
-    frameConstants_.volumeParams = XMFLOAT4(1.0f,
+    frameConstants_.volumeParams = XMFLOAT4(0.0f,
                                             activeVolumeSplit_ ? 1.0f : 0.0f,
                                             1.0f, 1.0f);
     frameConstants_.volumeParams2 =
@@ -739,36 +740,41 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
         return;
     }
 
-    constexpr double kTriggerFraction = 0.75;
+    constexpr double kAnalyticTriggerFraction = 0.70;
+    constexpr double kSafetyFraction = 0.95;
     constexpr float kExpansion = 1.3f;
     constexpr float kMaxAccuracy = 16.0f;
 
-    // The analytic model is only a fallback for the first reduction pass. It
-    // consistently underestimates the rising Euler plume, which is exactly what
-    // used to get clipped at the top of the domain.
-    double requiredHalf = 0.0;
-    double requiredTop = 0.0;
+    // The analytic cloud provides the growth *timing*; expanding as soon as the
+    // measured field is already near the boundary keeps the grid coarse during
+    // the plume rise and visibly diffuses the cap. The measured field is used
+    // as a hard safety net at 95 %, so the analytic estimate can never let the
+    // field clip.
+    const sim::BlastState& state = simulation.Blast().State();
+    const double analyticHalf = std::max({state.fireballRadius * 2.4,
+                                          state.cloudRadius * 1.35, 0.5});
+    const double analyticTop =
+        std::max({state.fireballCenterY + state.fireballRadius * 2.0,
+                  state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
+
+    double safetyHalf = 0.0;
+    double safetyTop = 0.0;
     if (solver_.HasFieldBounds()) {
-        requiredHalf = std::max(double(solver_.FieldRadius()) * 1.10, 0.5);
-        requiredTop = std::max(double(solver_.FieldTop()) * 1.10, 1.0);
-    } else {
-        const sim::BlastState& state = simulation.Blast().State();
-        requiredHalf = std::max({state.fireballRadius * 2.4,
-                                 state.cloudRadius * 1.35, 0.5});
-        requiredTop =
-            std::max({state.fireballCenterY + state.fireballRadius * 2.0,
-                      state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
+        safetyHalf = double(solver_.FieldRadius()) * 1.02;
+        safetyTop = double(solver_.FieldTop()) * 1.02;
     }
 
     // A single 1.3x step is not always enough after a fast plume rise, so keep
-    // expanding until the measured field fits with margin (or the accuracy
-    // budget is exhausted).
+    // expanding until the field fits with margin (or the accuracy budget is
+    // exhausted).
     for (int attempt = 0; attempt < 4; ++attempt) {
         const sim::VolumeBounds& bounds = solver_.Bounds();
         const double half = 0.5 * (bounds.max.x - bounds.min.x);
         const double top = bounds.max.y;
-        const bool tooWide = requiredHalf > half * kTriggerFraction;
-        const bool tooTall = requiredTop > top * kTriggerFraction;
+        const bool tooWide = analyticHalf > half * kAnalyticTriggerFraction ||
+                             safetyHalf > half * kSafetyFraction;
+        const bool tooTall = analyticTop > top * kAnalyticTriggerFraction ||
+                             safetyTop > top * kSafetyFraction;
         if (!tooWide && !tooTall) {
             break;
         }

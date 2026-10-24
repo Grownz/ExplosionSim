@@ -89,7 +89,6 @@ public:
     void SetObserverDistanceM(double distance) { observerDistance_ = distance; }
 
 private:
-    void RestartInternal();
     void Detonate();
     void ScheduleVolumeBake(double dtReal);
 

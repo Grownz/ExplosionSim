@@ -29,7 +29,6 @@ public:
 
     bool Resize(int width, int height);
 
-    void ClearFinal(float r, float g, float b, float a, float depth = 1.0f);
     void BindFinalTarget();
     void Present(bool vsync);
 

@@ -59,13 +59,16 @@ virtual temperature so its ideal-gas equation of state remains consistent.
 The peak incident overpressure follows Brode's two-branch fit:
 
 ```
-Z < 0.9 :  Δp = 6.7 / Z³ + 1                         [bar]
-Z ≥ 0.9 :  Δp = 0.975/Z + 1.455/Z² + 5.85/Z³ - 0.019  [bar]
+Z < 0.85 :  Δp = 6.7 / Z³ + 1                         [bar]
+Z ≥ 1.00 :  Δp = 0.975/Z + 1.455/Z² + 5.85/Z³ - 0.019  [bar]
 ```
 
-The fit is evaluated in bar and converted to pascal. The negative offset of the far-field
-branch makes it cross zero near `Z ≈ 55`; beyond that point the model continues with an
-acoustic `1/r` tail so the shock front does not pin to ambient pressure.
+The two branches are blended with a smoothstep over `Z = 0.85 … 1.0` instead of being
+switched discontinuously. The blended curve is continuous and monotonically decreasing,
+which the inverse radius solver relies on. The fit is evaluated in bar and converted to
+pascal. The negative offset of the far-field branch makes it cross zero near `Z ≈ 55`;
+beyond that point the model continues with an acoustic `1/r` tail so the shock front does
+not pin to ambient pressure.
 
 ### Shock velocity
 
@@ -94,12 +97,15 @@ observer arrival times.
 The pressure history at a fixed distance is modelled with the Friedlander waveform
 
 ```
-p(t) = Δp · (1 - τ/t₊) · exp(-1.8 τ/t₊),   τ = t - t_arrival
+p(t) = Δp · (1 - τ/t₊) · exp(-b τ/t₊),   τ = t - t_arrival
+b = clamp(0.9 + 2.2 / (1 + 0.45 Z), 0.9, 3.0)
 ```
 
 where the positive-phase duration is estimated from the shock transit time,
-`t₊ ≈ 1.1 · R / U` (clamped). This is a qualitative approximation; published fitted
-durations differ by a factor of order one.
+`t₊ ≈ 1.1 · R / U` (clamped to 5 s). The decay coefficient shrinks with scaled distance,
+so far-field waveforms keep their longer tail instead of being over-damped by a fixed
+`b = 1.8`. This remains a qualitative approximation; published fitted durations differ by
+a factor of order one.
 
 ## 3. Fireball
 
@@ -233,7 +239,10 @@ with the ideal-gas equation of state `p = (gamma - 1)(E - 0.5 rho |v|^2)` and
 ### Initial condition and boundaries
 
 The charge is deposited as a sphere of radius `max(R_charge, 3.5 dx)` with the TNT mass
-and energy, and `Y = 1` (soot density equal to the local gas density). The ground is a
+and energy, and `Y = 1` (soot density equal to the local gas density). For low bursts the
+part of the sphere below the ground is not present in the grid; the density and energy
+density are scaled by the ratio of the full sphere volume to the above-ground volume, so
+the total charge mass and energy are preserved instead of being truncated. The ground is a
 reflecting wall (mirrored ghost cell with reversed vertical momentum). The lateral and
 top boundaries use zero-gradient ghost cells plus an absorbing sponge over the outer 6 %
 of the domain that relaxes the state towards ambient, so outgoing waves do not reflect
@@ -244,10 +253,10 @@ back.
 - Buoyancy uses the density difference relative to the ambient air, so the uniform
   ambient atmosphere does not accelerate.
 - A soot cooling term removes energy from hot products.
-- The render conversion applies a sub-grid **soot incandescence** temperature floor and
-  highlights the shock front with the density gradient. This represents the optical
-  thickness and afterburning of the products, which the adiabatic Euler solution does
-  not capture.
+- The render conversion applies a sub-grid **soot incandescence** temperature floor. The
+  raymarcher adds gradient-based sun shading from the density field. The temperature floor
+  represents the optical thickness and afterburning of the products, which the adiabatic
+  Euler solution does not capture.
 
 ### Limitations
 
@@ -256,9 +265,10 @@ back.
   (the four RGBA32F state volumes plus the render volume need about 1.2 GB at 256³ and
   9.7 GB at 512³; 1024³ would need about 76 GB and is therefore not offered).
 - Auto-scale expands the domain in discrete 1.3× steps and resamples the state, which
-  slightly diffuses the shock and contact surface at each expansion. The trigger measures
-  the actual product bounds on the GPU and fires at 75 % of the domain, before the field
-  reaches the boundary; up to an accuracy factor of 16 is allowed.
+  slightly diffuses the shock and contact surface at each expansion. The analytic cloud
+  drives the growth timing at 70 % of the domain; the measured product bounds are a hard
+  safety net at 95 %, and the radial measurement ignores the base surge below 25 % of the
+  domain height. Up to an accuracy factor of 16 is allowed.
 - The solver runs in a still-air frame. Wind is represented by translating the rendered
   volume downwind with the solver time, consistent with the reduced-order cloud drift.
 - Numerical diffusion smears the contact surface and the soot over time.

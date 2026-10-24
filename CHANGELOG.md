@@ -13,6 +13,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the plume; the ground remains a reflecting wall.
 - Deterministic readback mode for headless captures: the solver waits for the reduction
   every 8 steps, so repeated captures produce identical images.
+- Hybrid solver auto-scale: the analytic cloud drives the growth timing at 70 % of the
+  domain, the measured product bounds are a hard safety net at 95 %, and the radial
+  measurement ignores the base surge below 25 % of the domain height. This restores the
+  undiffused mushroom cap while still preventing clipping.
+- Low-burst energy conservation: when part of the initial charge sphere lies below the
+  ground, the density and energy density are scaled by the full/above-ground volume ratio
+  so the total charge mass and energy are preserved.
+- Brode's near- and far-field branches are blended with a smoothstep over `Z = 0.85…1.0`,
+  keeping the overpressure curve continuous and monotonic for the inverse solver.
+- Z-dependent Friedlander decay coefficient; far-field waveforms keep their longer tail.
+- Tests for the Brode crossover monotonicity and inverse radius, volume auto-scale
+  containment, and volume-bake determinism.
+- `URL_HASH` for the Dear ImGui download.
 
 ### Changed
 
@@ -22,6 +35,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   whole batch.
 - High-fidelity time captures now advance the analytic model together with the solver,
   so ground scorch, dust and the frame camera use the correct simulation time.
+- The HF render pass no longer computes an unused density gradient (six texture loads per
+  voxel), and the raymarcher computes its gradient-based sun shading once per pixel
+  instead of once per step.
+- Thermal constants and the volume extinction scale are centralised; the unreachable
+  RGBA8 volume path and several unused helpers were removed.
 
 ### Fixed
 
@@ -30,12 +48,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A stale bloom texture was still added to the composite after bloom was disabled.
 - The high-fidelity frame camera now includes the wind drift applied to the rendered
   volume instead of framing the origin.
-
-### Known issues
-
-- The auto-scale radial trigger reacts to the low base surge. On large surface bursts
-  this can expand the domain earlier than the visible cloud needs, which coarsens the
-  plume. A height-gated radial measurement is the next step.
+- The auto-scale radial trigger no longer reacts to the low base surge and coarsens the
+  plume before the visible cloud needs it.
 
 ## [0.2.0] - 2026-10-24
 

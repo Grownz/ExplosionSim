@@ -223,6 +223,30 @@ void TestVolumeBaker() {
     CHECK(occupied > 20);
 }
 
+void TestBrodeCrossover() {
+    // The near/far-field blend must stay monotonic across the crossover so the
+    // inverse bisection cannot converge to a spurious root.
+    double previous = 1.0e30;
+    for (double z = 0.5; z <= 1.5; z += 0.002) {
+        const double pressure = BlastModel::PeakOverpressurePa(z, 101325.0);
+        CHECK(pressure < previous);
+        previous = pressure;
+    }
+
+    Charge charge{};
+    charge.tntMassKg = 20000.0;
+    charge.heightOfBurstM = 30.0;
+    Environment environment{};
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    // 10 bar sits directly on the smoothed crossover.
+    const double target = 1.0e6;
+    const double radius = model.RadiusForOverpressure(target);
+    CHECK(radius > 0.0);
+    CHECK_NEAR(model.PeakOverpressureAtDistance(radius), target, target * 0.02);
+}
+
 void TestSmallChargeScaling() {
     // The reference scenario: 200 g of TNT at 0.4 m height.
     Charge charge{};
@@ -239,6 +263,73 @@ void TestSmallChargeScaling() {
 
     const double psi5 = model.RadiusForOverpressure(34474.0);
     CHECK(psi5 > 1.0 && psi5 < 8.0);
+}
+
+void TestVolumeBakerAutoScale() {
+    ex::core::ThreadPool pool(2);
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 1.0;
+    charge.heightOfBurstM = 1.0;
+
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::sim::VolumeBaker baker;
+    baker.Initialize(&pool, 32);
+    baker.SetAutoScale(true);
+
+    for (int i = 0; i < 30; ++i) {
+        model.Advance(1.0 / 120.0);
+    }
+    baker.BakeNow(model);
+    baker.Poll();
+    const ex::sim::VolumeBounds first = baker.Current().bounds;
+    baker.MarkUploaded(baker.Version());
+
+    for (int i = 0; i < 240; ++i) {
+        model.Advance(1.0 / 120.0);
+    }
+    baker.BakeNow(model);
+    baker.Poll();
+    const ex::sim::VolumeBounds second = baker.Current().bounds;
+
+    // The auto-scale box only grows and must contain the rising cloud.
+    CHECK(second.max.x >= first.max.x);
+    CHECK(second.max.y >= first.max.y);
+    CHECK(second.min.x <= first.min.x);
+    const auto& state = model.State();
+    CHECK(second.max.y >= state.cloudCenterY + state.cloudRadius);
+    CHECK(second.max.x >= state.cloudRadius);
+}
+
+void TestVolumeBakeDeterminism() {
+    ex::core::ThreadPool pool(2);
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 1.0;
+    charge.heightOfBurstM = 1.0;
+
+    BlastModel model;
+    model.Configure(charge, environment);
+    for (int i = 0; i < 60; ++i) {
+        model.Advance(1.0 / 120.0);
+    }
+
+    ex::sim::VolumeBaker baker;
+    baker.Initialize(&pool, 24);
+    baker.BakeNow(model);
+    baker.Poll();
+    const std::vector<uint8_t> first = baker.Current().rgba;
+    baker.MarkUploaded(baker.Version());
+
+    baker.BakeNow(model);
+    baker.Poll();
+    const std::vector<uint8_t>& second = baker.Current().rgba;
+
+    CHECK(!first.empty());
+    CHECK(first.size() == second.size());
+    CHECK(first == second);
 }
 
 void TestFuseAndDetonation() {
@@ -280,10 +371,13 @@ int main() {
     TestAtmosphere();
     TestAltitudeScaling();
     TestOverpressureFit();
+    TestBrodeCrossover();
     TestBlastEvolution();
     TestSmallChargeScaling();
     TestThreadPool();
     TestVolumeBaker();
+    TestVolumeBakerAutoScale();
+    TestVolumeBakeDeterminism();
     TestFuseAndDetonation();
 
     if (g_failures == 0) {

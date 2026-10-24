@@ -3,6 +3,11 @@
 // Fills the domain with ambient air and deposits the TNT charge as a sphere of
 // detonation products. The initial energy density sets the pressure through the
 // ideal-gas equation of state.
+//
+// For low bursts part of the sphere lies below the ground and is not present in
+// the grid. The density and energy density are therefore scaled by the ratio of
+// the full sphere volume to the above-ground volume, so the total mass and
+// energy of the charge are preserved instead of being silently truncated.
 [numthreads(8, 8, 8)]
 void CSInit(uint3 id : SV_DispatchThreadID)
 {
@@ -18,11 +23,17 @@ void CSInit(uint3 id : SV_DispatchThreadID)
     float energy = Ambient.y / (Ambient.w - 1.0);
     float sootDensity = 0.0;
 
-    if (length(offset) < Charge.z)
+    const float radius = max(Charge.z, 1e-4);
+    const float fullVolume = (4.0 / 3.0) * PI * radius * radius * radius;
+    const float capHeight = clamp(radius - Charge.w, 0.0, 2.0 * radius);
+    const float belowVolume = PI * capHeight * capHeight *
+                              (3.0 * radius - capHeight) / 3.0;
+    const float aboveVolume = max(fullVolume - belowVolume, 1e-6);
+
+    if (length(offset) < radius)
     {
-        float volume = (4.0 / 3.0) * PI * Charge.z * Charge.z * Charge.z;
-        rho = Charge.x / volume;
-        energy = Charge.y / volume;
+        rho = Charge.x / aboveVolume;
+        energy = Charge.y / aboveVolume;
         sootDensity = rho;
     }
 

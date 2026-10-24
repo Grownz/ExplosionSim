@@ -177,15 +177,17 @@ High-fidelity settings (Physics & Effects panel):
   reflecting ground and an absorbing sponge at the lateral/top boundaries
 - Uses the moist-air density and virtual temperature; wind drifts the rendered volume
 - Shares the domain-warped detail noise with the reduced-order volume
-- **Solver auto-scale** – a GPU reduction measures the actual extent of the visible
-  detonation products every step. When the plume top or radius reaches 75 % of the
-  domain, the domain grows by 1.3× and the conservative state is resampled onto the new
-  grid on the GPU. Several steps can run in one frame, so a fast plume rise is caught
-  before it clips; the reduction is used instead of the analytic cloud estimate, which
-  underestimates the Euler plume. The voxel count stays fixed, so the effective accuracy
-  drops while the CFL step grows; the UI shows the domain, voxel size, measured plume
-  top/radius, accuracy factor and number of expansions. The accuracy budget is ×16.
-  Can be disabled in the high-fidelity panel or with `--no-solver-auto-scale`.
+- **Solver auto-scale** – the analytic cloud sets the growth timing at 70 % of the
+  domain, while a GPU reduction measures the visible detonation products every step and
+  acts as a hard safety net at 95 %. The radial measurement ignores the base surge below
+  25 % of the domain height, so the low ground surge no longer coarsens the grid during
+  the plume rise. When either criterion fires, the domain grows by 1.3× and the
+  conservative state is resampled onto the new grid on the GPU. Several steps can run in
+  one frame, so a fast plume rise is caught before it clips. The voxel count stays fixed,
+  so the effective accuracy drops while the CFL step grows; the UI shows the domain,
+  voxel size, measured plume top/radius, accuracy factor and number of expansions. The
+  accuracy budget is ×16. Can be disabled in the high-fidelity panel or with
+  `--no-solver-auto-scale`.
 - 1024³ is not available for the solver: four RGBA32F ping-pong state volumes plus the
   render volume would need about 76 GB of VRAM
 

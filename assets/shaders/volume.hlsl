@@ -10,10 +10,8 @@ SamplerState NoiseSampler : register(s1);
 // Samples only the extinction channel. Used for the gradient-based shading.
 float SampleDensity(float3 uvw)
 {
-    if (VolumeParams.y > 0.5)
-    {
-        return VolumeTexture.SampleLevel(LinearSampler, uvw, 0).r;
-    }
+    // Both the single RGBA16F volume and the split 1024³ layout store the
+    // extinction in the red channel of the main texture.
     return VolumeTexture.SampleLevel(LinearSampler, uvw, 0).r;
 }
 
@@ -53,6 +51,12 @@ float4 PSVolume(VSOut input) : SV_Target
 
     float3 accum = float3(0.0, 0.0, 0.0);
     float transmittance = 1.0;
+
+    // The directional shading is computed once at the first dense sample and
+    // reused for the rest of the ray. Sampling six neighbours per raymarch step
+    // was the most expensive part of this pass.
+    bool shadingReady = false;
+    float3 shadingNormal = float3(0.0, 1.0, 0.0);
 
     [loop]
     for (int i = 0; i < steps; ++i)
@@ -135,17 +139,22 @@ float4 PSVolume(VSOut input) : SV_Target
             // Directional sun shading from the density gradient. Without it the
             // single-scatter term lights the whole cloud uniformly and the
             // billows vanish.
-            const float gradEps = 0.006;
-            float gx = SampleDensity(uvw + float3(gradEps, 0.0, 0.0)) -
-                       SampleDensity(uvw - float3(gradEps, 0.0, 0.0));
-            float gy = SampleDensity(uvw + float3(0.0, gradEps, 0.0)) -
-                       SampleDensity(uvw - float3(0.0, gradEps, 0.0));
-            float gz = SampleDensity(uvw + float3(0.0, 0.0, gradEps)) -
-                       SampleDensity(uvw - float3(0.0, 0.0, gradEps));
-            float3 gradient = float3(gx, gy, gz) / (2.0 * gradEps);
-            float gradientLength = length(gradient);
-            float3 normal = gradientLength > 1e-4 ? -gradient / gradientLength
-                                                  : float3(0.0, 1.0, 0.0);
+            if (!shadingReady)
+            {
+                const float gradEps = 0.006;
+                float gx = SampleDensity(uvw + float3(gradEps, 0.0, 0.0)) -
+                           SampleDensity(uvw - float3(gradEps, 0.0, 0.0));
+                float gy = SampleDensity(uvw + float3(0.0, gradEps, 0.0)) -
+                           SampleDensity(uvw - float3(0.0, gradEps, 0.0));
+                float gz = SampleDensity(uvw + float3(0.0, 0.0, gradEps)) -
+                           SampleDensity(uvw - float3(0.0, 0.0, gradEps));
+                float3 gradient = float3(gx, gy, gz) / (2.0 * gradEps);
+                float gradientLength = length(gradient);
+                shadingNormal = gradientLength > 1e-4 ? -gradient / gradientLength
+                                                      : float3(0.0, 1.0, 0.0);
+                shadingReady = true;
+            }
+            float3 normal = shadingNormal;
             float sunShade = saturate(dot(normal, sunDirection));
             float skyShade = 0.5 + 0.5 * normal.y;
             float shade = 0.45 + 0.85 * sunShade + 0.30 * skyShade;

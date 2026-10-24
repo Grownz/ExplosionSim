@@ -95,10 +95,6 @@ void Simulation::DetonateNow() {
     }
 }
 
-void Simulation::RestartInternal() {
-    Reset();
-}
-
 void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool physicsChanged = PhysicsChanged(settings_, settings);
     const bool budgetChanged = settings_.particleBudget != settings.particleBudget;
@@ -121,9 +117,6 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
 
     if (budgetChanged) {
         particles_.Initialize(settings_.particleBudget);
-    }
-    if (volumeChanged) {
-        volume_.SetResolution(settings_.volumeResolution);
     }
     if (physicsChanged || budgetChanged || fuseChanged || modeChanged ||
         solverResolutionChanged) {

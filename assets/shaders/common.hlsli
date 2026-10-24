@@ -24,8 +24,8 @@ cbuffer FrameConstants : register(b0)
     float4 GridParams;       // x = spacing, y = thickness, z = intensity, w = horizon fade
     float4 RangeParams;      // x = near, y = far, z = volume enabled, w = particle scale
     float4 Fireball;         // xyz = centre, w = emitted light intensity
-    float4 VolumeParams;     // x = emission gain, yzw = reserved
-    float4 VolumeParams2;    // x = scattering gain, y = emission gain, zw = reserved
+    float4 VolumeParams;     // x = reserved, y = split volume, z/w = detail/structure
+    float4 VolumeParams2;    // x = scattering gain, y = emission gain, z = fireball light
 };
 
 cbuffer BloomConstants : register(b1)

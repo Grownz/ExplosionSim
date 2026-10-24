@@ -11,10 +11,26 @@ namespace ex::sim {
 
 namespace {
 
-constexpr double kBrodeCrossoverZ = 0.90; // near/far-field fit crossover (~10 bar)
+constexpr double kBrodeBlendStart = 0.85; // near/far-field fit crossover
+constexpr double kBrodeBlendEnd = 1.00;
+constexpr double kThermalFraction = 0.05;        // TNT yield emitted thermally
+constexpr double kAtmosphericTransmission = 0.85; // broadband, clear air
 
 double ClampPositive(double value) {
     return value > 0.0 ? value : 0.0;
+}
+
+double SmoothStep01(double t) {
+    t = std::clamp(t, 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// Empirical Friedlander decay coefficient. The positive-phase tail is longer
+// (smaller b) far from the charge, so a fixed value over-damps distant
+// waveforms.
+double FriedlanderDecay(double scaledDistance) {
+    const double z = std::max(scaledDistance, 0.05);
+    return std::clamp(0.9 + 2.2 / (1.0 + 0.45 * z), 0.9, 3.0);
 }
 
 } // namespace
@@ -230,13 +246,14 @@ double BlastModel::PeakOverpressurePa(double scaledDistance, double ambientPress
     const double z2 = z * z;
     const double z3 = z2 * z;
 
-    // Brode (1955): near-field and far-field fits, expressed in bar.
-    double bar = 0.0;
-    if (z < kBrodeCrossoverZ) {
-        bar = 6.7 / z3 + 1.0;
-    } else {
-        bar = 0.975 / z + 1.455 / z2 + 5.85 / z3 - 0.019;
-    }
+    // Brode (1955): near-field and far-field fits, expressed in bar. The two
+    // branches are blended over [0.85, 1.0] so the curve stays continuous and
+    // monotonic; the inverse bisection relies on that.
+    const double nearField = 6.7 / z3 + 1.0;
+    const double farField = 0.975 / z + 1.455 / z2 + 5.85 / z3 - 0.019;
+    const double blend =
+        SmoothStep01((z - kBrodeBlendStart) / (kBrodeBlendEnd - kBrodeBlendStart));
+    double bar = nearField + (farField - nearField) * blend;
 
     // Brode's far-field fit turns negative beyond Z ~ 55. Continue with an
     // acoustic 1/r tail so that the shock front keeps moving at the speed of
@@ -302,7 +319,7 @@ double BlastModel::PositivePhaseDurationS(double distanceM) const {
     // radius. This reproduces the correct order of magnitude over the range
     // relevant for visualisation (see docs/physics.md).
     const double speed = std::max(ShockSpeedAtDistance(distanceM), environment_.SoundSpeed());
-    return std::clamp(1.1 * distanceM / speed, 1e-4, 2.0);
+    return std::clamp(1.1 * distanceM / speed, 1e-4, 5.0);
 }
 
 double BlastModel::OverpressureAtTime(double distanceM, double time) const {
@@ -316,18 +333,20 @@ double BlastModel::OverpressureAtTime(double distanceM, double time) const {
         return 0.0;
     }
     const double peak = PeakOverpressureAtDistance(distanceM);
-    // Friedlander waveform: p(t) = p_s (1 - t/t+) exp(-b t/t+).
+    // Friedlander waveform: p(t) = p_s (1 - t/t+) exp(-b t/t+), with the decay
+    // coefficient depending on the effective scaled distance.
+    const double pressureRatio = std::cbrt(environment_.pressurePa / 101325.0);
+    const double effectiveZ = charge_.ScaledDistance(distanceM) * pressureRatio;
+    const double decay = FriedlanderDecay(effectiveZ);
     const double normalized = local / duration;
-    constexpr double decay = 1.8;
     return peak * (1.0 - normalized) * std::exp(-decay * normalized);
 }
 
 double BlastModel::ThermalFluenceJm2(double distanceM) const {
-    // For TNT most of the yield is mechanical; ~5 % is emitted thermally.
-    constexpr double thermalFraction = 0.05;
-    constexpr double atmosphericTransmission = 0.85;
+    // For TNT most of the yield is mechanical; only a fraction is emitted
+    // thermally. The transmission is a constant clear-air broadband estimate.
     const double radius = std::max(distanceM, charge_.RadiusM());
-    return thermalFraction * charge_.EnergyJ() * atmosphericTransmission /
+    return kThermalFraction * charge_.EnergyJ() * kAtmosphericTransmission /
            (4.0 * M_PI * radius * radius);
 }
 
@@ -355,9 +374,8 @@ double BlastModel::RadiusForThermalFluence(double targetJm2) const {
     if (targetJm2 <= 0.0) {
         return 0.0;
     }
-    constexpr double thermalFraction = 0.05;
-    constexpr double atmosphericTransmission = 0.85;
-    const double numerator = thermalFraction * charge_.EnergyJ() * atmosphericTransmission;
+    const double numerator =
+        kThermalFraction * charge_.EnergyJ() * kAtmosphericTransmission;
     return std::sqrt(numerator / (4.0 * M_PI * targetJm2));
 }
 

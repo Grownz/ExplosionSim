@@ -392,7 +392,7 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     const double chargeRadius =
         std::cbrt(3.0 * std::max(config.chargeMassKg, 1e-6) / (4.0 * 3.14159265358979 * 1630.0));
     depositRadius_ = float(std::max(chargeRadius, 3.5 * double(dx_)));
-    extinctionScale_ = float(0.9 / std::max(config.fireballRadiusM, 0.5));
+    extinctionScale_ = sim::VolumeExtinctionScale(config.fireballRadiusM);
 
     stateIndex_ = 0;
     time_ = 0.0;

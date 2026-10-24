@@ -15,11 +15,18 @@ inline constexpr double kTntDensityKgM3 = 1630.0;
 // front radiates close to this value while it expands.
 inline constexpr double kFireballSurfaceTemperatureK = 3600.0;
 
+// Shared extinction scale for the baked and solver-driven volumes. The optical
+// depth is normalised by the fireball radius so the cloud stays visually
+// opaque at every charge scale.
+inline float VolumeExtinctionScale(double fireballRadiusM) {
+    return float(0.9 / std::max(fireballRadiusM, 0.5));
+}
+
 struct Environment {
     double pressurePa = 101325.0;
     double temperatureK = 288.15;
     double relativeHumidity = 0.45;
-    double windSpeedMs = 3.0;
+    double windSpeedMs = 1.0;
     double windDirectionDeg = 40.0; // direction the wind blows towards
     double gravity = 9.80665;
     double gamma = 1.4;

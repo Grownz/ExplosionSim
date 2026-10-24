@@ -18,25 +18,13 @@ void CSRender(uint3 id : SV_DispatchThreadID)
     float rho = max(a.x, 1e-6);
     float3 velocity = a.yzw / rho;
     float energy = b.x;
-    float soot = saturate(b.y);
 
     float pressure = max((Ambient.w - 1.0) * (energy - 0.5 * rho * dot(velocity, velocity)), 1e-3);
     float temperature = AmbientTemperature(rho, pressure);
 
-    float heat = saturate((temperature - Ambient.z) / 3000.0);
-    float compression = saturate(rho / Ambient.x - 1.0);
-
-    // Density gradient highlights the shock front without fogging the whole
-    // post-shock region.
+    // Smooth the product mass over the six face neighbours; the auto-scaled
+    // grid reaches ~1 m voxels late in the run.
     int3 p = int3(id);
-    float3 gradient = float3(LoadA(p + int3(1, 0, 0)).x - LoadA(p - int3(1, 0, 0)).x,
-                             LoadA(p + int3(0, 1, 0)).x - LoadA(p - int3(0, 1, 0)).x,
-                             LoadA(p + int3(0, 0, 1)).x - LoadA(p - int3(0, 0, 1)).x);
-    float gradientMagnitude = length(gradient) / (2.0 * max(DomainMin.w, 1e-5));
-    float shock = saturate(gradientMagnitude * 0.030);
-
-    // The auto-scaled grid reaches ~0.7 m voxels late in the run, which shows
-    // up as speckle. Smooth the product mass over the six face neighbours.
     float sootSum = 2.0 * max(b.y, 0.0) + LoadB(p + int3(1, 0, 0)).y +
                     LoadB(p - int3(1, 0, 0)).y + LoadB(p + int3(0, 1, 0)).y +
                     LoadB(p - int3(0, 1, 0)).y + LoadB(p + int3(0, 0, 1)).y +

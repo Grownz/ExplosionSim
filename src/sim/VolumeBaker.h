@@ -108,7 +108,6 @@ private:
 
     void Dispatch(const BlastModel& model, bool synchronous);
     void BakeRange(int zBegin, int zEnd, const BakeJob& job);
-    void FinishBake();
 
     core::ThreadPool* pool_ = nullptr;
     int resolution_ = 128;

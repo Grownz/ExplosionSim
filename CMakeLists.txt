@@ -42,6 +42,7 @@ include(FetchContent)
 # non-existent folder so FetchContent only downloads it.
 FetchContent_Declare(imgui
     URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5.zip
+    URL_HASH SHA256=15C60AD10E331378CDA381002418F42EA2E98B9C05758EB493B23181BB38CA45
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SOURCE_SUBDIR cmake/no-subdirectory)
 FetchContent_MakeAvailable(imgui)

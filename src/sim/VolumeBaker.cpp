@@ -205,7 +205,7 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
     params.shockRadius = float(state.shockRadius);
     params.shockMach = float(state.shockMach);
     params.burstY = float(height);
-    params.extinctionScale = float(0.9 / std::max(fireballRadius, 0.5));
+    params.extinctionScale = VolumeExtinctionScale(fireballRadius);
     params.voxelSize = voxelSize;
 
     // The cloud emerges from the cooling fireball.
@@ -575,14 +575,10 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                         out[1] = uint8_t(Saturate(values[1]) * 255.0f + 0.5f);
                         out2[0] = uint8_t(Saturate(values[2]) * 255.0f + 0.5f);
                         out2[1] = uint8_t(Saturate(values[3]) * 255.0f + 0.5f);
-                    } else if (job.halfFloat) {
+                    } else {
                         for (int channel = 0; channel < 4; ++channel) {
                             const uint16_t half = ToHalf(values[channel]);
                             std::memcpy(out + channel * 2, &half, sizeof(half));
-                        }
-                    } else {
-                        for (int channel = 0; channel < 4; ++channel) {
-                            out[channel] = uint8_t(Saturate(values[channel]) * 255.0f + 0.5f);
                         }
                     }
                 } else {

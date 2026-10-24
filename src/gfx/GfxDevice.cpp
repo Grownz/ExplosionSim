@@ -303,11 +303,6 @@ bool GfxDevice::Resize(int width, int height) {
     return CreateSizeDependentResources();
 }
 
-void GfxDevice::ClearFinal(float r, float g, float b, float a, float depth) {    const float color[4] = {r, g, b, a};
-    context_->ClearRenderTargetView(finalRTV_.Get(), color);
-    context_->ClearDepthStencilView(dsv_.Get(), D3D11_CLEAR_DEPTH, depth, 0);
-}
-
 void GfxDevice::BindFinalTarget() {
     ID3D11RenderTargetView* rtv = finalRTV_.Get();
     context_->OMSetRenderTargets(1, &rtv, dsv_.Get());

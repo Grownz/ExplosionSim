@@ -13,6 +13,9 @@ groupshared uint gMaxRadius;
 
 static const float kBoundScale = 512.0;
 static const float kProductThreshold = 0.004;
+// The radial trigger must not react to the low base surge; measure the cloud
+// only above a fraction of the domain height.
+static const float kRadiusHeightFraction = 0.25;
 
 uint Quantize(float value)
 {
@@ -38,6 +41,9 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
     uint height = 0;
     uint radius = 0;
 
+    const float domainHeight = max(DomainMax.y - DomainMin.y, 1e-3);
+    const float radiusFloor = max(1.5 * DomainMin.w, kRadiusHeightFraction * domainHeight);
+
     if (all(id < (uint3)Grid.xyz))
     {
         float4 a = StateA.Load(int4(id, 0));
@@ -53,9 +59,9 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
         {
             float3 world = DomainMin.xyz + (float3(id) + 0.5) * DomainMin.w;
             height = Quantize(world.y);
-            // Ignore the thin ground layer when measuring the radius: it is
-            // faded out in the renderer and would otherwise dominate.
-            if (world.y > 1.5 * DomainMin.w)
+            // Ignore the ground-hugging base surge for the radial extent; it
+            // would otherwise expand the domain long before the cloud needs it.
+            if (world.y > radiusFloor)
             {
                 radius = Quantize(max(abs(world.x), abs(world.z)));
             }
