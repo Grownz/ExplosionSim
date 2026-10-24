@@ -445,12 +445,18 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
     ImGui::SameLine();
     ImGui::Checkbox("Bloom", &render.enableBloom);
     ImGui::Checkbox("Grid overlay", &render.showGrid);
+
+    const bool highFidelity = settings.simulation.mode == sim::SimulationMode::HighFidelity;
+    ImGui::BeginDisabled(highFidelity);
     if (ImGui::Checkbox("Auto-scale volume", &settings.simulation.autoScaleVolume)) {
         actions.applySimulationSettings = true;
     }
+    ImGui::EndDisabled();
 
-    if (settings.simulation.mode == sim::SimulationMode::HighFidelity) {
+    if (highFidelity) {
         Readout("Solver grid", "%d³", renderer.Solver().resolution);
+        Hint("The Euler solver uses a fixed domain sized at detonation; auto-scale "
+             "applies to the reduced-order volume.");
     } else {
         const sim::VolumeFrame& frame = simulation.Volume().Current();
         if (!frame.empty()) {
@@ -460,11 +466,10 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
             Readout("Volume box", "%.1f × %.1f × %.1f m", sizeX, sizeY, sizeZ);
             Readout("Voxel size", "%.1f mm", (sizeX / float(frame.resolution)) * 1000.0f);
         }
+        Hint("Auto-scale grows the baked volume to keep the fireball and smoke cloud "
+             "inside it. The voxel count stays fixed, so the effective resolution drops "
+             "as the box grows.");
     }
-
-    Hint("Auto-scale grows the baked volume to keep the fireball and smoke cloud "
-         "inside it. The voxel count stays fixed, so the effective resolution drops "
-         "as the box grows.");
 
     ImGui::SliderFloat("Sun azimuth", &render.sunAzimuthDeg, 0.0f, 360.0f, "%.0f°");
     ImGui::SliderFloat("Sun elevation", &render.sunElevationDeg, 1.0f, 80.0f, "%.0f°");
