@@ -25,7 +25,7 @@ endif()
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 option(EXPLOSION_BUILD_TESTS "Build the physics unit tests" ON)
-option(EXPLOSION_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(EXPLOSION_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 
 # ---------------------------------------------------------------------------
 # Generated version metadata
@@ -128,9 +128,31 @@ add_custom_command(TARGET ExplosionSim POST_BUILD
 if(EXPLOSION_BUILD_TESTS)
     enable_testing()
     add_executable(explosion_tests
-        tests/physics_tests.cpp)
+        tests/physics_tests.cpp
+        src/app/Settings.cpp)
     target_link_libraries(explosion_tests PRIVATE explosion_core)
     target_compile_definitions(explosion_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
     target_compile_options(explosion_tests PRIVATE /W4 /permissive- /utf-8)
+    if(EXPLOSION_WARNINGS_AS_ERRORS)
+        target_compile_options(explosion_tests PRIVATE /WX)
+    endif()
     add_test(NAME physics COMMAND explosion_tests)
+
+    # GPU smoke test: creates its own D3D11 device and exercises the solver.
+    add_executable(gpu_tests
+        tests/gpu_tests.cpp
+        src/gfx/GpuEulerSolver.cpp
+        src/gfx/Shader.cpp)
+    target_link_libraries(gpu_tests PRIVATE explosion_core d3d11 dxgi d3dcompiler)
+    target_compile_definitions(gpu_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
+    target_compile_options(gpu_tests PRIVATE /W4 /permissive- /utf-8)
+    if(EXPLOSION_WARNINGS_AS_ERRORS)
+        target_compile_options(gpu_tests PRIVATE /WX)
+    endif()
+    add_custom_command(TARGET gpu_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/assets
+                $<TARGET_FILE_DIR:gpu_tests>/assets
+        COMMENT "Copying assets next to the GPU test")
+    add_test(NAME gpu COMMAND gpu_tests)
 endif()

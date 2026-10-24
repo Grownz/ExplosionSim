@@ -25,10 +25,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Z-dependent Friedlander decay coefficient; far-field waveforms keep their longer tail.
 - Tests for the Brode crossover monotonicity and inverse radius, volume auto-scale
   containment, and volume-bake determinism.
+- GPU solver smoke test (`gpu_tests`): creates a Direct3D 11 device (hardware or WARP),
+  runs `Reset`/`Step`/`RescaleDomain` and checks the reduction bounds. It is skipped
+  when no device is available.
+- Settings round-trip test covering every persisted field.
 - `URL_HASH` for the Dear ImGui download.
 
 ### Changed
 
+- Warnings-as-errors (`/WX`) is enabled by default; the remaining unused-parameter
+  warning in the shader include handler was removed.
 - Solver CFL reduced from 0.30 to 0.20 and time steps are advanced in sub-batches of
   8 steps. Interactive runs poll the reduction through an event query without blocking;
   a rising maximum signal speed is picked up between sub-batches instead of after a

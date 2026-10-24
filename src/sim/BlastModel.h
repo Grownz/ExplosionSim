@@ -125,6 +125,9 @@ public:
 
     double FireballMaxRadiusM() const { return fireballMaxRadius_; }
     double CloudTopHeightM() const;
+
+// Conservative visual cloud top used by the readouts. The baked volume box
+// uses a tighter 1.6 R fit and the camera a 2.4 R display margin.
     double ObserverSlantRange(double groundDistanceM) const;
 
 private:

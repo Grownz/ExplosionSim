@@ -2,6 +2,8 @@
 // No external test framework is required.
 
 #include "core/ThreadPool.h"
+#include "app/Settings.h"
+#include "gfx/Shader.h"
 #include "sim/BlastModel.h"
 #include "sim/Simulation.h"
 #include "sim/VolumeBaker.h"
@@ -11,7 +13,16 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cwchar>
 #include <vector>
+
+// The settings serializer only needs this symbol for DefaultSettingsPath; the
+// round-trip test passes an explicit path.
+namespace ex::gfx {
+std::wstring ResolveAssetPath(const std::wstring&) {
+    return {};
+}
+} // namespace ex::gfx
 
 namespace {
 
@@ -332,6 +343,86 @@ void TestVolumeBakeDeterminism() {
     CHECK(first == second);
 }
 
+void TestSettingsRoundTrip() {
+    ex::app::AppSettings original{};
+    original.simulation.chargeMassKg = 12.5;
+    original.simulation.heightOfBurstM = 3.25;
+    original.simulation.ambientTemperatureK = 300.15;
+    original.simulation.ambientPressurePa = 95000.0;
+    original.simulation.relativeHumidity = 0.35;
+    original.simulation.windSpeedMs = 4.5;
+    original.simulation.windDirectionDeg = 123.0;
+    original.simulation.timeScale = 0.25;
+    original.simulation.fuseSeconds = 1.5;
+    original.simulation.mode = ex::sim::SimulationMode::HighFidelity;
+    original.simulation.solverResolution = 96;
+    original.simulation.solverStepsPerFrame = 12;
+    original.simulation.solverAutoScale = false;
+    original.simulation.loop = true;
+    original.simulation.particleBudget = 12345;
+    original.simulation.volumeResolution = 96;
+    original.simulation.bakeVolume = false;
+    original.simulation.autoScaleVolume = false;
+
+    original.render.raymarchSteps = 77;
+    original.render.exposure = 1.25f;
+    original.render.bloomStrength = 0.42f;
+    original.render.enableVolume = false;
+    original.render.enableParticles = false;
+    original.render.enableGround = false;
+    original.render.enableBloom = false;
+    original.render.showGrid = false;
+    original.render.sunAzimuthDeg = 111.0f;
+    original.render.sunElevationDeg = 27.0f;
+    original.render.particleScale = 1.75f;
+
+    original.paused = true;
+    original.showUi = false;
+    original.observerDistanceM = 42.0;
+
+    const std::wstring path = L"test_settings_roundtrip.ini";
+    ex::app::SaveSettings(original, path);
+
+    ex::app::AppSettings loaded{};
+    ex::app::LoadSettings(loaded, path);
+    _wremove(path.c_str());
+
+    CHECK_NEAR(loaded.simulation.chargeMassKg, 12.5, 1e-4);
+    CHECK_NEAR(loaded.simulation.heightOfBurstM, 3.25, 1e-4);
+    CHECK_NEAR(loaded.simulation.ambientTemperatureK, 300.15, 1e-4);
+    CHECK_NEAR(loaded.simulation.ambientPressurePa, 95000.0, 1e-4);
+    CHECK_NEAR(loaded.simulation.relativeHumidity, 0.35, 1e-4);
+    CHECK_NEAR(loaded.simulation.windSpeedMs, 4.5, 1e-4);
+    CHECK_NEAR(loaded.simulation.windDirectionDeg, 123.0, 1e-4);
+    CHECK_NEAR(loaded.simulation.timeScale, 0.25, 1e-4);
+    CHECK_NEAR(loaded.simulation.fuseSeconds, 1.5, 1e-4);
+    CHECK(loaded.simulation.mode == ex::sim::SimulationMode::HighFidelity);
+    CHECK(loaded.simulation.solverResolution == 96);
+    CHECK(loaded.simulation.solverStepsPerFrame == 12);
+    CHECK(!loaded.simulation.solverAutoScale);
+    CHECK(loaded.simulation.loop);
+    CHECK(loaded.simulation.particleBudget == 12345);
+    CHECK(loaded.simulation.volumeResolution == 96);
+    CHECK(!loaded.simulation.bakeVolume);
+    CHECK(!loaded.simulation.autoScaleVolume);
+
+    CHECK(loaded.render.raymarchSteps == 77);
+    CHECK_NEAR(loaded.render.exposure, 1.25f, 1e-4);
+    CHECK_NEAR(loaded.render.bloomStrength, 0.42f, 1e-4);
+    CHECK(!loaded.render.enableVolume);
+    CHECK(!loaded.render.enableParticles);
+    CHECK(!loaded.render.enableGround);
+    CHECK(!loaded.render.enableBloom);
+    CHECK(!loaded.render.showGrid);
+    CHECK_NEAR(loaded.render.sunAzimuthDeg, 111.0f, 1e-4);
+    CHECK_NEAR(loaded.render.sunElevationDeg, 27.0f, 1e-4);
+    CHECK_NEAR(loaded.render.particleScale, 1.75f, 1e-4);
+
+    CHECK(loaded.paused);
+    CHECK(!loaded.showUi);
+    CHECK_NEAR(loaded.observerDistanceM, 42.0, 1e-4);
+}
+
 void TestFuseAndDetonation() {
     ex::core::ThreadPool pool(2);
 
@@ -378,6 +469,7 @@ int main() {
     TestVolumeBaker();
     TestVolumeBakerAutoScale();
     TestVolumeBakeDeterminism();
+    TestSettingsRoundTrip();
     TestFuseAndDetonation();
 
     if (g_failures == 0) {

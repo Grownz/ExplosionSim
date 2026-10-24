@@ -20,7 +20,7 @@ class IncludeHandler final : public ID3DInclude {
 public:
     explicit IncludeHandler(std::wstring directory) : directory_(std::move(directory)) {}
 
-    HRESULT __stdcall Open(D3D_INCLUDE_TYPE includeType, LPCSTR fileName, LPCVOID,
+    HRESULT __stdcall Open(D3D_INCLUDE_TYPE, LPCSTR fileName, LPCVOID,
                            LPCVOID* outData, UINT* outSize) override {
         std::string name(fileName);
         std::wstring wide(name.begin(), name.end());

@@ -149,6 +149,8 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
         const double baseDustRadius = fireballRadius * 2.4;
         const double horizontal =
             std::max({smokeRadius + drift, cloudRadius * 1.35 + drift, baseDustRadius, 0.2});
+        // Tighter than BlastModel::CloudTopHeightM (2.2 R): the box only has to
+        // contain the baked field, not provide a display margin.
         const double requiredTop = std::max({state.fireballCenterY + fireballRadius * 2.0,
                                              state.cloudCenterY + cloudRadius * 1.6,
                                              height + fireballRadius * 2.2, 0.6});

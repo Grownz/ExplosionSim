@@ -36,6 +36,8 @@ float HashNoise(float x, float y, float z) {
 }
 
 // Approximate blackbody colour (linear RGB), valid for 1000 K .. 40000 K.
+// Particle sprites use this Tanner-Helland approximation; the volumetric path
+// uses the Kim et al. fit in common.hlsli.
 XMFLOAT3 BlackbodyColor(float kelvin) {
     const float t = std::clamp(kelvin, 1000.0f, 40000.0f) / 100.0f;
     float r = 0.0f;

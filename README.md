@@ -73,6 +73,12 @@ Run the tests:
 ctest --test-dir build -C Release --output-on-failure
 ```
 
+`physics` covers the blast model, atmosphere, volume baker, thread pool and a
+settings save/load round-trip. `gpu` creates a Direct3D 11 device (hardware, then
+WARP) and exercises the high-fidelity Euler solver; it is skipped when no device is
+available. The build enables warnings-as-errors by default
+(`-DEXPLOSION_WARNINGS_AS_ERRORS=OFF` disables it).
+
 ## Run
 
 ```powershell
