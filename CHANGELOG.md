@@ -4,36 +4,28 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- High-fidelity auto-scale now triggers on the measured extent of the product field
-  instead of the analytic cloud estimate, which underestimated the rising Euler plume and
-  let its top clip at the domain boundary. The reduction pass reports the plume top and
-  radius, the trigger fires at 75 % of the domain, several 1.3× expansions can run in one
-  frame, and the accuracy budget is ×16. The panel shows the measured plume top/radius.
-- The initial fireball no longer follows the axis-aligned noise lattice: the lump noise
-  uses a fixed world-space frequency and its amplitude fades in with the fireball
-  radius, so the first milliseconds stay spherical. The domain warp is faded out for
-  very small fireballs as well.
-- Duplicate Dear ImGui widget IDs for the `Pause` button/checkbox and the `Bloom`
-  slider/checkbox, which triggered the "visible items with conflicting ID" warning.
+## [0.2.0] - 2026-10-24
 
 ### Added
 
-- High-fidelity look development: the product incandescence now cools with the
-  simulation time and fades with altitude, scattering and emission are tuned
-  independently (`VolumeParams2`), the raymarch adds gradient-based sun shading for
-  volumetric structure, and the lowest voxel layer is faded so the ground-reflected
-  base surge no longer forms a hard star. `--reduced-order` forces the analytic model
-  when `settings.ini` selects the Euler solver.
-- Solver auto-scale: the Euler solver domain expands by 1.3× when the fireball, smoke
-  envelope or base dust reaches 70 % of the box. The conserved state is resampled on the
-  GPU into the larger grid (fixed voxel count); `dx` and the CFL step grow, so the
-  effective accuracy drops while the performance is preserved. UI readouts show domain,
-  voxel size, accuracy factor and expansions; `--solver-auto-scale` /
+- **High-fidelity GPU mode**: a 3D compressible Euler solver (HLLC Riemann solver,
+  MUSCL/minmod reconstruction, CFL-adaptive time step, buoyancy and soot transport)
+  running in Direct3D 11 compute shaders at 64³–512³. Selectable under
+  *Physics & Effects → Simulation model*; the solver field drives the existing
+  volumetric renderer. 1024³ is not offered because its four RGBA32F state volumes would
+  need about 76 GB of VRAM.
+- **Solver auto-scale**: a GPU reduction measures the visible product bounds every step.
+  When the plume top or radius reaches 75 % of the domain, the domain grows by 1.3× and
+  the six conserved variables are resampled trilinearly onto the new grid (fixed voxel
+  count). Several expansions can run in one frame, so a fast plume rise is caught before
+  it clips; the accuracy budget is ×16. The UI shows the domain, voxel size, measured
+  plume top/radius, accuracy factor and expansion count, and `--solver-auto-scale` /
   `--no-solver-auto-scale` are available.
+- High-fidelity look development: product incandescence cools with the simulation time
+  and fades with altitude, scattering and emission are tuned independently
+  (`VolumeParams2`), gradient-based sun shading adds volumetric structure to the
+  raymarch, and the lowest voxel layer is faded so the ground-reflected base surge no
+  longer forms a hard star.
 - Auto-scale volume box in the Rendering panel: it always contains the fireball, smoke
   envelope, cloud cap and base dust, grows only when the field approaches the edge and
   keeps the bake cost constant by trading effective resolution for size.
@@ -44,34 +36,37 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Physically active atmosphere: moist-air density (Magnus-Tetens), humidity-dependent
   sound speed, Sachs pressure scaling for the blast and fireball, plus humidity controls
   and derived readouts in the Atmosphere panel.
-- High-fidelity GPU mode: a 3D compressible Euler solver (HLLC Riemann solver,
-  MUSCL/minmod reconstruction, CFL-adaptive time step, buoyancy and soot transport)
-  running in Direct3D 11 compute shaders at 64³–512³. Selectable under
-  *Physics & Effects → Simulation model*; solver grid and steps per frame are
-  configurable. The solver field drives the existing volumetric renderer.
 - Adaptive metre scale bar in the lower-left corner when the grid overlay is enabled.
   The bar length is snapped to a 1-2-5 sequence and clamped to a readable pixel size as
   the camera zooms.
+- Headless high-fidelity captures can target an exact solver step count
+  (`--solver-step-count`); headless runs now load `settings.ini`, and `--reduced-order`
+  forces the analytic model when the settings select the Euler solver.
+- The README now includes a high-fidelity mushroom-cloud screenshot captured at solver
+  step 35 000.
 
 ### Changed
 
 - Default playback no longer loops after the blast; the grid overlay (including the
   metre scale) is enabled by default.
-
-### Changed
-
 - Fireball rendering overhaul: hot filamentary core, cooler soot-rich surface, stronger
   Planckian emission, longer incandescence, and a growing soot shell.
 - Dust and smoke now form a turbulent envelope and a shock-lifted base surge that
   progressively obscure the cooling fireball; particles were darkened and enlarged.
 - Default volume resolution raised to 128³ and ray-march steps to 128.
-
-### Changed
-
 - The high-fidelity solver now offers 192³, 256³ and 512³ grids (with a VRAM guard and
   non-real-time warning), uses the moist atmosphere and wind drift, and shares the
-  domain-warped detail noise with the reduced-order volume. 1024³ is not available for
-  the solver because its four RGBA32F state volumes would need about 76 GB of VRAM.
+  domain-warped detail noise with the reduced-order volume.
+- The hero screenshot was refreshed for the new rendering.
+
+### Fixed
+
+- The initial fireball no longer follows the axis-aligned noise lattice: the lump noise
+  uses a fixed world-space frequency and its amplitude fades in with the fireball
+  radius, so the first milliseconds stay spherical. The domain warp is faded out for
+  very small fireballs as well.
+- Duplicate Dear ImGui widget IDs for the `Pause` button/checkbox and the `Bloom`
+  slider/checkbox, which triggered the "visible items with conflicting ID" warning.
 
 ## [0.1.0] - 2026-10-24
 
@@ -90,4 +85,5 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
+[0.2.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.1.0
