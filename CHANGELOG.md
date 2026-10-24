@@ -4,6 +4,39 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Absorbing sponge over the outer 6 % of the lateral and top solver boundaries. It
+  relaxes the state towards ambient so outgoing acoustic waves do not reflect back into
+  the plume; the ground remains a reflecting wall.
+- Deterministic readback mode for headless captures: the solver waits for the reduction
+  every 8 steps, so repeated captures produce identical images.
+
+### Changed
+
+- Solver CFL reduced from 0.30 to 0.20 and time steps are advanced in sub-batches of
+  8 steps. Interactive runs poll the reduction through an event query without blocking;
+  a rising maximum signal speed is picked up between sub-batches instead of after a
+  whole batch.
+- High-fidelity time captures now advance the analytic model together with the solver,
+  so ground scorch, dust and the frame camera use the correct simulation time.
+
+### Fixed
+
+- High-fidelity `--time` captures advanced the analytic blast model twice (once in
+  `RunHeadless` and once through the solver advance).
+- A stale bloom texture was still added to the composite after bloom was disabled.
+- The high-fidelity frame camera now includes the wind drift applied to the rendered
+  volume instead of framing the origin.
+
+### Known issues
+
+- The auto-scale radial trigger reacts to the low base surge. On large surface bursts
+  this can expand the domain earlier than the visible cloud needs, which coarsens the
+  plume. A height-gated radial measurement is the next step.
+
 ## [0.2.0] - 2026-10-24
 
 ### Added

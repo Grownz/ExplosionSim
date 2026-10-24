@@ -60,6 +60,10 @@ public:
     void UpdateRenderVolume();
     bool RescaleDomain(float factor);
 
+    // Headless captures wait for the reduction so the time step sequence is
+    // reproducible; the interactive path keeps the non-blocking pipeline.
+    void SetDeterministic(bool deterministic) { deterministic_ = deterministic; }
+
     // Simulated time advanced since the last call (used to keep the reduced
     // order model and the particles in sync with the solver).
     double ConsumeAdvance();
@@ -114,9 +118,11 @@ private:
     void DispatchSource(float dt);
     void DispatchReduce();
     void DispatchRender();
-    float ReadMaxSpeed();
+    bool PollReduction();
+    void ConsumeStaging();
 
     static constexpr float kBoundScale = 512.0f;
+    static constexpr int kMaxBatchSteps = 8;
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* context_ = nullptr;
@@ -142,7 +148,9 @@ private:
     ComPtr<ID3D11Buffer> maxSpeedBuffer_;
     ComPtr<ID3D11UnorderedAccessView> maxSpeedUAV_;
     ComPtr<ID3D11Buffer> maxSpeedStaging_;
-    bool stagingReady_ = false;
+    ComPtr<ID3D11Query> reduceQuery_;
+    bool reducePending_ = false;
+    bool deterministic_ = false;
 
     EulerConfig config_{};
     sim::VolumeBounds bounds_{};

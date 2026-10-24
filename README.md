@@ -174,7 +174,7 @@ High-fidelity settings (Physics & Effects panel):
   of VRAM and are not real-time)
 - Solver steps per frame: 4–64
 - Domain: six times the analytic fireball radius (half extent 3×), cubic, with a
-  reflecting ground and open lateral/top boundaries
+  reflecting ground and an absorbing sponge at the lateral/top boundaries
 - Uses the moist-air density and virtual temperature; wind drifts the rendered volume
 - Shares the domain-warped detail noise with the reduced-order volume
 - **Solver auto-scale** – a GPU reduction measures the actual extent of the visible

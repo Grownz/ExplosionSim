@@ -225,16 +225,19 @@ with the ideal-gas equation of state `p = (gamma - 1)(E - 0.5 rho |v|^2)` and
 - **Riemann solver** – HLLC with the Davis wave-speed estimates
   `S_L = min(u_L - c_L, u_R - c_R)`, `S_R = max(u_L + c_L, u_R + c_R)`. A Rusanov flux is
   used if the star region is degenerate.
-- **Splitting** – three directional sweeps followed by a source pass per time step.
-- **Time step** – CFL-limited with `dt = 0.3 dx / max(|v| + c)`. The maximum is computed
-  on the GPU and read back one frame later.
+- **Splitting** – three directional sweeps followed by a source pass per time step, run
+  in sub-batches of 8 steps.
+- **Time step** – CFL-limited with `dt = 0.20 dx / max(|v| + c)`. The maximum is computed
+  on the GPU; interactive runs poll it without blocking, captures wait for it.
 
 ### Initial condition and boundaries
 
 The charge is deposited as a sphere of radius `max(R_charge, 3.5 dx)` with the TNT mass
 and energy, and `Y = 1` (soot density equal to the local gas density). The ground is a
-reflecting wall (mirrored ghost cell with reversed vertical momentum); the other
-boundaries are zero-gradient outflows.
+reflecting wall (mirrored ghost cell with reversed vertical momentum). The lateral and
+top boundaries use zero-gradient ghost cells plus an absorbing sponge over the outer 6 %
+of the domain that relaxes the state towards ambient, so outgoing waves do not reflect
+back.
 
 ### Source terms
 

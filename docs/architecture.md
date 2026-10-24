@@ -135,21 +135,26 @@ starting value after each step. All passes are dispatched with `8x8x8` thread gr
 
 ### Adaptive time step
 
-The reduction result is copied into a staging buffer and read back one frame later, so
-the CPU never stalls on the current frame's GPU work. The step size is
+The reduction result is copied into a staging buffer. The interactive path checks an
+event query without blocking and keeps the previous maximum if the copy is still in
+flight; headless captures wait for the copy so the step sequence is reproducible. The
+step size is
 
 ```
-dt = CFL * dx / max(|v| + c),   CFL = 0.3
+dt = CFL * dx / max(|v| + c),   CFL = 0.20
 ```
 
-clamped to `[0.1 us, 50 us]`. At start-up a conservative 4000 m/s is assumed until the
-first reduction result is available.
+clamped to `[0.1 us, 50 us]`. A batch is split into sub-batches of 8 steps so a rising
+maximum signal speed is picked up without a long CFL overshoot. At start-up a
+conservative 4000 m/s is assumed until the first reduction result is available.
 
 ### Domain and boundaries
 
 The domain is a cube of side `2 * 3 * R_fireball` with the ground at `y = 0`. The ground
 is a reflecting wall implemented by mirroring the ghost cell and reversing the vertical
-momentum; the lateral and top boundaries are zero-gradient outflows.
+momentum. The lateral and top boundaries use zero-gradient ghost cells plus an absorbing
+sponge over the outer 6 % of the domain, which relaxes the state towards ambient so
+outgoing acoustic waves do not reflect back into the plume.
 
 ### Auto-scale (domain expansion)
 

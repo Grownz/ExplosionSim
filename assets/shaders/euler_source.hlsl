@@ -1,5 +1,12 @@
 #include "euler_common.hlsli"
 
+// Absorbing sponge at the lateral and top boundaries. The ground stays a
+// reflecting wall. A zero-gradient ghost cell alone reflects acoustic waves;
+// relaxing the state towards ambient over the outer few percent of the domain
+// lets outgoing waves leave without a visible echo.
+static const float kSpongeWidth = 0.06;
+static const float kSpongeRate = 45.0;
+
 // Buoyancy in a uniform ambient atmosphere plus a sub-grid radiative cooling
 // term for the soot. The hydrostatic background is subtracted so the ambient
 // air does not accelerate downwards.
@@ -32,6 +39,24 @@ void CSSource(uint3 id : SV_DispatchThreadID)
 
     b.x = energy;
     b.y = soot;
+
+    // --- Open-boundary sponge --------------------------------------------
+    float3 world = DomainMin.xyz + (float3(id) + 0.5) * DomainMin.w;
+    float3 extent = max(DomainMax.xyz - DomainMin.xyz, 1e-4);
+    float3 rel = (world - DomainMin.xyz) / extent;
+    float lateral = min(min(rel.x, 1.0 - rel.x), min(rel.z, 1.0 - rel.z));
+    float toTop = 1.0 - rel.y;
+    float edge = min(lateral, toTop);
+    float ramp = saturate(1.0 - edge / kSpongeWidth);
+    float blend = saturate(kSpongeRate * ramp * ramp * DomainMax.w);
+
+    if (blend > 1e-5)
+    {
+        float ambientEnergy = Ambient.y / (Ambient.w - 1.0);
+        a = lerp(a, float4(Ambient.x, 0.0, 0.0, 0.0), blend);
+        b = lerp(b, float2(ambientEnergy, 0.0), blend);
+    }
+
     Sanitise(a, b);
 
     OutA[id] = a;

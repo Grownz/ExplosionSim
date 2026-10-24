@@ -15,7 +15,7 @@ namespace {
 
 constexpr int kThreadGroupSize = 8;
 constexpr float kCooling = 2.0e4f;
-constexpr float kCfl = 0.30f;
+constexpr float kCfl = 0.20f;
 
 bool CreateVolumeTexture(ID3D11Device* device, int resolution, DXGI_FORMAT format,
                          ID3D11Texture3D** texture, ID3D11ShaderResourceView** srv,
@@ -135,6 +135,13 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
         return false;
     }
 
+    D3D11_QUERY_DESC queryDesc{};
+    queryDesc.Query = D3D11_QUERY_EVENT;
+    if (FAILED(device_->CreateQuery(&queryDesc, &reduceQuery_))) {
+        LogError("High-fidelity solver: reduction query creation failed.");
+        return false;
+    }
+
     D3D11_SAMPLER_DESC samplerDesc{};
     samplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -198,6 +205,7 @@ void GpuEulerSolver::ReleaseVolumeResources() {
 void GpuEulerSolver::Shutdown() {
     ReleaseVolumeResources();
     maxSpeedStaging_.Reset();
+    reduceQuery_.Reset();
     maxSpeedUAV_.Reset();
     maxSpeedBuffer_.Reset();
     constantBuffer_.Reset();
@@ -295,7 +303,13 @@ void GpuEulerSolver::DispatchReduce() {
     UnbindAll();
 
     context_->CopyResource(maxSpeedStaging_.Get(), maxSpeedBuffer_.Get());
-    stagingReady_ = true;
+    if (deterministic_) {
+        ConsumeStaging();
+        reducePending_ = false;
+    } else {
+        context_->End(reduceQuery_.Get());
+        reducePending_ = true;
+    }
 }
 
 void GpuEulerSolver::DispatchRender() {
@@ -314,30 +328,47 @@ void GpuEulerSolver::DispatchRender() {
     UnbindAll();
 }
 
-float GpuEulerSolver::ReadMaxSpeed() {
-    if (!stagingReady_) {
-        return maxSpeed_;
+bool GpuEulerSolver::PollReduction() {
+    if (deterministic_ || !reducePending_ || !reduceQuery_) {
+        return false;
     }
 
+    // Interactive path: never block the CPU on the GPU. If the copy has not
+    // completed yet, keep the previous maximum speed and try again after the
+    // next sub-batch.
+    BOOL complete = FALSE;
+    const HRESULT queryResult = context_->GetData(reduceQuery_.Get(), &complete,
+                                                  sizeof(complete),
+                                                  D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (queryResult != S_OK || !complete) {
+        return false;
+    }
+
+    ConsumeStaging();
+    reducePending_ = false;
+    return true;
+}
+
+void GpuEulerSolver::ConsumeStaging() {
     D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (SUCCEEDED(context_->Map(maxSpeedStaging_.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
-        uint32_t values[4] = {0, 0, 0, 0};
-        memcpy(values, mapped.pData, sizeof(values));
-        context_->Unmap(maxSpeedStaging_.Get(), 0);
-
-        const float value = *reinterpret_cast<const float*>(&values[0]);
-        if (std::isfinite(value) && value > 1.0f) {
-            maxSpeed_ = value;
-        }
-
-        if (values[1] > 0 || values[2] > 0) {
-            stats_.plumeTop = float(values[1]) / kBoundScale;
-            stats_.plumeRadius = float(values[2]) / kBoundScale;
-            stats_.fieldBoundsValid = true;
-        }
+    if (FAILED(context_->Map(maxSpeedStaging_.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+        return;
     }
-    stagingReady_ = false;
-    return maxSpeed_;
+
+    uint32_t values[4] = {0, 0, 0, 0};
+    memcpy(values, mapped.pData, sizeof(values));
+    context_->Unmap(maxSpeedStaging_.Get(), 0);
+
+    const float value = *reinterpret_cast<const float*>(&values[0]);
+    if (std::isfinite(value) && value > 1.0f) {
+        maxSpeed_ = value;
+    }
+
+    if (values[1] > 0 || values[2] > 0) {
+        stats_.plumeTop = float(values[1]) / kBoundScale;
+        stats_.plumeRadius = float(values[2]) / kBoundScale;
+        stats_.fieldBoundsValid = true;
+    }
 }
 
 bool GpuEulerSolver::Reset(const EulerConfig& config) {
@@ -369,7 +400,7 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     totalSteps_ = 0;
     maxSpeed_ = 4000.0f;
     lastDt_ = 0.0f;
-    stagingReady_ = false;
+    reducePending_ = false;
     hasVolume_ = false;
     oldBounds_ = bounds_;
     oldDx_ = dx_;
@@ -405,31 +436,46 @@ void GpuEulerSolver::Step(int steps) {
         return;
     }
 
-    const float maxSpeed = std::max(ReadMaxSpeed(), 1.0f);
-    const float dt = std::clamp(kCfl * dx_ / maxSpeed, 1e-7f, 5e-5f);
+    // Splitting the batch lets the solver react to a rising maximum signal
+    // speed without a blocking readback. The reduction from the previous
+    // sub-batch is consumed here when the GPU has already finished it.
+    int remaining = steps;
+    float lastSpeed = std::max(maxSpeed_, 1.0f);
+    while (remaining > 0) {
+        PollReduction();
+        lastSpeed = std::max(maxSpeed_, 1.0f);
+        const float dt = std::clamp(kCfl * dx_ / lastSpeed, 1e-7f, 5e-5f);
+        const int batch = std::min(remaining, kMaxBatchSteps);
 
-    for (int step = 0; step < steps; ++step) {
-        for (int direction = 0; direction < 3; ++direction) {
-            DispatchSweep(direction, dt);
+        for (int step = 0; step < batch; ++step) {
+            for (int direction = 0; direction < 3; ++direction) {
+                DispatchSweep(direction, dt);
+            }
+            DispatchSource(dt);
+
+            time_ += double(dt);
+            ++totalSteps_;
         }
-        DispatchSource(dt);
 
-        time_ += double(dt);
-        ++totalSteps_;
+        lastDt_ = dt;
+        advance_ += double(dt) * double(batch);
+        remaining -= batch;
+
+        // At most one reduction may be in flight; otherwise the staging copy
+        // would overwrite a result that has not been consumed yet.
+        if (!reducePending_) {
+            DispatchReduce();
+        }
     }
 
-    DispatchReduce();
     UpdateRenderVolume();
-
-    lastDt_ = dt;
-    advance_ += double(dt) * double(steps);
 
     stats_.active = true;
     stats_.resolution = resolution_;
     stats_.time = time_;
     stats_.advance = advance_;
     stats_.dt = lastDt_;
-    stats_.maxSpeed = maxSpeed;
+    stats_.maxSpeed = lastSpeed;
     stats_.steps = totalSteps_;
 }
 

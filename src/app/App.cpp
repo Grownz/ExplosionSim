@@ -264,7 +264,14 @@ void App::FrameCamera() {
         const float centerY = top * 0.5f;
         const float distance = std::max(top, 2.0f * half) * 1.25f *
                                std::max(0.1f, options_.distanceScale);
-        camera_.SetTarget(DirectX::XMFLOAT3(0.0f, centerY, 0.0f), distance);
+
+        // Match the wind drift applied to the rendered volume in Renderer::Render
+        // so "Frame camera" follows the downwind cloud instead of the origin.
+        const sim::Environment& environment = blast.GetEnvironment();
+        const double drift = solverStats.active ? solverStats.time : 0.0;
+        const float windX = float(environment.WindX() * drift);
+        const float windZ = float(environment.WindZ() * drift);
+        camera_.SetTarget(DirectX::XMFLOAT3(windX, centerY, windZ), distance);
         if (options_.headless) {
             camera_.SetOrientation(options_.azimuth, options_.elevation);
         }
@@ -478,7 +485,9 @@ int App::RunHeadless() {
 
     const double step = 1.0 / 120.0;
     const double targetTime = std::max(0.0, options_.captureTime);
-    if (!stepCapture) {
+    // In high-fidelity mode the solver drives the analytic model (see
+    // PrepareHighFidelity*), so it must not be advanced twice here.
+    if (!stepCapture && !highFidelity) {
         int guard = 0;
         while (simulation_.Time() + 1e-9 < targetTime && guard++ < 200000) {
             simulation_.StepFixed(std::min(step, targetTime - simulation_.Time()));

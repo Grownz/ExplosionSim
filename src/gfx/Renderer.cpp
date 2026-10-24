@@ -795,12 +795,22 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
     }
     solverBlastSerial_ = simulation.BlastSerial();
     solverCapWarned_ = false;
+    solver_.SetDeterministic(true);
 
     const auto start = std::chrono::steady_clock::now();
     int guard = 0;
     while (solver_.Stats().time < targetTime && guard++ < 4096) {
         MaybeExpandSolver(simulation);
         solver_.Step(16);
+
+        // Keep the analytic model in sync so the ground effects, dust and the
+        // camera follow the solver's simulated time (the step-count path does
+        // the same).
+        const double advance = solver_.ConsumeAdvance();
+        if (advance > 0.0) {
+            simulation.AdvanceExternal(advance);
+        }
+
         const double elapsed = std::chrono::duration<double>(
                                    std::chrono::steady_clock::now() - start)
                                    .count();
@@ -812,9 +822,10 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
     }
     solverPrepared_ = true;
 
-    LogInfo("High-fidelity: t=%.4f s, %lld steps, %d^3, dt=%.2f us, maxSpeed=%.0f m/s",
-            solver_.Stats().time, solver_.Stats().steps, solver_.Stats().resolution,
-            solver_.Stats().dt * 1e6f, solver_.Stats().maxSpeed);
+    LogInfo("High-fidelity: t=%.4f s (analytic %.4f s), %lld steps, %d^3, dt=%.2f us, "
+            "maxSpeed=%.0f m/s",
+            solver_.Stats().time, simulation.Blast().State().time, solver_.Stats().steps,
+            solver_.Stats().resolution, solver_.Stats().dt * 1e6f, solver_.Stats().maxSpeed);
 }
 
 void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long targetSteps) {
@@ -825,6 +836,7 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
     }
     solverBlastSerial_ = simulation.BlastSerial();
     solverCapWarned_ = false;
+    solver_.SetDeterministic(true);
 
     const auto start = std::chrono::steady_clock::now();
     while (solver_.Stats().steps < targetSteps) {
@@ -850,12 +862,12 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
     }
     solverPrepared_ = true;
 
-    LogInfo("High-fidelity capture: %lld steps, t=%.4f s, domain half %.2f m, top %.2f m, "
-            "accuracy x%.2f, expansions %d, plume top %.2f m, radius %.2f m",
-            solver_.Stats().steps, solver_.Stats().time, solver_.Stats().domainHalfExtent,
-            solver_.Stats().domainTop, solver_.Stats().accuracyFactor,
-            solver_.Stats().expansions, solver_.Stats().plumeTop,
-            solver_.Stats().plumeRadius);
+    LogInfo("High-fidelity capture: %lld steps, t=%.4f s (analytic %.4f s), domain half %.2f m, "
+            "top %.2f m, accuracy x%.2f, expansions %d, plume top %.2f m, radius %.2f m",
+            solver_.Stats().steps, solver_.Stats().time, simulation.Blast().State().time,
+            solver_.Stats().domainHalfExtent, solver_.Stats().domainTop,
+            solver_.Stats().accuracyFactor, solver_.Stats().expansions,
+            solver_.Stats().plumeTop, solver_.Stats().plumeRadius);
 }
 
 double Renderer::ConsumeSolverAdvance() {    return solver_.ConsumeAdvance();
@@ -1106,7 +1118,8 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     context->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xffffffff);
 
     bloomConstants_.bloomParams.z = settings.exposure;
-    bloomConstants_.bloomParams.w = settings.bloomStrength;
+    // Do not leak a stale bloom texture into the composite when bloom is off.
+    bloomConstants_.bloomParams.w = settings.enableBloom ? settings.bloomStrength : 0.0f;
     bloomConstants_.texelSize = XMFLOAT4(1.0f / float(hdr_.width), 1.0f / float(hdr_.height),
                                          0.0f, 0.0f);
     D3D11_MAPPED_SUBRESOURCE mapped{};
