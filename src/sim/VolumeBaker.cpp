@@ -95,7 +95,18 @@ void VolumeBaker::Reset() {
     inFlight_.store(false, std::memory_order_release);
     uploadedVersion_.store(0, std::memory_order_release);
     hasData_ = false;
+    autoExtent_ = 0.0;
+    autoTop_ = 0.0;
     frame_ = VolumeFrame{};
+}
+
+void VolumeBaker::SetAutoScale(bool enabled) {
+    if (autoScale_ == enabled) {
+        return;
+    }
+    autoScale_ = enabled;
+    autoExtent_ = 0.0;
+    autoTop_ = 0.0;
 }
 
 void VolumeBaker::SetResolution(int resolution) {
@@ -123,23 +134,56 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
     const double fireballRadius = std::max(state.fireballRadius, 0.05);
     const double cloudRadius = std::max(state.cloudRadius, 0.05);
 
-    // World-space bounding box of the visible fireball / cloud, kept roughly
-    // cubic so the volume texture has isotropic voxels.
-    const double extent = std::max({fireballRadius * 2.2, cloudRadius * 1.8, 1.0});
-    const double centerY = height + fireballRadius * 0.6;
-    const double yMin = std::max(0.0, centerY - extent);
-    const double top = std::max({yMin + 2.0 * extent, height + fireballRadius * 2.4,
-                                 state.cloudCenterY + cloudRadius * 1.4, 1.5});
-
     const float centerX = float(state.cloudDriftX * 0.45);
     const float centerZ = float(state.cloudDriftZ * 0.45);
 
+    // Volume bounds. In auto-scale mode the box always contains the fireball,
+    // the smoke envelope, the cap and the base dust with a safety margin. It
+    // only grows, and the fixed voxel count means the effective accuracy drops
+    // by the same factor as the box grows.
+    double halfExtent = 0.0;
+    double top = 0.0;
+    if (autoScale_) {
+        const double drift = std::max(std::abs(state.cloudDriftX), std::abs(state.cloudDriftZ)) * 0.45;
+        const double smokeRadius = fireballRadius * 1.75;
+        const double baseDustRadius = fireballRadius * 2.4;
+        const double horizontal =
+            std::max({smokeRadius + drift, cloudRadius * 1.35 + drift, baseDustRadius, 0.2});
+        const double requiredTop = std::max({state.fireballCenterY + fireballRadius * 2.0,
+                                             state.cloudCenterY + cloudRadius * 1.6,
+                                             height + fireballRadius * 2.2, 0.6});
+
+        const double requiredExtent = horizontal * 1.10;
+        const double requiredTopMargin = requiredTop * 1.05;
+
+        if (autoExtent_ < 0.05) {
+            autoExtent_ = requiredExtent;
+        } else if (requiredExtent > autoExtent_ * 1.02) {
+            autoExtent_ = requiredExtent * 1.15;
+        }
+        if (autoTop_ < 0.05) {
+            autoTop_ = requiredTopMargin;
+        } else if (requiredTopMargin > autoTop_ * 1.02) {
+            autoTop_ = requiredTopMargin * 1.15;
+        }
+
+        halfExtent = autoExtent_;
+        top = autoTop_;
+    } else {
+        // Fixed box: sized for the maximum fireball of the charge. Smoke and
+        // cloud can leave the box, which is useful for stable-resolution
+        // comparisons.
+        const double maxFireball = std::max(model.FireballMaxRadiusM(), 0.1);
+        halfExtent = std::max(maxFireball * 3.2, 0.5);
+        top = std::max(height + maxFireball * 3.2, 1.0);
+    }
+
     VolumeBounds bounds{};
-    bounds.min = XMFLOAT3(centerX - float(extent), float(yMin), centerZ - float(extent));
-    bounds.max = XMFLOAT3(centerX + float(extent), float(top), centerZ + float(extent));
+    bounds.min = XMFLOAT3(centerX - float(halfExtent), 0.0f, centerZ - float(halfExtent));
+    bounds.max = XMFLOAT3(centerX + float(halfExtent), float(top), centerZ + float(halfExtent));
 
     const int resolution = resolution_;
-    const float voxelSize = float(2.0 * extent / double(resolution));
+    const float voxelSize = float(2.0 * halfExtent / double(resolution));
 
     FieldParams params{};
     params.time = float(state.time);
@@ -325,10 +369,15 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                     const float distanceSq = dx * dx + dy * dy + dz * dz;
                     fireballDistance = std::sqrt(distanceSq);
 
-                    const float noiseScale = 7.0f / fireballRadius;
+                    const float noiseScale = 6.0f;
                     if (distanceSq < fireballRadiusSq * 2.25f) {
 
-                        // Lumpy, filamentary surface.
+                        // Lumpy, filamentary surface. The lump amplitude is
+                        // faded in with the fireball size so the initial
+                        // explosion stays spherical instead of following the
+                        // axis-aligned noise lattice.
+                        const float lumpFactor =
+                            SmoothStep(0.15f, 0.60f, fireballRadius);
                         const float lump =
                             0.62f * ValueNoise((worldX + 17.0f) * noiseScale,
                                                (worldY - 9.0f) * noiseScale,
@@ -337,7 +386,8 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                                                (worldY + 11.0f) * noiseScale * 2.4f,
                                                (worldZ - 19.0f) * noiseScale * 2.4f);
                         const float effectiveRadius =
-                            fireballRadius * (0.62f + 0.56f * lump);
+                            fireballRadius *
+                            (1.0f + (lump - 0.5f) * 0.70f * lumpFactor);
                         const float q = fireballDistance / std::max(effectiveRadius, 0.01f);
                         const float falloff = 1.0f - SmoothStep(0.25f, 1.20f, q);
 

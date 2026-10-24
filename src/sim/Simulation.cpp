@@ -55,6 +55,7 @@ void Simulation::Reset() {
 
     blast_.Configure(charge, environment);
     particles_.Reset();
+    volume_.SetAutoScale(settings_.autoScaleVolume);
     volume_.SetResolution(settings_.volumeResolution);
     volume_.Reset();
 
@@ -106,8 +107,17 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool modeChanged = settings_.mode != settings.mode;
     const bool solverResolutionChanged =
         settings_.solverResolution != settings.solverResolution;
+    const bool autoScaleChanged = settings_.autoScaleVolume != settings.autoScaleVolume;
 
     settings_ = settings;
+
+    if (autoScaleChanged) {
+        volume_.SetAutoScale(settings_.autoScaleVolume);
+        if (detonated_ && settings_.bakeVolume &&
+            settings_.mode == SimulationMode::ReducedOrder) {
+            volume_.StartBake(blast_);
+        }
+    }
 
     if (budgetChanged) {
         particles_.Initialize(settings_.particleBudget);

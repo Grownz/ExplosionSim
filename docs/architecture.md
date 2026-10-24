@@ -83,6 +83,9 @@ The volume is drawn before the smoke particles so soot composites over the fireb
   for 1024³ (the 4 GiB D3D11 per-resource limit makes a single 1024³ RGBA texture
   impossible)
 - one CPU buffer with an upload handshake; high resolutions are baked at a reduced rate
+- auto-scale bounds (default) follow the fireball, smoke envelope, cap and base dust
+  with a 10 % margin; the box only grows and the fixed voxel count means the effective
+  accuracy drops as the box grows (the UI shows the box size and voxel size)
 - a tileable 64³ RGBA8 noise volume provides domain warping and fine detail in the
   raymarcher
 - the raymarcher binds the noise volume at `t2` and uses it both to warp the sample
@@ -166,7 +169,10 @@ momentum; the lateral and top boundaries are zero-gradient outflows.
 
 At 128³ with 24 steps per frame the solver and renderer reach about 50 fps at 1600×900
 on an RTX 3090. 96³ is roughly twice as fast. The GPU work is dominated by the three
-sweeps; the reduction and render passes are comparatively cheap.
+sweeps; the reduction and render passes are comparatively cheap. 256³ is about eight
+times more expensive per step, 512³ about 64 times; those grids are intended for stills
+or very slow motion. A VRAM guard rejects a grid that would need more than 75 % of the
+dedicated video memory.
 
 ## Determinism and headless mode
 

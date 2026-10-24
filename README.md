@@ -32,6 +32,10 @@ start-up at 0.4 m above the ground**.
   filamentary core through a cooler, soot-rich surface. A growing smoke envelope and a
   shock-lifted dust skirt progressively obscure the cooling fireball, as in real
   detonations.
+- **Auto-scale volume** – the baked volume box follows the fireball and the growing
+  smoke cloud. It only grows; with a fixed voxel count the effective accuracy drops by
+  the same factor, keeping the bake cost constant. Can be disabled in the Rendering
+  panel for a fixed box.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
@@ -108,6 +112,7 @@ The application opens a window, arms the 200 g charge and detonates after two se
 --solver-steps        solver steps per frame (default 24)
 --solver-time <s>     solver time for headless captures
 --volume-resolution <n>  volume grid: 64, 96, 128, 160, 192, 256, 512 or 1024
+--no-auto-scale       keep a fixed volume box instead of following the cloud
 --no-vsync            disable vertical synchronisation
 --debug               enable the D3D11 debug layer
 --help                show all options
@@ -155,10 +160,15 @@ because the volume is the physical solution. For a headless capture use e.g.
 
 High-fidelity settings (Physics & Effects panel):
 
-- Grid resolution: 64³ / 96³ / 128³
+- Grid resolution: 64³ / 96³ / 128³ / 192³ / 256³ / 512³ (256³ and 512³ need several GB
+  of VRAM and are not real-time)
 - Solver steps per frame: 4–64
 - Domain: ten times the analytic fireball radius, cubic, with a reflecting ground and
   open lateral/top boundaries
+- Uses the moist-air density and virtual temperature; wind drifts the rendered volume
+- Shares the domain-warped detail noise with the reduced-order volume
+- 1024³ is not available for the solver: four RGBA32F ping-pong state volumes plus the
+  render volume would need about 76 GB of VRAM
 
 ## Physics
 

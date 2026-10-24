@@ -37,10 +37,12 @@ void PrintUsage() {
     LogInfo("  --benchmark           Render frames offscreen and print timing.");
     LogInfo("  --frames <count>      Number of benchmark frames (default 120).");
     LogInfo("  --high-fidelity       Use the GPU Euler solver for the volume.");
-    LogInfo("  --solver-resolution <n>  Solver grid resolution (64, 96 or 128).");
+    LogInfo("  --solver-resolution <n>  Solver grid resolution (64, 96, 128, 192, 256, 512).");
     LogInfo("  --solver-steps <n>    Solver steps per frame (default 24).");
     LogInfo("  --solver-time <s>     Solver time for headless captures.");
     LogInfo("  --volume-resolution <n>  Volume grid (64, 96, 128, 160, 192, 256, 512, 1024).");
+    LogInfo("  --no-auto-scale      Keep a fixed volume box instead of following the cloud.");
+    LogInfo("  --auto-scale         Force the adaptive volume box (default).");
     LogInfo("  --no-vsync            Disable vertical synchronisation.");
     LogInfo("  --debug               Enable the D3D11 debug layer.");
     LogInfo("  --help                Show this help.");
@@ -136,6 +138,12 @@ ParsedArguments ParseCommandLine() {
             parseDouble(result.options.solverTime);
         } else if (argument == L"--volume-resolution") {
             parseInt(result.options.volumeResolution);
+        } else if (argument == L"--no-auto-scale") {
+            result.options.autoScaleVolume = false;
+            result.options.autoScaleVolumeSet = true;
+        } else if (argument == L"--auto-scale") {
+            result.options.autoScaleVolume = true;
+            result.options.autoScaleVolumeSet = true;
         } else if (argument == L"--no-vsync") {
             result.options.vsync = false;
         } else if (argument == L"--debug") {

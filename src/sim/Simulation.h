@@ -42,6 +42,7 @@ struct SimulationSettings {
     int particleBudget = 40000;
     int volumeResolution = 128;
     bool bakeVolume = true;
+    bool autoScaleVolume = true;
 };
 
 class Simulation {

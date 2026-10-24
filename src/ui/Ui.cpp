@@ -304,16 +304,16 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
     }
 
     if (settings.simulation.mode == sim::SimulationMode::HighFidelity) {
-        const int resolutions[] = {64, 96, 128};
-        const char* resolutionLabels[] = {"64^3", "96^3", "128^3"};
+        const int solverResolutions[] = {64, 96, 128, 192, 256, 512};
+        const char* solverResolutionLabels[] = {"64³", "96³", "128³", "192³", "256³", "512³"};
         int current = 2;
-        for (int i = 0; i < 3; ++i) {
-            if (resolutions[i] == settings.simulation.solverResolution) {
+        for (int i = 0; i < 6; ++i) {
+            if (solverResolutions[i] == settings.simulation.solverResolution) {
                 current = i;
             }
         }
-        if (ImGui::Combo("Solver grid", &current, resolutionLabels, 3)) {
-            settings.simulation.solverResolution = resolutions[current];
+        if (ImGui::Combo("Solver grid", &current, solverResolutionLabels, 6)) {
+            settings.simulation.solverResolution = solverResolutions[current];
             actions.applySimulationSettings = true;
         }
 
@@ -323,15 +323,20 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
             actions.applySimulationSettings = true;
         }
 
+        if (settings.simulation.solverResolution >= 256) {
+            Hint("Solver grids of 256³ and 512³ need several GB of VRAM and are not "
+                 "real-time; reduce steps/frame.");
+        }
+
         const gfx::SolverStats& stats = renderer.Solver();
         Readout("Solver time", "%.4f s", stats.time);
         Readout("Time step", "%.2f us", stats.dt * 1e6f);
         Readout("Max signal speed", "%.0f m/s", stats.maxSpeed);
         Readout("Solver steps", "%lld", stats.steps);
 
-        Hint("Compressible Euler solver (HLLC + MUSCL) running on the GPU. The "
-             "volume is driven by the solver; particle rendering is disabled in "
-             "this mode.");
+        Hint("Compressible Euler solver (HLLC + MUSCL) running on the GPU. It uses the "
+             "moist-air density and virtual temperature; wind drifts the rendered volume. "
+             "Particle rendering is disabled in this mode.");
     }
 
     SectionHeader("BLAST PHYSICS");
@@ -405,7 +410,8 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
          "waveform. Free-air burst, idealised.");
 }
 
-void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Renderer& renderer) {
+void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Renderer& renderer,
+                   const sim::Simulation& simulation) {
     SectionHeader("RENDERING");
 
     gfx::RenderSettings& render = settings.render;
@@ -439,6 +445,26 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
     ImGui::SameLine();
     ImGui::Checkbox("Bloom", &render.enableBloom);
     ImGui::Checkbox("Grid overlay", &render.showGrid);
+    if (ImGui::Checkbox("Auto-scale volume", &settings.simulation.autoScaleVolume)) {
+        actions.applySimulationSettings = true;
+    }
+
+    if (settings.simulation.mode == sim::SimulationMode::HighFidelity) {
+        Readout("Solver grid", "%d³", renderer.Solver().resolution);
+    } else {
+        const sim::VolumeFrame& frame = simulation.Volume().Current();
+        if (!frame.empty()) {
+            const float sizeX = frame.bounds.max.x - frame.bounds.min.x;
+            const float sizeY = frame.bounds.max.y - frame.bounds.min.y;
+            const float sizeZ = frame.bounds.max.z - frame.bounds.min.z;
+            Readout("Volume box", "%.1f × %.1f × %.1f m", sizeX, sizeY, sizeZ);
+            Readout("Voxel size", "%.1f mm", (sizeX / float(frame.resolution)) * 1000.0f);
+        }
+    }
+
+    Hint("Auto-scale grows the baked volume to keep the fireball and smoke cloud "
+         "inside it. The voxel count stays fixed, so the effective resolution drops "
+         "as the box grows.");
 
     ImGui::SliderFloat("Sun azimuth", &render.sunAzimuthDeg, 0.0f, 360.0f, "%.0f°");
     ImGui::SliderFloat("Sun elevation", &render.sunElevationDeg, 1.0f, 80.0f, "%.0f°");
@@ -587,7 +613,7 @@ UiActions Draw(UiContext& context) {
         DrawPhysics(settings, context.simulation, context.renderer, actions);
     }
     if (ImGui::CollapsingHeader("Rendering")) {
-        DrawRendering(settings, actions, context.renderer);
+        DrawRendering(settings, actions, context.renderer, context.simulation);
     }
     if (ImGui::CollapsingHeader("Performance")) {
         DrawPerformance(context);

@@ -184,7 +184,6 @@ and lifetimes scale with the fireball radius so that the same parameters work fr
 to tonnes.
 
 ## 7. Volume field
-
 The renderer consumes a 3D field with
 
 - `R` – extinction density,
@@ -250,7 +249,11 @@ boundaries are zero-gradient outflows.
 ### Limitations
 
 - The grid is Cartesian and uniform; 128³ is a compromise between resolution and
-  real-time performance.
+  real-time performance. 256³ and 512³ are available for stills or very slow motion
+  (the four RGBA32F state volumes plus the render volume need about 1.2 GB at 256³ and
+  9.7 GB at 512³; 1024³ would need about 76 GB and is therefore not offered).
+- The solver runs in a still-air frame. Wind is represented by translating the rendered
+  volume downwind with the solver time, consistent with the reduced-order cloud drift.
 - Numerical diffusion smears the contact surface and the soot over time.
 - Chemical afterburning is not solved; it is represented by the render-side temperature
   floor.

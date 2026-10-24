@@ -78,6 +78,8 @@ bool GfxDevice::CreateDevice(bool debugLayer) {
         flags |= D3D11_CREATE_DEVICE_DEBUG;
     }
 
+    dedicatedVideoMemory_ = uint64_t(bestMemory);
+
     D3D_FEATURE_LEVEL levels[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
     D3D_FEATURE_LEVEL obtained = D3D_FEATURE_LEVEL_11_0;
     HRESULT hr = D3D11CreateDevice(

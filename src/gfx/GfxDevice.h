@@ -48,6 +48,7 @@ public:
     float Aspect() const { return height_ > 0 ? float(width_) / float(height_) : 1.0f; }
     bool Offscreen() const { return offscreen_; }
     const std::string& AdapterName() const { return adapterName_; }
+    uint64_t DedicatedVideoMemory() const { return dedicatedVideoMemory_; }
 
 private:
     bool CreateDevice(bool debugLayer);
@@ -73,6 +74,7 @@ private:
     ComPtr<ID3D11Texture2D> staging_;
 
     std::string adapterName_ = "unknown";
+    uint64_t dedicatedVideoMemory_ = 0;
     HWND window_ = nullptr;
     bool offscreen_ = false;
     int width_ = 0;

@@ -56,7 +56,10 @@ float4 PSVolume(VSOut input) : SV_Target
         float3 noiseCoordinate =
             position * (0.85 / fireballScale) + float3(0.0, -Misc3.x * 0.05, 0.0);
         float3 warp = NoiseTexture.SampleLevel(NoiseSampler, noiseCoordinate, 0).xyz - 0.5;
-        float3 warpedPosition = position + warp * (0.22 * fireballScale);
+        // Fade the warp out for very small fireballs so the initial explosion
+        // remains a smooth sphere rather than a noisy blob.
+        float warpAmount = smoothstep(0.15, 0.50, fireballScale);
+        float3 warpedPosition = position + warp * (0.22 * fireballScale * warpAmount);
 
         float3 uvw = (warpedPosition - VolumeMin.xyz) / max(boxSize, 1e-4);
         float4 sample;
@@ -89,7 +92,9 @@ float4 PSVolume(VSOut input) : SV_Target
             float structure = Fbm3(noisePosition);
             float fine = ValueNoise3(noisePosition * 3.0 + 11.0);
             density *= lerp(0.05, 2.40, structure) * (0.60 + 0.70 * fine);
-            density *= lerp(0.70, 1.35, noiseDetail.a);
+            float detailAmount = VolumeParams.z;
+            density *= lerp(1.0 - 0.25 * detailAmount, 1.0 + 0.35 * detailAmount,
+                            noiseDetail.a);
             temperature *= lerp(0.55, 1.30, structure);
 
             float heat = smoothstep(550.0, 1250.0, temperature);

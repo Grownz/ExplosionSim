@@ -43,9 +43,11 @@ bool CreateVolumeTexture(ID3D11Device* device, int resolution, DXGI_FORMAT forma
 
 } // namespace
 
-bool GpuEulerSolver::Initialize(ID3D11Device* device, ID3D11DeviceContext* context) {
+bool GpuEulerSolver::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
+                                uint64_t dedicatedVideoMemoryBytes) {
     device_ = device;
     context_ = context;
+    videoMemoryBytes_ = dedicatedVideoMemoryBytes;
     initialized_ = CreateComputeShaders() && CreateAuxiliaryResources();
     return initialized_;
 }
@@ -135,7 +137,18 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
 
 bool GpuEulerSolver::CreateTextures(int resolution) {
     ReleaseVolumeResources();
-    resolution_ = std::clamp(resolution, 32, 192);
+    resolution_ = std::clamp(resolution, 32, 512);
+
+    // 4 state textures (two ping-pong sets, RGBA32F) + render volume (RGBA16F).
+    const uint64_t voxels = uint64_t(resolution_) * resolution_ * resolution_;
+    const uint64_t requiredBytes = voxels * 16ull * 4ull + voxels * 8ull;
+    if (videoMemoryBytes_ > 0 && requiredBytes > videoMemoryBytes_ * 3ull / 4ull) {
+        LogError("High-fidelity solver: %d^3 needs %.2f GB of VRAM, but only %.2f GB are "
+                 "available. Reduce the solver grid.",
+                 resolution_, double(requiredBytes) / (1024.0 * 1024.0 * 1024.0),
+                 double(videoMemoryBytes_) / (1024.0 * 1024.0 * 1024.0));
+        return false;
+    }
 
     for (int i = 0; i < 2; ++i) {
         if (!CreateVolumeTexture(device_, resolution_, DXGI_FORMAT_R32G32B32A32_FLOAT,
@@ -308,7 +321,7 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     }
 
     config_ = config;
-    const int resolution = std::clamp(config.resolution, 32, 192);
+    const int resolution = std::clamp(config.resolution, 32, 512);
     if (resolution_ != resolution) {
         if (!CreateTextures(resolution)) {
             return false;

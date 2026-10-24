@@ -78,7 +78,7 @@ int App::Run(const LaunchOptions& options) {
     }
     if (options_.solverResolution > 0) {
         settings_.simulation.solverResolution =
-            std::clamp(options_.solverResolution, 32, 192);
+            std::clamp(options_.solverResolution, 32, 512);
     }
     if (options_.solverSteps > 0) {
         settings_.simulation.solverStepsPerFrame = std::clamp(options_.solverSteps, 1, 96);
@@ -86,6 +86,9 @@ int App::Run(const LaunchOptions& options) {
     if (options_.volumeResolution > 0) {
         settings_.simulation.volumeResolution =
             std::clamp(options_.volumeResolution, 32, 1024);
+    }
+    if (options_.autoScaleVolumeSet) {
+        settings_.simulation.autoScaleVolume = options_.autoScaleVolume;
     }
 
     if (!options_.headless && !CreateMainWindow()) {

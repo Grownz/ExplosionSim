@@ -50,6 +50,8 @@ public:
     void Reset();
     void SetResolution(int resolution);
     int Resolution() const { return resolution_; }
+    void SetAutoScale(bool enabled);
+    bool AutoScale() const { return autoScale_; }
 
     void StartBake(const BlastModel& model);
     void BakeNow(const BlastModel& model);
@@ -113,6 +115,9 @@ private:
 
     VolumeFrame frame_;
     bool hasData_ = false;
+    bool autoScale_ = true;
+    double autoExtent_ = 0.0;
+    double autoTop_ = 0.0;
 
     std::atomic<bool> inFlight_{false};
     std::atomic<bool> ready_{false};

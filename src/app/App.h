@@ -31,6 +31,8 @@ struct LaunchOptions {
     int solverResolution = 0;
     int solverSteps = 0;
     int volumeResolution = 0;
+    bool autoScaleVolume = true;
+    bool autoScaleVolumeSet = false;
     double solverTime = -1.0;
 };
 

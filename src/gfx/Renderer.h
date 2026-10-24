@@ -73,7 +73,7 @@ private:
         }
     };
 
-    struct alignas(16) FrameConstants {
+    struct FrameConstants {
         DirectX::XMFLOAT4X4 viewProj;
         DirectX::XMFLOAT4X4 invViewProj;
         DirectX::XMFLOAT4 cameraPosition;
@@ -94,7 +94,7 @@ private:
         DirectX::XMFLOAT4 volumeParams;
     };
 
-    struct alignas(16) BloomConstants {
+    struct BloomConstants {
         DirectX::XMFLOAT4 texelSize;
         DirectX::XMFLOAT4 bloomParams;
     };

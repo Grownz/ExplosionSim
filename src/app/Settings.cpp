@@ -129,7 +129,7 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
                           ? sim::SimulationMode::HighFidelity
                           : sim::SimulationMode::ReducedOrder;
     simulation.solverResolution =
-        std::clamp(ParseInt(values, "solverResolution", simulation.solverResolution), 32, 192);
+        std::clamp(ParseInt(values, "solverResolution", simulation.solverResolution), 32, 512);
     simulation.solverStepsPerFrame =
         std::clamp(ParseInt(values, "solverStepsPerFrame", simulation.solverStepsPerFrame), 1, 96);
     simulation.loop = ParseBool(values, "loop", simulation.loop);
@@ -138,6 +138,7 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
     simulation.volumeResolution =
         std::clamp(ParseInt(values, "volumeResolution", simulation.volumeResolution), 32, 1024);
     simulation.bakeVolume = ParseBool(values, "bakeVolume", simulation.bakeVolume);
+    simulation.autoScaleVolume = ParseBool(values, "autoScaleVolume", simulation.autoScaleVolume);
 
     auto& render = settings.render;
     render.raymarchSteps = std::clamp(ParseInt(values, "raymarchSteps", render.raymarchSteps), 16, 256);
@@ -186,6 +187,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "particleBudget=" << simulation.particleBudget << "\n";
     stream << "volumeResolution=" << simulation.volumeResolution << "\n";
     stream << "bakeVolume=" << (simulation.bakeVolume ? "true" : "false") << "\n";
+    stream << "autoScaleVolume=" << (simulation.autoScaleVolume ? "true" : "false") << "\n";
 
     stream << "[render]\n";
     stream << "raymarchSteps=" << render.raymarchSteps << "\n";

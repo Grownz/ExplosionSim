@@ -43,7 +43,8 @@ struct SolverStats {
 // by the existing raymarcher.
 class GpuEulerSolver {
 public:
-    bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context);
+    bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
+                    uint64_t dedicatedVideoMemoryBytes);
     void Shutdown();
 
     bool Reset(const EulerConfig& config);
@@ -61,7 +62,7 @@ public:
     const SolverStats& Stats() const { return stats_; }
 
 private:
-    struct alignas(16) Constants {
+    struct Constants {
         DirectX::XMINT4 grid;
         DirectX::XMFLOAT4 domainMin;
         DirectX::XMFLOAT4 domainMax;
@@ -100,6 +101,7 @@ private:
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* context_ = nullptr;
+    uint64_t videoMemoryBytes_ = 0;
 
     ComPtr<ID3D11ComputeShader> initShader_;
     ComPtr<ID3D11ComputeShader> sweepShader_;

@@ -136,7 +136,8 @@ bool Renderer::Initialize(GfxDevice& device) {
         return false;
     }
 
-    if (!solver_.Initialize(device_->Device(), device_->Context())) {
+    if (!solver_.Initialize(device_->Device(), device_->Context(),
+                            device_->DedicatedVideoMemory())) {
         LogWarn("High-fidelity GPU solver unavailable.");
     }
     return true;
@@ -638,7 +639,8 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
     const bool highFidelity =
         simulation.Settings().mode == sim::SimulationMode::HighFidelity;
     frameConstants_.volumeParams = XMFLOAT4(highFidelity ? 1.2f : 1.0f,
-                                            activeVolumeSplit_ ? 1.0f : 0.0f, 0.0f, 0.0f);
+                                            activeVolumeSplit_ ? 1.0f : 0.0f,
+                                            highFidelity ? 0.5f : 1.0f, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11DeviceContext* context = device_->Context();
@@ -711,7 +713,7 @@ EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
     const sim::Environment& environment = blast.GetEnvironment();
 
     EulerConfig config;
-    config.resolution = std::clamp(simulation.Settings().solverResolution, 32, 192);
+    config.resolution = std::clamp(simulation.Settings().solverResolution, 32, 512);
 
     const double fireball = std::max(blast.FireballMaxRadiusM(), 0.1);
     config.domainHalfExtent = std::clamp(5.0 * fireball, 1.0, 30.0);
@@ -807,6 +809,16 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
         activeVolumeValid_ = solverVolume != nullptr;
         activeVolumeBounds_ = solver_.Bounds();
+        // Wind drift: the solver runs in its own (still-air) frame; shifting the
+        // render box moves the fireball and cloud downwind.
+        const sim::Environment& environment = simulation.Blast().GetEnvironment();
+        const double drift = solver_.Stats().time;
+        const float windX = float(environment.WindX() * drift);
+        const float windZ = float(environment.WindZ() * drift);
+        activeVolumeBounds_.min.x += windX;
+        activeVolumeBounds_.max.x += windX;
+        activeVolumeBounds_.min.z += windZ;
+        activeVolumeBounds_.max.z += windZ;
         activeVolumeExtinction_ = solver_.ExtinctionScale();
         activeVolumeSplit_ = false;
     } else {
