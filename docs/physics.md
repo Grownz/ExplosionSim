@@ -1,0 +1,198 @@
+# Physics model
+
+This document describes the reduced-order explosion model used by the simulator. All
+internal calculations are performed in SI units (metres, kilograms, seconds, kelvin,
+pascal, joule).
+
+The goal is a model that is physically consistent, parameterised by real quantities and
+fast enough for interactive rendering. It is **not** a compressible CFD solver: the shock
+front is integrated from an empirical overpressure fit and the fireball/cloud are
+represented by analytic fields. This is the same class of model used for real-time
+visualisation and preliminary hazard assessment; its limitations are listed at the end.
+
+## 1. Charge and energy
+
+A charge is described by its TNT-equivalent mass `W` in kilograms and its height of burst
+`h`. The detonation energy is
+
+```
+E = W · 4.184 MJ/kg
+```
+
+The corresponding explosive volume is computed with the density of TNT
+(`ρ_TNT = 1630 kg/m³`), giving an initial charge radius
+`R_0 = (3W / (4π ρ_TNT))^(1/3)`.
+
+## 2. Blast scaling
+
+Distances are non-dimensionalised with the Hopkinson-Cranz cube-root scaling
+
+```
+Z = R / W^(1/3)          [m/kg^(1/3)]
+```
+
+The peak incident overpressure follows Brode's two-branch fit:
+
+```
+Z < 0.9 :  Δp = 6.7 / Z³ + 1                         [bar]
+Z ≥ 0.9 :  Δp = 0.975/Z + 1.455/Z² + 5.85/Z³ - 0.019  [bar]
+```
+
+The fit is evaluated in bar and converted to pascal. The negative offset of the far-field
+branch makes it cross zero near `Z ≈ 55`; beyond that point the model continues with an
+acoustic `1/r` tail so the shock front does not pin to ambient pressure.
+
+### Shock velocity
+
+The local shock Mach number follows from the Rankine-Hugoniot relations:
+
+```
+M = sqrt(1 + (γ + 1) / (2γ) · Δp / p₀)
+U = M · c₀
+```
+
+with `γ = 1.4`, `p₀ = 101 325 Pa` and `c₀ = sqrt(γ R_s T₀) ≈ 340 m/s`.
+
+The shock radius is integrated with a second-order (midpoint) scheme:
+
+```
+dR/dt = U(Δp(Z(R))),   R(0) = R_0
+```
+
+The step is limited by a CFL-like condition (`0.08 · R / U`, clamped to 20 µs … 5 ms),
+which keeps the integration stable from the near field (kilometres per second) to the
+acoustic far field. Every step is recorded in a monotonic `(t, R)` table used for
+observer arrival times.
+
+### Observer waveform
+
+The pressure history at a fixed distance is modelled with the Friedlander waveform
+
+```
+p(t) = Δp · (1 - τ/t₊) · exp(-1.8 τ/t₊),   τ = t - t_arrival
+```
+
+where the positive-phase duration is estimated from the shock transit time,
+`t₊ ≈ 1.1 · R / U` (clamped). This is a qualitative approximation; published fitted
+durations differ by a factor of order one.
+
+## 3. Fireball
+
+The fireball radius grows as a saturating Sedov-like law:
+
+```
+R_fb(t) = R_max · (1 - exp(-t/τ_g))^0.4
+```
+
+The growth time scale is `τ_g = 0.05 · W_kt^0.25 + 0.004 s`. The maximum radius blends
+two empirical regimes:
+
+```
+R_max = max(50 · W_kt^0.4, 0.9 · W_kg^0.25)     [m]
+```
+
+The first term is the nuclear fireball scaling, the second dominates for small
+conventional charges. The visible surface temperature is held at 3600 K during formation
+(about four growth time constants) and then cools exponentially:
+
+```
+T(t) = T_amb + (T_surf - T_amb) · exp(-(t - t_f)/τ_c)
+τ_c = max(1.2 · W_kt^0.15, 0.3) s
+```
+
+The emitted colour is computed from Planck's law via the Planckian locus approximation
+(Kim et al., 2002), converted to linear sRGB. Emission is integrated along the view ray
+together with absorption, so the fireball shows limb darkening and is occluded by its own
+smoke.
+
+## 4. Mushroom cloud
+
+A fraction `f_heat = 0.12` of the yield remains as thermal energy in the rising cloud. The
+initial temperature excess is
+
+```
+ΔT₀ = f_heat · E / (m_cloud · c_p),   m_cloud = ρ₀ · (4/3)π R_max³
+```
+
+The cloud is treated as a buoyant thermal with entrainment:
+
+```
+R_c(t)  grows with 0.45 · v_rise + 0.10 · R_max
+ΔT(t)   = ΔT₀ · (R_max / R_c)³
+dv/dt   = g · ΔT/T₀ - 0.6 v|v| / (2 R_c)
+```
+
+The computed rise height, cloud radius and wind drift feed the volumetric field (a torus
+for the cap and a tapered column for the stem). For a 200 g charge the temperature excess
+is only a few kelvin, so the cloud stays low and compact; for kiloton-scale charges it
+rises hundreds of metres.
+
+## 5. Thermal radiation
+
+For TNT, roughly 5 % of the yield is emitted thermally. The radiant exposure at a slant
+range `r` is
+
+```
+Q = 0.05 · E · 0.85 / (4π r²)      [J/m²]
+```
+
+which is inverted to obtain the third-degree burn radius (80 kJ/m²). Atmospheric
+attenuation is represented by the constant transmission factor 0.85.
+
+## 6. Debris and particles
+
+Fragments receive a Gurney-type velocity distribution (several hundred metres per second
+for a cased charge), then follow ballistic trajectories with quadratic drag:
+
+```
+a = -0.5 · ρ_air · C_d · A / m · |v| v + g
+```
+
+with ground bounce (restitution 0.22, tangential damping 0.55) and radiative cooling.
+Sparks use a larger drag coefficient and short lifetimes. Smoke and dust are buoyant
+particles with wind advection, growth and distance-based opacity. Particle sizes, counts
+and lifetimes scale with the fireball radius so that the same parameters work from grams
+to tonnes.
+
+## 7. Volume field
+
+The renderer consumes a 3D field with
+
+- `R` – extinction density,
+- `G` – temperature / 12 000 K,
+- `B` – dust fraction (albedo selector).
+
+The fireball is a sphere with a noise-perturbed radius and a filamentary temperature
+field; the shock front is a thin shell with the post-shock temperature ratio
+
+```
+T₂/T₁ = [(2γM² - (γ-1))((γ-1)M² + 2)] / [(γ+1)² M²]
+```
+
+the cap is a torus, the stem a tapered column, and the ground ring an expanding annulus.
+
+## 8. Limitations
+
+- The shock is integrated from an empirical fit, not solved from the Euler equations.
+- No Richtmyer-Meshkov or Kelvin-Helmholtz instabilities are resolved; turbulence is
+  represented by procedural noise and particles.
+- The fireball/cloud geometry is axisymmetric and analytic; wind shear and terrain
+  interaction are not modelled.
+- Positive-phase duration is a first-order estimate.
+- Thermal and blast radii assume an unobstructed free-air burst.
+
+For a first-principles treatment the natural next step is an axisymmetric compressible
+Euler solver with an HLLC Riemann solver and soot advection, used to fill the same volume
+texture. Such a solver is significantly more expensive and is not interactive at the
+resolution required for a convincing fireball, which is why the reduced-order model is
+the default.
+
+## References
+
+1. Brode, H. L. (1955). *Numerical Solutions of Spherical Blast Waves.* Journal of
+   Applied Physics 26(6).
+2. Kinney, G. F., Graham, K. J. (1985). *Explosive Shocks in Air.* Springer.
+3. Sedov, L. I. (1959). *Similarity and Dimensional Methods in Mechanics.*
+4. Glasstone, S., Dolan, P. J. (1977). *The Effects of Nuclear Weapons.* US DoD/DoE.
+5. Kim, Y., Cho, Y., Kim, Y. (2002). *A colour temperature conversion algorithm.*
+6. Narkowicz, K. (2015). *ACES filmic tone mapping.*

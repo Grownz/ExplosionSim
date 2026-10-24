@@ -1,0 +1,29 @@
+# Build output
+build/
+out/
+bin/
+obj/
+*.user
+*.sln
+*.vcxproj*
+CMakeUserPresets.json
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.suo
+*.swp
+*~
+
+# Runtime output
+/screenshots/
+*.png
+!docs/screenshots/*.png
+*.log
+settings.ini
+imgui.ini
+
+# OS
+Thumbs.db
+desktop.ini

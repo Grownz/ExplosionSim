@@ -1,0 +1,165 @@
+# Explosion Simulator
+
+**Physically based, real-time 3D blast visualisation for Windows x64.**
+
+![Explosion Simulator](docs/screenshots/hero.png)
+
+A native C++20 application that couples a reduced-order blast model with a Direct3D 11
+volumetric renderer. The reference scenario is a **200 g TNT charge detonated 2 s after
+start-up at 0.4 m above the ground**.
+
+## Features
+
+- **Physically grounded blast model** – Brode overpressure fit, Rankine-Hugoniot shock
+  speed, Sedov-like fireball growth, buoyant mushroom-cloud dynamics, thermal radiation
+  and Gurney-driven debris. All parameters are in SI units and exposed in the UI.
+- **Real-time volumetric rendering** – the fireball, shock front and smoke field are
+  baked into a 3D texture on a worker pool and ray-marched on the GPU with
+  emission/absorption, blackbody colour, single scattering and HDR bloom.
+- **Multithreading** – a work-stealing thread pool parallelises particle integration and
+  volume baking; the render thread always participates in the work.
+- **Cinematic particles** – instanced billboards for glowing debris, sparks, turbulent
+  flame tongues, soot and shock-driven ground dust.
+- **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
+  1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
+  pressure waveform.
+- **2 s fuse** – the charge is armed on start-up, a countdown is shown, then the
+  detonation is simulated in slow motion (time scale is adjustable).
+- **Headless capture** – deterministic PNG screenshots and a benchmark mode without a
+  window, ideal for CI and documentation.
+- **No runtime dependencies** – static MSVC runtime, no VC++ redistributable, single
+  executable plus the shader folder.
+
+## Requirements
+
+| | |
+|---|---|
+| OS | Windows 10 / 11 x64 |
+| GPU | Direct3D 11 capable (feature level 11_0), 2 GB VRAM recommended |
+| Build | Visual Studio 2022 Build Tools (MSVC), CMake ≥ 3.21 |
+| Network | required once, to download Dear ImGui |
+
+## Build
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+cmake --build build --config Release --parallel
+```
+
+The executable is written to `build\Release\ExplosionSim.exe`; the `assets` folder is
+copied next to it automatically.
+
+Run the tests:
+
+```powershell
+ctest --test-dir build -C Release --output-on-failure
+```
+
+## Run
+
+```powershell
+.\build\Release\ExplosionSim.exe
+```
+
+The application opens a window, arms the 200 g charge and detonates after two seconds.
+
+### Controls
+
+| Input | Action |
+|---|---|
+| Left mouse drag | Orbit camera |
+| Right / middle mouse drag | Pan camera |
+| Mouse wheel | Zoom |
+| Space | Pause / resume |
+| R | Rearm (restart with fuse) |
+| F | Frame the blast |
+| H | Hide / show the interface |
+| F12 | Save a PNG screenshot next to the executable |
+
+### Command line
+
+```text
+--screenshot <path>   render a deterministic PNG and exit (headless)
+--time <seconds>      simulation time after detonation (default 0.12)
+--width <pixels>      output width (default 1600)
+--height <pixels>     output height (default 900)
+--charge <kg>         TNT equivalent mass
+--hob <metres>        height of burst
+--azimuth <degrees>   camera azimuth for headless captures
+--elevation <degrees> camera elevation for headless captures
+--benchmark           render frames offscreen and print timing
+--frames <count>      number of benchmark frames (default 120)
+--no-vsync            disable vertical synchronisation
+--debug               enable the D3D11 debug layer
+--help                show all options
+```
+
+Examples:
+
+```powershell
+# 1920x1080 hero image, 100 ms after detonation
+.\build\Release\ExplosionSim.exe --screenshot hero.png --time 0.1 --width 1920 --height 1080
+
+# GPU benchmark at 1080p
+.\build\Release\ExplosionSim.exe --benchmark --frames 300 --width 1920 --height 1080
+```
+
+## Scenario defaults
+
+| Parameter | Value |
+|---|---|
+| Charge | 200 g TNT equivalent (837 kJ) |
+| Height of burst | 0.4 m |
+| Fuse | 2.0 s |
+| Ambient conditions | 15 °C, 1013 hPa, 1 m/s wind |
+| Time scale | 0.06 (slow motion) |
+| Loop duration | 0.55 s of simulated time |
+
+The charge, height of burst, atmosphere and fuse can be changed in the control panel.
+Presets from 20 g to 1 t are included; the model remains continuous over a much wider
+range.
+
+## Physics
+
+The simulation is a **reduced-order model**, not a computational fluid dynamics solve:
+it reproduces the integral behaviour of a blast (front trajectory, overpressure,
+fireball growth, cloud rise, thermal output) at interactive rates. The equations and the
+underlying references are documented in [docs/physics.md](docs/physics.md).
+
+Implemented effects:
+
+- Hopkinson-Cranz scaled distance and Brode's incident overpressure fit
+- Rankine-Hugoniot shock Mach number and adaptive shock-front integration
+- Fireball growth, surface temperature and Planckian (blackbody) emission
+- Buoyant thermal cloud with entrainment drag and wind advection
+- Thermal radiation fluence and burn radius
+- Drag/gravity/bounce debris, sparks, soot and shock-lifted dust
+- Friedlander blast waveform for an observer at a chosen distance
+
+## Rendering
+
+- 96³ (configurable) RGBA32F volume, baked on the worker pool at up to 30 Hz
+- GPU ray marching with jittered sampling, emission/absorption and Henyey-Greenstein
+  scattering
+- Instanced billboard particles with soft depth fade
+- Procedural sky, terrain, scorch marks, blast ring and fireball ground lighting
+- HDR render target, 5-level bloom pyramid, ACES filmic tonemap
+
+The renderer is described in [docs/architecture.md](docs/architecture.md).
+
+## Project layout
+
+```
+assets/shaders/     HLSL shaders (loaded at runtime)
+docs/               physics and architecture documentation
+src/app/            window, frame loop, settings persistence
+src/core/           thread pool, RNG, logging
+src/gfx/            D3D11 device, renderer, camera, shaders, image I/O
+src/sim/            blast model, particles, volume baking, simulation
+src/ui/             Dear ImGui interface
+tests/              physics regression tests
+```
+
+## License
+
+MIT – see [LICENSE](LICENSE).
