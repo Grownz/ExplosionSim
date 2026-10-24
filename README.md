@@ -118,6 +118,8 @@ Examples:
 | Fuse | 2.0 s |
 | Ambient conditions | 15 °C, 1013 hPa, 1 m/s wind |
 | Time scale | 0.06 (slow motion) |
+| Loop | off |
+| Grid overlay | on |
 | Loop duration | 0.55 s of simulated time |
 
 The charge, height of burst, atmosphere and fuse can be changed in the control panel.

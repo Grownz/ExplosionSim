@@ -20,7 +20,7 @@ struct RenderSettings {
     bool enableParticles = true;
     bool enableGround = true;
     bool enableBloom = true;
-    bool showGrid = false;
+    bool showGrid = true;
     float sunAzimuthDeg = 302.0f;
     float sunElevationDeg = 13.0f;
     float particleScale = 1.0f;

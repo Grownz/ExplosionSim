@@ -24,7 +24,7 @@ struct SimulationSettings {
     // Playback
     double fuseSeconds = 2.0;
     double timeScale = 0.06;
-    bool loop = true;
+    bool loop = false;
     double loopDurationS = 0.55;
 
     // Performance

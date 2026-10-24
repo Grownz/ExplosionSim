@@ -17,6 +17,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Duplicate Dear ImGui widget IDs for the `Pause` button/checkbox and the `Bloom`
   slider/checkbox, which triggered the "visible items with conflicting ID" warning.
 
+### Changed
+
+- Default playback no longer loops after the blast; the grid overlay (including the
+  metre scale) is enabled by default.
+
 ## [0.1.0] - 2026-10-24
 
 First public version.
