@@ -28,6 +28,9 @@ start-up at 0.4 m above the ground**.
   pressure waveform.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
+- **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
+  MUSCL reconstruction, CFL-adaptive time step) runs on the GPU at 64³–128³ and drives
+  the volumetric field. Selectable under *Physics & Effects → Simulation model*.
 - **2 s fuse** – the charge is armed on start-up, a countdown is shown, then the
   detonation is simulated in slow motion (time scale is adjustable).
 - **Headless capture** – deterministic PNG screenshots and a benchmark mode without a
@@ -94,6 +97,10 @@ The application opens a window, arms the 200 g charge and detonates after two se
 --elevation <degrees> camera elevation for headless captures
 --benchmark           render frames offscreen and print timing
 --frames <count>      number of benchmark frames (default 120)
+--high-fidelity       use the GPU Euler solver for the volume
+--solver-resolution   solver grid resolution (64, 96 or 128)
+--solver-steps        solver steps per frame (default 24)
+--solver-time <s>     solver time for headless captures
 --no-vsync            disable vertical synchronisation
 --debug               enable the D3D11 debug layer
 --help                show all options
@@ -125,6 +132,26 @@ Examples:
 The charge, height of burst, atmosphere and fuse can be changed in the control panel.
 Presets from 20 g to 1 t are included; the model remains continuous over a much wider
 range.
+
+## Simulation models
+
+| Model | Description | Best for |
+|---|---|---|
+| **Reduced-order** (default) | Validated engineering blast model with analytic fireball, cloud, debris, sparks, smoke and dust. Covers the complete timeline. | Overview, full event, particles |
+| **High-fidelity (GPU Euler)** | 3D compressible Euler finite-volume solver with HLLC fluxes and MUSCL reconstruction, running in D3D11 compute shaders. | Early blast (0–50 ms), shock structure, fireball dynamics |
+
+The high-fidelity mode is a genuine numerical solution, not a visual approximation, but
+it is deliberately slow-motion: 24 solver steps per frame at 128³ advance roughly
+0.3–0.5 ms of physical time per frame. Particle rendering is disabled in this mode
+because the volume is the physical solution. For a headless capture use e.g.
+`--high-fidelity --time 0.005`.
+
+High-fidelity settings (Physics & Effects panel):
+
+- Grid resolution: 64³ / 96³ / 128³
+- Solver steps per frame: 4–64
+- Domain: ten times the analytic fireball radius, cubic, with a reflecting ground and
+  open lateral/top boundaries
 
 ## Physics
 

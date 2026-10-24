@@ -73,6 +73,16 @@ int App::Run(const LaunchOptions& options) {
     if (options_.heightOfBurstM >= 0.0) {
         settings_.simulation.heightOfBurstM = options_.heightOfBurstM;
     }
+    if (options_.highFidelity) {
+        settings_.simulation.mode = sim::SimulationMode::HighFidelity;
+    }
+    if (options_.solverResolution > 0) {
+        settings_.simulation.solverResolution =
+            std::clamp(options_.solverResolution, 32, 192);
+    }
+    if (options_.solverSteps > 0) {
+        settings_.simulation.solverStepsPerFrame = std::clamp(options_.solverSteps, 1, 96);
+    }
 
     if (!options_.headless && !CreateMainWindow()) {
         return 1;
@@ -90,7 +100,7 @@ int App::Run(const LaunchOptions& options) {
     simulation_.Initialize(settings_.simulation, *pool_);
     FrameCamera();
 
-    LogInfo("Simulation ready: %.0f kg TNT, %.1f m burst height, %d workers",
+    LogInfo("Simulation ready: %.4g kg TNT, %.2f m burst height, %d workers",
             settings_.simulation.chargeMassKg, settings_.simulation.heightOfBurstM,
             int(pool_->WorkerCount()));
 
@@ -233,6 +243,17 @@ void App::FrameCamera() {
     const sim::BlastModel& blast = simulation_.Blast();
     const sim::Charge& charge = blast.GetCharge();
 
+    if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
+        const float half =
+            std::clamp(5.0f * float(blast.FireballMaxRadiusM()), 1.0f, 30.0f);
+        camera_.SetTarget(DirectX::XMFLOAT3(0.0f, half * 0.6f, 0.0f), half * 2.0f);
+        if (options_.headless) {
+            camera_.SetOrientation(options_.azimuth, options_.elevation);
+        }
+        camera_.Snap();
+        return;
+    }
+
     // Frame the maximum fireball / early cloud rather than the current (still
     // tiny) state so the camera does not jump right after detonation.
     const float fireball = float(blast.FireballMaxRadiusM());
@@ -251,7 +272,11 @@ void App::FrameCamera() {
 }
 
 void App::ApplySimulationSettings() {
+    const sim::SimulationMode previousMode = simulation_.Settings().mode;
     simulation_.ApplySettings(settings_.simulation);
+    if (previousMode != simulation_.Settings().mode) {
+        FrameCamera();
+    }
     simulation_.FinishPendingVolumeWork();
 }
 
@@ -345,8 +370,20 @@ int App::RunInteractive() {
         }
 
         if (!settings_.paused) {
-            simulation_.Update(dt);
+            if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
+                if (simulation_.IsArmed()) {
+                    simulation_.Update(dt);
+                } else {
+                    const double advance = renderer_.ConsumeSolverAdvance();
+                    if (advance > 0.0) {
+                        simulation_.AdvanceExternal(advance);
+                    }
+                }
+            } else {
+                simulation_.Update(dt);
+            }
         }
+        renderer_.SetSolverPaused(settings_.paused);
 
         ui::UiContext context{settings_, simulation_, camera_, renderer_};
         context.fps = fps_;
@@ -377,7 +414,17 @@ int App::RunInteractive() {
         }
 
         if (stepOnce) {
-            simulation_.StepFixed(1.0 / 60.0);
+            if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
+                if (!simulation_.IsArmed()) {
+                    renderer_.StepSolverOnce(8);
+                    const double advance = renderer_.ConsumeSolverAdvance();
+                    if (advance > 0.0) {
+                        simulation_.AdvanceExternal(advance);
+                    }
+                }
+            } else {
+                simulation_.StepFixed(1.0 / 60.0);
+            }
         }
         if (forceRestart) {
             RestartSimulation();
@@ -419,8 +466,17 @@ int App::RunHeadless() {
 
     simulation_.Volume().WaitForIdle();
     simulation_.Volume().Poll();
-    simulation_.Volume().BakeNow(simulation_.Blast());
-    simulation_.Volume().Poll();
+
+    const bool highFidelity =
+        simulation_.Settings().mode == sim::SimulationMode::HighFidelity;
+    const double solverTarget =
+        options_.solverTime >= 0.0 ? options_.solverTime : targetTime;
+    if (highFidelity) {
+        renderer_.PrepareHighFidelity(simulation_, solverTarget);
+    } else {
+        simulation_.Volume().BakeNow(simulation_.Blast());
+        simulation_.Volume().Poll();
+    }
 
     FrameCamera();
 

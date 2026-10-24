@@ -1,5 +1,6 @@
 #include "sim/Simulation.h"
 
+#include "core/Log.h"
 #include "core/ThreadPool.h"
 
 #include <algorithm>
@@ -38,6 +39,8 @@ void Simulation::Reset() {
         return;
     }
 
+    ++blastSerial_;
+
     Environment environment{};
     environment.pressurePa = settings_.ambientPressurePa;
     environment.temperatureK = settings_.ambientTemperatureK;
@@ -70,6 +73,7 @@ void Simulation::Detonate() {
 
     detonated_ = true;
     fuseRemaining_ = 0.0;
+    ++blastSerial_;
 
     blast_.Reset();
     particles_.Reset();
@@ -77,7 +81,7 @@ void Simulation::Detonate() {
     volume_.SetResolution(settings_.volumeResolution);
     volume_.Reset();
 
-    if (settings_.bakeVolume) {
+    if (settings_.bakeVolume && settings_.mode == SimulationMode::ReducedOrder) {
         volume_.StartBake(blast_);
     }
 }
@@ -97,6 +101,9 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool budgetChanged = settings_.particleBudget != settings.particleBudget;
     const bool volumeChanged = settings_.volumeResolution != settings.volumeResolution;
     const bool fuseChanged = settings_.fuseSeconds != settings.fuseSeconds;
+    const bool modeChanged = settings_.mode != settings.mode;
+    const bool solverResolutionChanged =
+        settings_.solverResolution != settings.solverResolution;
 
     settings_ = settings;
 
@@ -106,7 +113,8 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     if (volumeChanged) {
         volume_.SetResolution(settings_.volumeResolution);
     }
-    if (physicsChanged || budgetChanged || fuseChanged) {
+    if (physicsChanged || budgetChanged || fuseChanged || modeChanged ||
+        solverResolutionChanged) {
         Reset();
         return;
     }
@@ -114,7 +122,8 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     if (volumeChanged) {
         volume_.SetResolution(settings_.volumeResolution);
         volume_.Reset();
-        if (detonated_ && settings_.bakeVolume) {
+        if (detonated_ && settings_.bakeVolume &&
+            settings_.mode == SimulationMode::ReducedOrder) {
             volume_.StartBake(blast_);
         }
     }
@@ -139,7 +148,9 @@ void Simulation::Update(float realDt) {
     const double dtSim = std::clamp(double(realDt) * settings_.timeScale, 0.0, 0.05);
     if (dtSim > 0.0) {
         blast_.Advance(dtSim);
-        particles_.Update(float(dtSim), blast_, *pool_);
+        if (settings_.mode == SimulationMode::ReducedOrder) {
+            particles_.Update(float(dtSim), blast_, *pool_);
+        }
     }
 
     if (settings_.loop && blast_.State().time > settings_.loopDurationS) {
@@ -165,13 +176,28 @@ void Simulation::StepFixed(double dtSim) {
     }
 
     blast_.Advance(dtSim);
-    particles_.Update(float(dtSim), blast_, *pool_);
+    if (settings_.mode == SimulationMode::ReducedOrder) {
+        particles_.Update(float(dtSim), blast_, *pool_);
+    }
     volume_.Poll();
     realTime_ += dtSim;
 }
 
+void Simulation::AdvanceExternal(double dtSim) {
+    if (!initialized_ || !detonated_ || dtSim <= 0.0) {
+        return;
+    }
+
+    blast_.Advance(dtSim);
+    if (settings_.mode == SimulationMode::ReducedOrder) {
+        particles_.Update(float(dtSim), blast_, *pool_);
+    }
+    realTime_ += dtSim;
+}
+
 void Simulation::ScheduleVolumeBake(double dtReal) {
-    if (!settings_.bakeVolume || !detonated_) {
+    if (!settings_.bakeVolume || !detonated_ ||
+        settings_.mode != SimulationMode::ReducedOrder) {
         return;
     }
 

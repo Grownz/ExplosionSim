@@ -123,6 +123,13 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
         std::clamp(ParseDouble(values, "windDirectionDeg", simulation.windDirectionDeg), 0.0, 360.0);
     simulation.timeScale = std::clamp(ParseDouble(values, "timeScale", simulation.timeScale), 0.005, 2.0);
     simulation.fuseSeconds = std::clamp(ParseDouble(values, "fuseSeconds", simulation.fuseSeconds), 0.0, 30.0);
+    simulation.mode = ParseInt(values, "simulationMode", int(simulation.mode)) == 1
+                          ? sim::SimulationMode::HighFidelity
+                          : sim::SimulationMode::ReducedOrder;
+    simulation.solverResolution =
+        std::clamp(ParseInt(values, "solverResolution", simulation.solverResolution), 32, 192);
+    simulation.solverStepsPerFrame =
+        std::clamp(ParseInt(values, "solverStepsPerFrame", simulation.solverStepsPerFrame), 1, 96);
     simulation.loop = ParseBool(values, "loop", simulation.loop);
     simulation.particleBudget =
         std::clamp(ParseInt(values, "particleBudget", simulation.particleBudget), 4000, 400000);
@@ -169,6 +176,9 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "windDirectionDeg=" << simulation.windDirectionDeg << "\n";
     stream << "timeScale=" << simulation.timeScale << "\n";
     stream << "fuseSeconds=" << simulation.fuseSeconds << "\n";
+    stream << "simulationMode=" << int(simulation.mode) << "\n";
+    stream << "solverResolution=" << simulation.solverResolution << "\n";
+    stream << "solverStepsPerFrame=" << simulation.solverStepsPerFrame << "\n";
     stream << "loop=" << (simulation.loop ? "true" : "false") << "\n";
     stream << "particleBudget=" << simulation.particleBudget << "\n";
     stream << "volumeResolution=" << simulation.volumeResolution << "\n";

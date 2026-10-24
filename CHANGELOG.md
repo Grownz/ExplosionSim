@@ -8,6 +8,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- High-fidelity GPU mode: a 3D compressible Euler solver (HLLC Riemann solver,
+  MUSCL/minmod reconstruction, CFL-adaptive time step, buoyancy and soot transport)
+  running in Direct3D 11 compute shaders at 64³–128³. Selectable under
+  *Physics & Effects → Simulation model*; solver grid and steps per frame are
+  configurable. The solver field drives the existing volumetric renderer.
 - Adaptive metre scale bar in the lower-left corner when the grid overlay is enabled.
   The bar length is snapped to a 1-2-5 sequence and clamped to a readable pixel size as
   the camera zooms.

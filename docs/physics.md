@@ -171,7 +171,59 @@ T₂/T₁ = [(2γM² - (γ-1))((γ-1)M² + 2)] / [(γ+1)² M²]
 
 the cap is a torus, the stem a tapered column, and the ground ring an expanding annulus.
 
-## 8. Limitations
+## 8. High-fidelity GPU solver
+
+The optional high-fidelity mode replaces the analytic volume with a finite-volume
+solution of the 3D compressible Euler equations:
+
+```
+dU/dt + dF/dx + dG/dy + dH/dz = S
+U = (rho, rho*u, rho*v, rho*w, E, rho*Y)
+```
+
+with the ideal-gas equation of state `p = (gamma - 1)(E - 0.5 rho |v|^2)` and
+`T = p / (rho R_s)`.
+
+### Numerical scheme
+
+- **Reconstruction** – MUSCL with a minmod limiter on the primitive variables
+  `(rho, u, v, w, p, Y)`; the reconstruction falls back to the cell-centred state if the
+  density or pressure becomes non-positive.
+- **Riemann solver** – HLLC with the Davis wave-speed estimates
+  `S_L = min(u_L - c_L, u_R - c_R)`, `S_R = max(u_L + c_L, u_R + c_R)`. A Rusanov flux is
+  used if the star region is degenerate.
+- **Splitting** – three directional sweeps followed by a source pass per time step.
+- **Time step** – CFL-limited with `dt = 0.3 dx / max(|v| + c)`. The maximum is computed
+  on the GPU and read back one frame later.
+
+### Initial condition and boundaries
+
+The charge is deposited as a sphere of radius `max(R_charge, 3.5 dx)` with the TNT mass
+and energy, and `Y = 1` (soot density equal to the local gas density). The ground is a
+reflecting wall (mirrored ghost cell with reversed vertical momentum); the other
+boundaries are zero-gradient outflows.
+
+### Source terms
+
+- Buoyancy uses the density difference relative to the ambient air, so the uniform
+  ambient atmosphere does not accelerate.
+- A soot cooling term removes energy from hot products.
+- The render conversion applies a sub-grid **soot incandescence** temperature floor and
+  highlights the shock front with the density gradient. This represents the optical
+  thickness and afterburning of the products, which the adiabatic Euler solution does
+  not capture.
+
+### Limitations
+
+- The grid is Cartesian and uniform; 128³ is a compromise between resolution and
+  real-time performance.
+- Numerical diffusion smears the contact surface and the soot over time.
+- Chemical afterburning is not solved; it is represented by the render-side temperature
+  floor.
+- The mode is intentionally slow-motion: 24 steps per frame advance a fraction of a
+  millisecond of physical time.
+
+## 9. Limitations
 
 - The shock is integrated from an empirical fit, not solved from the Euler equations.
 - No Richtmyer-Meshkov or Kelvin-Helmholtz instabilities are resolved; turbulence is

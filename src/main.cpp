@@ -36,6 +36,10 @@ void PrintUsage() {
     LogInfo("  --distance-scale <x>  Multiplier for the framing distance.");
     LogInfo("  --benchmark           Render frames offscreen and print timing.");
     LogInfo("  --frames <count>      Number of benchmark frames (default 120).");
+    LogInfo("  --high-fidelity       Use the GPU Euler solver for the volume.");
+    LogInfo("  --solver-resolution <n>  Solver grid resolution (64, 96 or 128).");
+    LogInfo("  --solver-steps <n>    Solver steps per frame (default 24).");
+    LogInfo("  --solver-time <s>     Solver time for headless captures.");
     LogInfo("  --no-vsync            Disable vertical synchronisation.");
     LogInfo("  --debug               Enable the D3D11 debug layer.");
     LogInfo("  --help                Show this help.");
@@ -121,6 +125,14 @@ ParsedArguments ParseCommandLine() {
             result.options.headless = true;
         } else if (argument == L"--frames") {
             parseInt(result.options.benchmarkFrames);
+        } else if (argument == L"--high-fidelity") {
+            result.options.highFidelity = true;
+        } else if (argument == L"--solver-resolution") {
+            parseInt(result.options.solverResolution);
+        } else if (argument == L"--solver-steps") {
+            parseInt(result.options.solverSteps);
+        } else if (argument == L"--solver-time") {
+            parseDouble(result.options.solverTime);
         } else if (argument == L"--no-vsync") {
             result.options.vsync = false;
         } else if (argument == L"--debug") {

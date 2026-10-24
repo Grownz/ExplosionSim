@@ -92,6 +92,75 @@ looks without rebuilding. Compilation errors are logged with file and line infor
 The asset path is resolved relative to the executable first and then the working
 directory.
 
+## High-fidelity GPU solver
+
+`gfx::GpuEulerSolver` is an optional 3D compressible Euler solver that runs in Direct3D
+11 compute shaders and replaces the CPU-baked volume with a numerical solution.
+
+### State layout
+
+Two RGBA32F 3D textures hold the conserved variables:
+
+| Texture | Contents |
+|---|---|
+| `StateA` | `(rho, rho*u, rho*v, rho*w)` |
+| `StateB` | `(E, rho*Y, 0, 1)` |
+
+Each variable has two textures for ping-pong updates. A render texture (RGBA16F) stores
+`(density, temperature/12kK, dust, 1)` and is sampled by the existing volume raymarcher.
+
+### Passes
+
+1. **Init** – fills the domain with ambient air and deposits the charge as a sphere of
+   detonation products.
+2. **Sweep x / y / z** – finite-volume update with MUSCL reconstruction and HLLC fluxes.
+3. **Source** – buoyancy relative to the ambient density and soot cooling.
+4. **Reduce** – group-shared maximum of the signal speed `|v| + c`, written to a
+   one-element structured buffer.
+5. **Render** – converts the state into the render volume (soot incandescence, shock
+   gradient, compression).
+
+Three sweeps plus one source pass per step means the ping-pong index returns to its
+starting value after each step. All passes are dispatched with `8x8x8` thread groups.
+
+### Adaptive time step
+
+The reduction result is copied into a staging buffer and read back one frame later, so
+the CPU never stalls on the current frame's GPU work. The step size is
+
+```
+dt = CFL * dx / max(|v| + c),   CFL = 0.3
+```
+
+clamped to `[0.1 us, 50 us]`. At start-up a conservative 4000 m/s is assumed until the
+first reduction result is available.
+
+### Domain and boundaries
+
+The domain is a cube of side `2 * 5 * R_fireball` with the ground at `y = 0`. The ground
+is a reflecting wall implemented by mirroring the ghost cell and reversing the vertical
+momentum; the lateral and top boundaries are zero-gradient outflows.
+
+### Integration with the application
+
+- The `Renderer` owns the solver and detects a new detonation through
+  `Simulation::BlastSerial()`.
+- While the charge is armed no solver work is done; after detonation the solver is
+  initialised and advanced by `solverStepsPerFrame` steps per rendered frame.
+- The reduced-order model still advances, but its time is driven by the solver's
+  simulated advance (`Simulation::AdvanceExternal`), so the camera, fireball light and
+  readouts stay in sync.
+- Particle rendering is skipped in this mode: the volume is the physical solution.
+- `Renderer::PrepareHighFidelity` advances the solver to an exact target time for
+  deterministic headless captures.
+- The UI shows solver time, time step, maximum signal speed and total steps.
+
+### Performance
+
+At 128³ with 24 steps per frame the solver and renderer reach about 50 fps at 1600×900
+on an RTX 3090. 96³ is roughly twice as fast. The GPU work is dominated by the three
+sweeps; the reduction and render passes are comparatively cheap.
+
 ## Determinism and headless mode
 
 - Fixed particle seed per detonation

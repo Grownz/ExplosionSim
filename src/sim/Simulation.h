@@ -12,6 +12,11 @@ class ThreadPool;
 
 namespace ex::sim {
 
+enum class SimulationMode : int {
+    ReducedOrder = 0,
+    HighFidelity = 1,
+};
+
 struct SimulationSettings {
     // Physics
     double chargeMassKg = 0.2;
@@ -26,6 +31,11 @@ struct SimulationSettings {
     double timeScale = 0.06;
     bool loop = false;
     double loopDurationS = 0.55;
+
+    // Simulation model
+    SimulationMode mode = SimulationMode::ReducedOrder;
+    int solverResolution = 128;
+    int solverStepsPerFrame = 24;
 
     // Performance
     int particleBudget = 40000;
@@ -54,6 +64,11 @@ public:
     void DetonateNow();
     bool IsArmed() const { return !detonated_; }
     double FuseRemaining() const { return fuseRemaining_; }
+    uint64_t BlastSerial() const { return blastSerial_; }
+
+    // Advances the model without the real-time clock. Used in high-fidelity
+    // mode so the particles/camera follow the GPU solver's simulated time.
+    void AdvanceExternal(double dtSim);
 
     const SimulationSettings& Settings() const { return settings_; }
     double Time() const { return blast_.State().time; }
@@ -87,6 +102,7 @@ private:
     double fuseRemaining_ = 0.0;
     bool detonated_ = false;
     bool initialized_ = false;
+    uint64_t blastSerial_ = 0;
 };
 
 } // namespace ex::sim

@@ -65,7 +65,7 @@ float4 PSVolume(VSOut input) : SV_Target
             float heat = smoothstep(600.0, 1500.0, temperature);
             float3 blackbody = BlackbodyRGB(temperature);
             float coreBoost = 0.65 + 1.7 * smoothstep(2200.0, 3800.0, temperature);
-            float3 emission = blackbody * density * heat * coreBoost * 0.55;
+            float3 emission = blackbody * density * heat * coreBoost * 0.55 * VolumeParams.x;
 
             float3 albedo = lerp(float3(0.26, 0.24, 0.22), float3(0.55, 0.47, 0.36), sample.b);
             float3 scattering = albedo * density * (sunLight + ambientLight);

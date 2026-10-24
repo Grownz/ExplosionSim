@@ -65,11 +65,19 @@ bool Renderer::Initialize(GfxDevice& device) {
         return false;
     }
 
-    return CreateStates() && CreatePipeline() &&
-           EnsureTargets(device_->Width(), device_->Height());
+    if (!CreateStates() || !CreatePipeline() ||
+        !EnsureTargets(device_->Width(), device_->Height())) {
+        return false;
+    }
+
+    if (!solver_.Initialize(device_->Device(), device_->Context())) {
+        LogWarn("High-fidelity GPU solver unavailable.");
+    }
+    return true;
 }
 
 void Renderer::Shutdown() {
+    solver_.Shutdown();
     volumeSRV_.Reset();
     volumeTexture_.Reset();
     particleSRVAdditive_.Reset();
@@ -399,12 +407,13 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
         XMFLOAT4(sunDirection.x, sunDirection.y, sunDirection.z, settings.exposure);
     frameConstants_.sunColor = XMFLOAT4(1.0f, 0.70f, 0.44f, settings.bloomStrength);
 
-    const sim::VolumeFrame& frame = simulation.Volume().Current();
-    if (volumeValid_ && !frame.empty()) {
-        frameConstants_.volumeMin = XMFLOAT4(frame.bounds.min.x, frame.bounds.min.y,
-                                             frame.bounds.min.z, frame.extinctionScale);
-        frameConstants_.volumeMax = XMFLOAT4(frame.bounds.max.x, frame.bounds.max.y,
-                                             frame.bounds.max.z, float(settings.raymarchSteps));
+    if (activeVolumeValid_) {
+        frameConstants_.volumeMin =
+            XMFLOAT4(activeVolumeBounds_.min.x, activeVolumeBounds_.min.y,
+                     activeVolumeBounds_.min.z, activeVolumeExtinction_);
+        frameConstants_.volumeMax =
+            XMFLOAT4(activeVolumeBounds_.max.x, activeVolumeBounds_.max.y,
+                     activeVolumeBounds_.max.z, float(settings.raymarchSteps));
     } else {
         frameConstants_.volumeMin = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.1f);
         frameConstants_.volumeMax = XMFLOAT4(1.0f, 1.0f, 1.0f, float(settings.raymarchSteps));
@@ -441,7 +450,8 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
                  std::max(camera.Distance() * 8.0f, 500.0f));
 
     frameConstants_.rangeParams = XMFLOAT4(camera.NearPlane(), camera.FarPlane(),
-                                           (volumeValid_ && settings.enableVolume) ? 1.0f : 0.0f,
+                                           (activeVolumeValid_ && settings.enableVolume) ? 1.0f
+                                                                                         : 0.0f,
                                            settings.particleScale);
 
     const float fireballLight =
@@ -450,6 +460,10 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
             : 0.0f;
     frameConstants_.fireball =
         XMFLOAT4(0.0f, float(state.fireballCenterY), 0.0f, fireballLight);
+
+    const bool highFidelity =
+        simulation.Settings().mode == sim::SimulationMode::HighFidelity;
+    frameConstants_.volumeParams = XMFLOAT4(highFidelity ? 1.2f : 1.0f, 0.0f, 0.0f, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11DeviceContext* context = device_->Context();
@@ -516,6 +530,66 @@ void Renderer::RenderBloom() {
     context->PSSetShaderResources(0, 2, nullSRV);
 }
 
+EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
+    const sim::BlastModel& blast = simulation.Blast();
+    const sim::Charge& charge = blast.GetCharge();
+    const sim::Environment& environment = blast.GetEnvironment();
+
+    EulerConfig config;
+    config.resolution = std::clamp(simulation.Settings().solverResolution, 32, 192);
+
+    const double fireball = std::max(blast.FireballMaxRadiusM(), 0.1);
+    config.domainHalfExtent = std::clamp(5.0 * fireball, 1.0, 30.0);
+    config.chargeMassKg = std::max(charge.tntMassKg, 1e-6);
+    config.chargeEnergyJ = charge.EnergyJ();
+    config.heightOfBurstM =
+        std::clamp(charge.heightOfBurstM, 0.05, 2.0 * config.domainHalfExtent - 0.05);
+    config.ambientDensity = environment.AirDensity();
+    config.ambientPressure = environment.pressurePa;
+    config.ambientTemperature = environment.temperatureK;
+    config.gamma = environment.gamma;
+    config.gasConstant = environment.gasConstant;
+    config.gravity = environment.gravity;
+    config.fireballRadiusM = fireball;
+    return config;
+}
+
+void Renderer::PrepareHighFidelity(const sim::Simulation& simulation, double targetTime) {
+    if (!solver_.Reset(MakeEulerConfig(simulation))) {
+        LogError("High-fidelity solver could not be initialised.");
+        solverPrepared_ = false;
+        return;
+    }
+    solverBlastSerial_ = simulation.BlastSerial();
+
+    const auto start = std::chrono::steady_clock::now();
+    int guard = 0;
+    while (solver_.Stats().time < targetTime && guard++ < 4096) {
+        solver_.Step(16);
+        const double elapsed = std::chrono::duration<double>(
+                                   std::chrono::steady_clock::now() - start)
+                                   .count();
+        if (elapsed > 20.0) {
+            LogWarn("High-fidelity solver stopped at %.4f s (time budget reached).",
+                    solver_.Stats().time);
+            break;
+        }
+    }
+    solverPrepared_ = true;
+
+    LogInfo("High-fidelity: t=%.4f s, %lld steps, %d^3, dt=%.2f us, maxSpeed=%.0f m/s",
+            solver_.Stats().time, solver_.Stats().steps, solver_.Stats().resolution,
+            solver_.Stats().dt * 1e6f, solver_.Stats().maxSpeed);
+}
+
+double Renderer::ConsumeSolverAdvance() {
+    return solver_.ConsumeAdvance();
+}
+
+void Renderer::StepSolverOnce(int steps) {
+    solver_.Step(steps);
+}
+
 void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
                       const RenderSettings& settings) {
     if (!device_) {
@@ -529,13 +603,48 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
         return;
     }
 
-    // Volume upload (only when a new bake is available).
+    // --- Volume source -----------------------------------------------------
+    const bool highFidelity =
+        simulation.Settings().mode == sim::SimulationMode::HighFidelity;
+
     const sim::VolumeFrame& volumeFrame = simulation.Volume().Current();
-    if (volumeFrame.version != uploadedVolumeVersion_ && !volumeFrame.empty()) {
-        UploadVolume(volumeFrame);
-    }
-    if (!simulation.Volume().HasData()) {
-        volumeValid_ = false;
+    ID3D11ShaderResourceView* solverVolume = nullptr;
+
+    if (highFidelity) {
+        if (!simulation.IsArmed()) {
+            if (solverBlastSerial_ != simulation.BlastSerial()) {
+                if (solver_.Reset(MakeEulerConfig(simulation))) {
+                    solverBlastSerial_ = simulation.BlastSerial();
+                } else {
+                    LogWarn("High-fidelity solver reset failed.");
+                }
+                solverPrepared_ = false;
+            }
+
+            if (solver_.HasVolume()) {
+                if (!solverPrepared_ && !solverPaused_) {
+                    solver_.Step(std::clamp(simulation.Settings().solverStepsPerFrame, 1, 96));
+                }
+                solverVolume = solver_.VolumeSRV();
+            }
+        }
+        solverPrepared_ = false;
+
+        activeVolumeValid_ = solverVolume != nullptr;
+        activeVolumeBounds_ = solver_.Bounds();
+        activeVolumeExtinction_ = solver_.ExtinctionScale();
+    } else {
+        // CPU volume bake upload (only when a new bake is available).
+        if (volumeFrame.version != uploadedVolumeVersion_ && !volumeFrame.empty()) {
+            UploadVolume(volumeFrame);
+        }
+        if (!simulation.Volume().HasData()) {
+            volumeValid_ = false;
+        }
+
+        activeVolumeValid_ = volumeValid_ && simulation.Volume().HasData();
+        activeVolumeBounds_ = volumeFrame.bounds;
+        activeVolumeExtinction_ = volumeFrame.extinctionScale;
     }
 
     const int capacity = simulation.Particles().Capacity();
@@ -552,17 +661,19 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
         }
     }
 
-    UploadParticles(simulation.Particles().AdditiveBatch(), particleBufferAdditive_);
-    UploadParticles(simulation.Particles().FireBatch(), particleBufferFire_);
-    UploadParticles(simulation.Particles().AlphaBatch(), particleBufferAlpha_);
+    if (!highFidelity) {
+        UploadParticles(simulation.Particles().AdditiveBatch(), particleBufferAdditive_);
+        UploadParticles(simulation.Particles().FireBatch(), particleBufferFire_);
+        UploadParticles(simulation.Particles().AlphaBatch(), particleBufferAlpha_);
+    }
 
     if (frameIndex_ == 0) {
         const auto& state = simulation.Blast().State();
         LogInfo("First frame: t=%.3fs fireball=%.2fm (%.0f K) shock=%.1fm volume=%d "
-                "particles=%d+%d",
+                "particles=%d+%d highFidelity=%d",
                 state.time, state.fireballRadius, state.fireballTemperatureK, state.shockRadius,
-                volumeValid_ ? 1 : 0, int(simulation.Particles().AdditiveBatch().size()),
-                int(simulation.Particles().AlphaBatch().size()));
+                activeVolumeValid_ ? 1 : 0, int(simulation.Particles().AdditiveBatch().size()),
+                int(simulation.Particles().AlphaBatch().size()), highFidelity ? 1 : 0);
     }
 
     UpdateFrameConstants(simulation, camera, settings);
@@ -604,15 +715,21 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
     context->CopyResource(depthCopyTexture_.Get(), device_->DepthTexture());
     ID3D11ShaderResourceView* depthSample = depthCopySRV_.Get();
 
-    info_.additiveParticles = int(simulation.Particles().AdditiveBatch().size());
-    info_.fireParticles = int(simulation.Particles().FireBatch().size());
-    info_.alphaParticles = int(simulation.Particles().AlphaBatch().size());
+    info_.additiveParticles =
+        highFidelity ? 0 : int(simulation.Particles().AdditiveBatch().size());
+    info_.fireParticles = highFidelity ? 0 : int(simulation.Particles().FireBatch().size());
+    info_.alphaParticles =
+        highFidelity ? 0 : int(simulation.Particles().AlphaBatch().size());
     info_.raymarchSteps = settings.raymarchSteps;
-    info_.volumeValid = volumeValid_;
+    info_.volumeValid = activeVolumeValid_;
+    info_.highFidelity = highFidelity;
+
+    ID3D11ShaderResourceView* volumeView =
+        highFidelity ? solverVolume : volumeSRV_.Get();
 
     // Hot debris and sparks are drawn before the volume so that the optically
     // thick fireball correctly occludes the material inside it.
-    if (settings.enableParticles && info_.additiveParticles > 0) {
+    if (!highFidelity && settings.enableParticles && info_.additiveParticles > 0) {
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);
@@ -631,10 +748,10 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
     }
 
     // --- Volumetric fireball / smoke ---------------------------------------
-    if (settings.enableVolume && volumeValid_ && volumeSRV_) {
+    if (settings.enableVolume && activeVolumeValid_ && volumeView) {
         context->OMSetRenderTargets(1, &hdrRTV, nullptr);
         context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
-        ID3D11ShaderResourceView* srvs[2] = {volumeSRV_.Get(), depthSample};
+        ID3D11ShaderResourceView* srvs[2] = {volumeView, depthSample};
         context->PSSetShaderResources(0, 2, srvs);
         context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
         context->OMSetBlendState(blendPremultiplied_.Get(), nullptr, 0xffffffff);
@@ -647,7 +764,7 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
 
     // --- Particles ---------------------------------------------------------
     // Turbulent flame tongues on top of the fireball volume.
-    if (settings.enableParticles && info_.fireParticles > 0) {
+    if (!highFidelity && settings.enableParticles && info_.fireParticles > 0) {
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);
@@ -666,7 +783,7 @@ void Renderer::Render(const sim::Simulation& simulation, const Camera& camera,
     }
 
     // Soft smoke and dust puffs composite over the volume.
-    if (settings.enableParticles && info_.alphaParticles > 0) {
+    if (!highFidelity && settings.enableParticles && info_.alphaParticles > 0) {
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);

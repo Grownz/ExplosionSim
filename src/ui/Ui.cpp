@@ -271,7 +271,48 @@ void DrawPlayback(app::AppSettings& settings, UiActions& actions, const sim::Sim
     Readout("Real time", "%.1f s", simulation.RealTime());
 }
 
-void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation) {
+void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
+                 gfx::Renderer& renderer, UiActions& actions) {
+    SectionHeader("SIMULATION MODEL");
+
+    int mode = int(settings.simulation.mode);
+    const char* modeLabels[] = {"Reduced-order (analytic)", "High-fidelity (GPU Euler)"};
+    if (ImGui::Combo("Model", &mode, modeLabels, 2)) {
+        settings.simulation.mode = sim::SimulationMode(mode);
+        actions.applySimulationSettings = true;
+    }
+
+    if (settings.simulation.mode == sim::SimulationMode::HighFidelity) {
+        const int resolutions[] = {64, 96, 128};
+        const char* resolutionLabels[] = {"64^3", "96^3", "128^3"};
+        int current = 2;
+        for (int i = 0; i < 3; ++i) {
+            if (resolutions[i] == settings.simulation.solverResolution) {
+                current = i;
+            }
+        }
+        if (ImGui::Combo("Solver grid", &current, resolutionLabels, 3)) {
+            settings.simulation.solverResolution = resolutions[current];
+            actions.applySimulationSettings = true;
+        }
+
+        if (ImGui::SliderInt("Steps/frame", &settings.simulation.solverStepsPerFrame, 4, 64)) {
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            actions.applySimulationSettings = true;
+        }
+
+        const gfx::SolverStats& stats = renderer.Solver();
+        Readout("Solver time", "%.4f s", stats.time);
+        Readout("Time step", "%.2f us", stats.dt * 1e6f);
+        Readout("Max signal speed", "%.0f m/s", stats.maxSpeed);
+        Readout("Solver steps", "%lld", stats.steps);
+
+        Hint("Compressible Euler solver (HLLC + MUSCL) running on the GPU. The "
+             "volume is driven by the solver; particle rendering is disabled in "
+             "this mode.");
+    }
+
     SectionHeader("BLAST PHYSICS");
 
     const sim::BlastModel& blast = simulation.Blast();
@@ -383,6 +424,8 @@ void DrawPerformance(const UiContext& context) {
     Readout("Frame time", "%.2f ms", context.frameMs);
     Readout("CPU render", "%.2f ms", context.renderer.Info().cpuRenderMs);
     Readout("Volume bake", "%.2f ms", context.simulation.Volume().LastBakeMilliseconds());
+    Readout("Model", "%s", context.renderer.Info().highFidelity ? "High-fidelity (GPU)"
+                                                                : "Reduced-order");
     Readout("Worker threads", "%d", context.workerThreads);
     Readout("Particles", "%d / %d", context.simulation.Particles().AliveCount(),
             context.simulation.Particles().Capacity());
@@ -462,7 +505,7 @@ UiActions Draw(UiContext& context) {
 
     app::AppSettings& settings = context.settings;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float panelWidth = ImGui::GetFontSize() * 23.0f;
+    const float panelWidth = ImGui::GetFontSize() * 25.0f;
     const float margin = ImGui::GetFontSize() * 0.85f;
 
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - panelWidth - margin,
@@ -511,7 +554,7 @@ UiActions Draw(UiContext& context) {
         DrawPlayback(settings, actions, context.simulation);
     }
     if (ImGui::CollapsingHeader("Physics & Effects", ImGuiTreeNodeFlags_DefaultOpen)) {
-        DrawPhysics(settings, context.simulation);
+        DrawPhysics(settings, context.simulation, context.renderer, actions);
     }
     if (ImGui::CollapsingHeader("Rendering")) {
         DrawRendering(settings, actions, context.renderer);

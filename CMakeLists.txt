@@ -92,6 +92,7 @@ add_executable(ExplosionSim WIN32
     src/gfx/Camera.cpp
     src/gfx/Shader.cpp
     src/gfx/ImageIO.cpp
+    src/gfx/GpuEulerSolver.cpp
     src/ui/Ui.cpp
     ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc)
 

@@ -27,6 +27,10 @@ struct LaunchOptions {
     bool benchmark = false;
     int benchmarkFrames = 120;
     bool headless = false;
+    bool highFidelity = false;
+    int solverResolution = 0;
+    int solverSteps = 0;
+    double solverTime = -1.0;
 };
 
 namespace ex::app {
