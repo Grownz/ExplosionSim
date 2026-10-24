@@ -47,6 +47,9 @@ void PrintUsage() {
     LogInfo("  --auto-scale         Force the adaptive volume box (default).");
     LogInfo("  --solver-auto-scale  Expand the Euler solver domain before the field hits the edge.");
     LogInfo("  --no-solver-auto-scale  Keep a fixed Euler solver domain.");
+    LogInfo("  --scene-seed <n>      Seed for the procedural environment.");
+    LogInfo("  --scene-density <x>   Environment density multiplier.");
+    LogInfo("  --no-scene            Disable the procedural environment.");
     LogInfo("  --no-vsync            Disable vertical synchronisation.");
     LogInfo("  --debug               Enable the D3D11 debug layer.");
     LogInfo("  --help                Show this help.");
@@ -166,6 +169,17 @@ ParsedArguments ParseCommandLine() {
         } else if (argument == L"--no-solver-auto-scale") {
             result.options.solverAutoScale = false;
             result.options.solverAutoScaleSet = true;
+        } else if (argument == L"--scene-seed") {
+            int seed = 0;
+            parseInt(seed);
+            result.options.sceneSeed = uint32_t(std::max(0, seed));
+            result.options.sceneSeedSet = true;
+        } else if (argument == L"--scene-density") {
+            parseFloat(result.options.sceneDensity);
+            result.options.sceneDensitySet = true;
+        } else if (argument == L"--no-scene") {
+            result.options.sceneEnabled = false;
+            result.options.sceneEnabledSet = true;
         } else if (argument == L"--no-vsync") {
             result.options.vsync = false;
         } else if (argument == L"--debug") {

@@ -18,6 +18,14 @@ bool PhysicsChanged(const SimulationSettings& a, const SimulationSettings& b) {
            a.windDirectionDeg != b.windDirectionDeg;
 }
 
+bool SceneChanged(const SimulationSettings& a, const SimulationSettings& b) {
+    return a.scene.enabled != b.scene.enabled || a.scene.seed != b.scene.seed ||
+           a.scene.density != b.scene.density || a.scene.buildings != b.scene.buildings ||
+           a.scene.vehicles != b.scene.vehicles ||
+           a.scene.vegetation != b.scene.vegetation ||
+           a.scene.quality != b.scene.quality;
+}
+
 } // namespace
 
 bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool& pool) {
@@ -32,6 +40,7 @@ bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool
 
 void Simulation::Shutdown() {
     volume_.WaitForIdle();
+    scene_.Clear();
     initialized_ = false;
 }
 
@@ -54,6 +63,7 @@ void Simulation::Reset() {
     charge.heightOfBurstM = std::max(settings_.heightOfBurstM, 0.0);
 
     blast_.Configure(charge, environment);
+    scene_.Generate(settings_.scene, blast_);
     particles_.Reset();
     volume_.SetAutoScale(settings_.autoScaleVolume);
     volume_.SetResolution(settings_.volumeResolution);
@@ -97,6 +107,7 @@ void Simulation::DetonateNow() {
 
 void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool physicsChanged = PhysicsChanged(settings_, settings);
+    const bool sceneChanged = SceneChanged(settings_, settings);
     const bool budgetChanged = settings_.particleBudget != settings.particleBudget;
     const bool volumeChanged = settings_.volumeResolution != settings.volumeResolution;
     const bool fuseChanged = settings_.fuseSeconds != settings.fuseSeconds;
@@ -132,6 +143,10 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
             volume_.StartBake(blast_);
         }
     }
+
+    if (sceneChanged) {
+        scene_.Generate(settings_.scene, blast_);
+    }
 }
 
 void Simulation::Update(float realDt) {
@@ -153,6 +168,7 @@ void Simulation::Update(float realDt) {
     const double dtSim = std::clamp(double(realDt) * settings_.timeScale, 0.0, 0.05);
     if (dtSim > 0.0) {
         blast_.Advance(dtSim);
+        UpdateScene(dtSim);
         if (settings_.mode == SimulationMode::ReducedOrder) {
             particles_.Update(float(dtSim), blast_, *pool_);
         }
@@ -181,6 +197,7 @@ void Simulation::StepFixed(double dtSim) {
     }
 
     blast_.Advance(dtSim);
+    UpdateScene(dtSim);
     if (settings_.mode == SimulationMode::ReducedOrder) {
         particles_.Update(float(dtSim), blast_, *pool_);
     }
@@ -194,10 +211,28 @@ void Simulation::AdvanceExternal(double dtSim) {
     }
 
     blast_.Advance(dtSim);
+    UpdateScene(dtSim);
     if (settings_.mode == SimulationMode::ReducedOrder) {
         particles_.Update(float(dtSim), blast_, *pool_);
     }
     realTime_ += dtSim;
+}
+
+void Simulation::UpdateScene(double dtSim) {
+    scene_.Update(blast_, float(dtSim));
+
+    const std::vector<scene::SceneDebrisSpawn> spawns = scene_.ConsumeDebrisSpawns();
+    const std::vector<scene::SceneFireSpawn> fires = scene_.ConsumeFireSpawns();
+    if (settings_.mode != SimulationMode::ReducedOrder) {
+        return;
+    }
+    for (const scene::SceneDebrisSpawn& spawn : spawns) {
+        particles_.SpawnSceneDebris(spawn.position, spawn.count, spawn.scale,
+                                    spawn.speed);
+    }
+    for (const scene::SceneFireSpawn& fire : fires) {
+        particles_.SpawnSceneFire(fire.position, fire.count, fire.scale);
+    }
 }
 
 void Simulation::ScheduleVolumeBake(double dtReal) {

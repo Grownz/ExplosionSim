@@ -322,6 +322,38 @@ double BlastModel::PositivePhaseDurationS(double distanceM) const {
     return std::clamp(1.1 * distanceM / speed, 1e-4, 5.0);
 }
 
+double BlastModel::EstimateArrivalTimeS(double distanceM) const {
+    double radius = std::max(charge_.RadiusM(), 0.1);
+    const double target = std::max(distanceM, radius);
+    double time = 0.0;
+    int guard = 0;
+
+    while (radius < target && guard++ < 200000) {
+        const double speed = std::max(ShockSpeed(radius), environment_.SoundSpeed());
+        const double step = std::clamp(0.08 * radius / speed, 1e-6, 0.01);
+        const double midpoint = radius + 0.5 * speed * step;
+        const double midpointSpeed =
+            std::max(ShockSpeed(midpoint), environment_.SoundSpeed());
+        radius += midpointSpeed * step;
+        time += step;
+        if (time > 120.0) {
+            break;
+        }
+    }
+    return time;
+}
+
+double BlastModel::OverpressureImpulsePaS(double distanceM) const {
+    const double peak = PeakOverpressureAtDistance(distanceM);
+    const double duration = PositivePhaseDurationS(distanceM);
+    const double pressureRatio = std::cbrt(environment_.pressurePa / 101325.0);
+    const double effectiveZ = charge_.ScaledDistance(distanceM) * pressureRatio;
+    const double b = FriedlanderDecay(effectiveZ);
+    // Integral of (1 - x) * exp(-b x) over x in [0, 1].
+    const double integral = (b - 1.0 + std::exp(-b)) / (b * b);
+    return peak * duration * integral;
+}
+
 double BlastModel::OverpressureAtTime(double distanceM, double time) const {
     const double arrival = ArrivalTimeS(distanceM);
     if (arrival < 0.0 || time < arrival) {

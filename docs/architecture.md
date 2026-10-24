@@ -172,6 +172,30 @@ step grows and the number of steps for a physical time interval drops. The rende
 reports the domain, voxel size, measured plume top/radius, accuracy factor and expansion
 count.
 
+### Procedural scene
+
+`Scene` generates a deterministic town around ground zero from `scene.seed`: a jittered
+block grid with buildings, vehicles on the road centre lines and trees along the
+sidewalks. `scene.density` controls the object budget (800 at 1.0) and per-type toggles
+enable buildings, vehicles and vegetation. Each object stores the free-air arrival time
+(`BlastModel::EstimateArrivalTimeS`), peak overpressure, Friedlander impulse
+(`OverpressureImpulsePaS`) and thermal fluence evaluated at generation.
+
+At the arrival time a pressure-impulse criterion sets the damage state
+(intact/light/heavy/destroyed). Heavy or destroyed buildings are replaced by
+pre-fractured convex chunks (2x3x2 by default; `scene.quality` changes the grid),
+vehicles and trees become 6-DOF rigid bodies, and burning objects emit fire particles.
+The rigid-body world uses an averaged ground contact point for stability, bounding
+spheres for body-body contacts, Coulomb friction, contact damping and sleeping; it runs
+in fixed 1/120 s substeps. Damage events are queued and drained by `Simulation`, which
+spawns debris and fire particles on the main thread.
+
+`SceneRenderer` draws the intact objects and active chunks as instanced procedural
+meshes (box buildings with shader-generated windows, low-poly vehicles and trees). The
+pass writes depth before the volumetric pass, so buildings correctly occlude the
+fireball and smoke. A distance haze matches the ground and sky. Determinism is preserved
+by a seeded RNG, fixed physics substeps and a generation hash exposed for tests.
+
 ### Integration with the application
 
 - The `Renderer` owns the solver and detects a new detonation through

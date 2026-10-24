@@ -71,6 +71,8 @@ add_library(explosion_core STATIC
     src/sim/ParticleSystem.cpp
     src/sim/Simulation.cpp
     src/sim/VolumeBaker.cpp
+    src/scene/Scene.cpp
+    src/scene/PhysicsWorld.cpp
     src/core/ThreadPool.cpp
     src/core/Random.cpp)
 
@@ -94,6 +96,7 @@ add_executable(ExplosionSim WIN32
     src/gfx/Shader.cpp
     src/gfx/ImageIO.cpp
     src/gfx/GpuEulerSolver.cpp
+    src/gfx/SceneRenderer.cpp
     src/ui/Ui.cpp
     ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc)
 

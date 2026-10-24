@@ -292,6 +292,60 @@ void DrawPlayback(app::AppSettings& settings, UiActions& actions, const sim::Sim
     Readout("Real time", "%.1f s", simulation.RealTime());
 }
 
+void DrawEnvironment(app::AppSettings& settings, const sim::Simulation& simulation,
+                     UiActions& actions) {
+    SectionHeader("ENVIRONMENT");
+
+    auto& scene = settings.simulation.scene;
+    if (ImGui::Checkbox("Procedural scene", &scene.enabled)) {
+        actions.applySimulationSettings = true;
+    }
+
+    int seed = int(scene.seed);
+    if (ImGui::InputInt("Scene seed", &seed)) {
+        scene.seed = uint32_t(std::max(0, seed));
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        actions.applySimulationSettings = true;
+    }
+
+    float density = scene.density;
+    if (ImGui::SliderFloat("Scene density", &density, 0.0f, 2.0f, "%.2f")) {
+        scene.density = density;
+    }
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        actions.applySimulationSettings = true;
+    }
+
+    if (ImGui::Checkbox("Buildings", &scene.buildings)) {
+        actions.applySimulationSettings = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Vehicles", &scene.vehicles)) {
+        actions.applySimulationSettings = true;
+    }
+    if (ImGui::Checkbox("Vegetation", &scene.vegetation)) {
+        actions.applySimulationSettings = true;
+    }
+
+    const char* qualityLabels[] = {"Low", "Medium", "High"};
+    int quality = std::clamp(scene.quality, 0, 2);
+    if (ImGui::Combo("Scene quality", &quality, qualityLabels, 3)) {
+        scene.quality = quality;
+        actions.applySimulationSettings = true;
+    }
+
+    if (ImGui::Button("Regenerate scene")) {
+        scene.seed += 1;
+        actions.applySimulationSettings = true;
+    }
+
+    Readout("Objects", "%d", int(simulation.Scene().Objects().size()));
+    Readout("Scene extent", "%.0f m", simulation.Scene().Extent());
+    Hint("Buildings, vehicles and trees are generated deterministically around ground "
+         "zero. The scene reacts to the analytic blast field.");
+}
+
 void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
                  gfx::Renderer& renderer, UiActions& actions) {
     SectionHeader("SIMULATION MODEL");
@@ -627,6 +681,9 @@ UiActions Draw(UiContext& context) {
     }
     if (ImGui::CollapsingHeader("Atmosphere")) {
         DrawAtmosphere(settings, actions);
+    }
+    if (ImGui::CollapsingHeader("Environment")) {
+        DrawEnvironment(settings, context.simulation, actions);
     }
     if (ImGui::CollapsingHeader("Playback")) {
         DrawPlayback(settings, actions, context.simulation);

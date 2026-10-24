@@ -36,6 +36,11 @@ start-up at 0.4 m above the ground**.
   smoke cloud. It only grows; with a fixed voxel count the effective accuracy drops by
   the same factor, keeping the bake cost constant. Can be disabled in the Rendering
   panel for a fixed box.
+- **Procedural environment** – a deterministic town of buildings, vehicles and trees
+  around ground zero. The analytic blast field drives pressure-impulse damage, window
+  and facade charring, rigid-body motion for vehicles/trees and building collapse into
+  pre-fractured chunks; burning objects glow and emit embers. Seed, density and chunk
+  quality are configurable; `--no-scene` disables it.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
@@ -73,11 +78,12 @@ Run the tests:
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`physics` covers the blast model, atmosphere, volume baker, thread pool and a
-settings save/load round-trip. `gpu` creates a Direct3D 11 device (hardware, then
-WARP) and exercises the high-fidelity Euler solver; it is skipped when no device is
-available. The build enables warnings-as-errors by default
-(`-DEXPLOSION_WARNINGS_AS_ERRORS=OFF` disables it).
+`physics` covers the blast model, atmosphere, volume baker, thread pool, procedural
+scene (generation, damage, fire, rigid bodies) and a settings save/load round-trip.
+`gpu` creates a Direct3D 11 device (hardware, then WARP) and exercises the
+high-fidelity Euler solver; it is skipped when no device is available. The build
+enables warnings-as-errors by default (`-DEXPLOSION_WARNINGS_AS_ERRORS=OFF` disables
+it).
 
 ## Run
 
@@ -124,6 +130,9 @@ The application opens a window, arms the 200 g charge and detonates after two se
 --volume-resolution <n>  volume grid: 64, 96, 128, 160, 192, 256, 512 or 1024
 --no-auto-scale       keep a fixed volume box instead of following the cloud
 --no-vsync            disable vertical synchronisation
+--scene-seed <n>      seed for the procedural environment
+--scene-density <x>   environment density multiplier
+--no-scene            disable the procedural environment
 --debug               enable the D3D11 debug layer
 --help                show all options
 ```
@@ -235,6 +244,8 @@ virtual temperature.
 - 128³ (configurable) RGBA32F volume, baked on the worker pool at up to 30 Hz
 - GPU ray marching with jittered sampling, emission/absorption and Henyey-Greenstein
   scattering
+- Opaque procedural scene pass (instanced buildings, vehicles, trees and rubble) before
+  the volumetric pass, so the depth buffer correctly occludes the fireball/smoke
 - Instanced billboard particles with soft depth fade
 - Procedural sky, terrain, scorch marks, blast ring and fireball ground lighting
 - HDR render target, 5-level bloom pyramid, ACES filmic tonemap
@@ -259,6 +270,7 @@ src/app/            window, frame loop, settings persistence
 src/core/           thread pool, RNG, logging
 src/gfx/            D3D11 device, renderer, camera, shaders, image I/O
 src/sim/            blast model, particles, volume baking, simulation
+src/scene/          procedural environment, P-I damage, rigid bodies
 src/ui/             Dear ImGui interface
 tests/              physics, settings and GPU tests
 ```

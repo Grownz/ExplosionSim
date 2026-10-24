@@ -38,6 +38,12 @@ struct LaunchOptions {
     bool solverAutoScaleSet = false;
     long long solverStepCount = 0;
     double solverTime = -1.0;
+    uint32_t sceneSeed = 0;
+    bool sceneSeedSet = false;
+    bool sceneEnabled = true;
+    bool sceneEnabledSet = false;
+    float sceneDensity = 1.0f;
+    bool sceneDensitySet = false;
 };
 
 namespace ex::app {

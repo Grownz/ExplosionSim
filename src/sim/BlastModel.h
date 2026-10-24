@@ -111,6 +111,14 @@ public:
     // -1 while the front has not arrived yet.
     double ArrivalTimeS(double distanceM) const;
 
+    // Free-air arrival time estimated directly from the shock-speed curve
+    // (independent of the recorded history). Used by the procedural scene at
+    // generation time.
+    double EstimateArrivalTimeS(double distanceM) const;
+
+    // Positive-phase impulse of the Friedlander waveform, in Pa*s.
+    double OverpressureImpulsePaS(double distanceM) const;
+
     // Duration of the positive overpressure phase (empirical).
     double PositivePhaseDurationS(double distanceM) const;
 

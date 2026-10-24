@@ -8,6 +8,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Procedural environment: a deterministic town of buildings, vehicles and trees around
+  ground zero, generated from a seed with configurable density and per-type toggles.
+  The analytic blast field drives pressure-impulse damage, window/facade charring,
+  6-DOF rigid-body motion for vehicles and trees, building collapse into pre-fractured
+  chunks, and burning embers/fire particles.
+- Instanced scene renderer with shader-generated building windows, low-poly vehicles and
+  trees, distance haze and a depth-writing opaque pass that correctly occludes the
+  volumetric fireball and smoke.
+- Scene settings (`sceneEnabled`, `sceneSeed`, `sceneDensity`, per-type toggles,
+  `sceneQuality`), UI panel and `--scene-seed` / `--scene-density` / `--no-scene`.
+- Scene tests: generation determinism, damage/collapse/fire behaviour and rigid-body
+  settling.
 - Absorbing sponge over the outer 6 % of the lateral and top solver boundaries. It
   relaxes the state towards ambient so outgoing acoustic waves do not reflect back into
   the plume; the ground remains a reflecting wall.

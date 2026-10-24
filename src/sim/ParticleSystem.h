@@ -44,6 +44,12 @@ public:
     void Detonate(const BlastModel& model);
     void Update(float dt, const BlastModel& model, core::ThreadPool& pool);
 
+    // Spawns a generic debris burst for a damaged scene object (main thread).
+    void SpawnSceneDebris(const DirectX::XMFLOAT3& center, int count, float sizeScale,
+                          float speed);
+    // Spawns a small fire burst for a burning scene object (main thread).
+    void SpawnSceneFire(const DirectX::XMFLOAT3& center, int count, float scale);
+
     const std::vector<ParticleInstance>& AdditiveBatch() const { return additive_; }
     const std::vector<ParticleInstance>& AlphaBatch() const { return alpha_; }
     const std::vector<ParticleInstance>& FireBatch() const { return fire_; }

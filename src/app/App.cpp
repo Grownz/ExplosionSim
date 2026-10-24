@@ -93,6 +93,16 @@ int App::Run(const LaunchOptions& options) {
     if (options_.solverAutoScaleSet) {
         settings_.simulation.solverAutoScale = options_.solverAutoScale;
     }
+    if (options_.sceneSeedSet) {
+        settings_.simulation.scene.seed = options_.sceneSeed;
+    }
+    if (options_.sceneEnabledSet) {
+        settings_.simulation.scene.enabled = options_.sceneEnabled;
+    }
+    if (options_.sceneDensitySet) {
+        settings_.simulation.scene.density =
+            std::clamp(options_.sceneDensity, 0.0f, 4.0f);
+    }
 
     if (!options_.headless && !CreateMainWindow()) {
         return 1;
@@ -262,8 +272,10 @@ void App::FrameCamera() {
             top = solverStats.domainTop;
         }
         const float centerY = top * 0.5f;
-        const float distance = std::max(top, 2.0f * half) * 1.25f *
-                               std::max(0.1f, options_.distanceScale);
+        const float sceneExtent = simulation_.Scene().Extent();
+        const float distance =
+            std::max({top, 2.0f * half, sceneExtent * 1.6f}) * 1.25f *
+            std::max(0.1f, options_.distanceScale);
 
         // Match the wind drift applied to the rendered volume in Renderer::Render
         // so "Frame camera" follows the downwind cloud instead of the origin.
@@ -284,9 +296,11 @@ void App::FrameCamera() {
     const float fireball = float(blast.FireballMaxRadiusM());
     const float cloud = float(simulation_.Blast().State().cloudRadius);
     const float burstHeight = float(charge.heightOfBurstM);
+    const float sceneExtent = simulation_.Scene().Extent();
 
     const float radius =
-        std::max({fireball * 3.2f, cloud * 2.4f, burstHeight * 1.6f, 1.2f});
+        std::max({fireball * 3.2f, cloud * 2.4f, burstHeight * 1.6f,
+                  sceneExtent * 0.8f, 1.2f});
     const float centerY = burstHeight + fireball * 0.6f;
 
     camera_.SetTarget(DirectX::XMFLOAT3(0.0f, centerY, 0.0f), radius * 1.9f);

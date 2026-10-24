@@ -142,6 +142,20 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
     simulation.bakeVolume = ParseBool(values, "bakeVolume", simulation.bakeVolume);
     simulation.autoScaleVolume = ParseBool(values, "autoScaleVolume", simulation.autoScaleVolume);
 
+    simulation.scene.enabled = ParseBool(values, "sceneEnabled", simulation.scene.enabled);
+    simulation.scene.seed = uint32_t(std::clamp(
+        ParseInt(values, "sceneSeed", int(simulation.scene.seed)), 0, 1000000));
+    simulation.scene.density = std::clamp(
+        ParseFloat(values, "sceneDensity", simulation.scene.density), 0.0f, 4.0f);
+    simulation.scene.buildings =
+        ParseBool(values, "sceneBuildings", simulation.scene.buildings);
+    simulation.scene.vehicles =
+        ParseBool(values, "sceneVehicles", simulation.scene.vehicles);
+    simulation.scene.vegetation =
+        ParseBool(values, "sceneVegetation", simulation.scene.vegetation);
+    simulation.scene.quality =
+        std::clamp(ParseInt(values, "sceneQuality", simulation.scene.quality), 0, 2);
+
     auto& render = settings.render;
     render.raymarchSteps = std::clamp(ParseInt(values, "raymarchSteps", render.raymarchSteps), 16, 256);
     render.exposure = std::clamp(ParseFloat(values, "exposure", render.exposure), 0.05f, 8.0f);
@@ -191,6 +205,13 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "volumeResolution=" << simulation.volumeResolution << "\n";
     stream << "bakeVolume=" << (simulation.bakeVolume ? "true" : "false") << "\n";
     stream << "autoScaleVolume=" << (simulation.autoScaleVolume ? "true" : "false") << "\n";
+    stream << "sceneEnabled=" << (simulation.scene.enabled ? "true" : "false") << "\n";
+    stream << "sceneSeed=" << simulation.scene.seed << "\n";
+    stream << "sceneDensity=" << simulation.scene.density << "\n";
+    stream << "sceneBuildings=" << (simulation.scene.buildings ? "true" : "false") << "\n";
+    stream << "sceneVehicles=" << (simulation.scene.vehicles ? "true" : "false") << "\n";
+    stream << "sceneVegetation=" << (simulation.scene.vegetation ? "true" : "false") << "\n";
+    stream << "sceneQuality=" << simulation.scene.quality << "\n";
 
     stream << "[render]\n";
     stream << "raymarchSteps=" << render.raymarchSteps << "\n";

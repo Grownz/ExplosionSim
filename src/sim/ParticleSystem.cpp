@@ -282,6 +282,56 @@ void ParticleSystem::SpawnSparks(const BlastModel& model, int count) {    const 
     }
 }
 
+void ParticleSystem::SpawnSceneDebris(const DirectX::XMFLOAT3& center, int count,
+                                      float sizeScale, float speed) {
+    for (int i = 0; i < count; ++i) {
+        const int slot = AcquireSlot(ParticleKind::Debris);
+        if (slot < 0) {
+            return;
+        }
+        Particle& p = particles_[slot];
+        const XMFLOAT3 direction = rng_.UnitVector();
+        p.position = Add(center, Scale(direction, rng_.Range(0.1f, 0.9f)));
+        p.velocity = Scale(direction, rng_.Range(0.4f, 1.0f) * speed);
+        p.velocity.y += rng_.Range(2.0f, 8.0f);
+        p.size = rng_.Range(0.15f, 0.45f) * std::max(sizeScale, 0.1f);
+        p.life = 0.0f;
+        p.maxLife = rng_.Range(3.0f, 8.0f);
+        p.temperature = rng_.Range(600.0f, 1400.0f);
+        p.opacity = 1.0f;
+        p.growth = 0.0f;
+        p.drag = 0.15f;
+        p.seed = rng_.Float01() * 1000.0f;
+        p.kind = ParticleKind::Debris;
+        p.alive = true;
+    }
+}
+
+void ParticleSystem::SpawnSceneFire(const DirectX::XMFLOAT3& center, int count,
+                                    float scale) {
+    for (int i = 0; i < count; ++i) {
+        const int slot = AcquireSlot(ParticleKind::Fire);
+        if (slot < 0) {
+            return;
+        }
+        Particle& p = particles_[slot];
+        const XMFLOAT3 direction = rng_.UnitVector();
+        p.position = Add(center, Scale(direction, rng_.Range(0.2f, 1.2f) * scale));
+        p.velocity = Scale(direction, rng_.Range(0.5f, 2.0f) * scale);
+        p.velocity.y += rng_.Range(1.5f, 4.0f);
+        p.size = rng_.Range(0.25f, 0.70f) * scale;
+        p.life = 0.0f;
+        p.maxLife = rng_.Range(0.4f, 1.0f);
+        p.temperature = rng_.Range(1600.0f, 2600.0f);
+        p.opacity = 1.0f;
+        p.growth = rng_.Range(0.3f, 0.9f) * scale;
+        p.drag = 1.2f;
+        p.seed = rng_.Float01() * 1000.0f;
+        p.kind = ParticleKind::Fire;
+        p.alive = true;
+    }
+}
+
 void ParticleSystem::UpdateSpawners(float dt, const BlastModel& model) {
     const BlastState& state = model.State();
     const float time = float(state.time);

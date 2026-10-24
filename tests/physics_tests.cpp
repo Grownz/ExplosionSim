@@ -4,6 +4,8 @@
 #include "core/ThreadPool.h"
 #include "app/Settings.h"
 #include "gfx/Shader.h"
+#include "scene/PhysicsWorld.h"
+#include "scene/SceneTypes.h"
 #include "sim/BlastModel.h"
 #include "sim/Simulation.h"
 #include "sim/VolumeBaker.h"
@@ -343,6 +345,135 @@ void TestVolumeBakeDeterminism() {
     CHECK(first == second);
 }
 
+void TestSceneGeneration() {
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 0.2;
+    charge.heightOfBurstM = 0.4;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 42;
+    settings.density = 1.0f;
+
+    ex::scene::Scene first;
+    ex::scene::Scene second;
+    first.Generate(settings, model);
+    second.Generate(settings, model);
+
+    CHECK(!first.Empty());
+    CHECK(first.GenerationHash() == second.GenerationHash());
+    CHECK(first.Objects().size() == second.Objects().size());
+    CHECK(first.Objects().size() <= 800);
+    CHECK(first.Extent() > 0.0f);
+
+    settings.seed = 43;
+    second.Generate(settings, model);
+    CHECK(first.GenerationHash() != second.GenerationHash());
+
+    for (const ex::scene::SceneObject& object : first.Objects()) {
+        CHECK(object.position.y == 0.0f);
+        CHECK(object.distanceToBurst >= 0.0f);
+        CHECK(object.arrivalTime >= 0.0f);
+        CHECK(object.peakOverpressurePa >= 0.0f);
+        CHECK(object.thermalFluenceJm2 >= 0.0f);
+        CHECK(object.meshVariant >= 0);
+    }
+
+    settings.enabled = false;
+    second.Generate(settings, model);
+    CHECK(second.Empty());
+    CHECK(second.GenerationHash() == 0);
+}
+
+void TestPhysicsWorld() {
+    ex::scene::PhysicsWorld world;
+    ex::scene::RigidBody body;
+    body.position = DirectX::XMFLOAT3(0.0f, 10.0f, 0.0f);
+    body.halfExtents = DirectX::XMFLOAT3(0.5f, 0.5f, 0.5f);
+    body.boundingRadius = 0.5f;
+    body.mass = 1.0f;
+    body.invMass = 1.0f;
+    CHECK(world.AddBody(body) == 0);
+
+    for (int i = 0; i < 600; ++i) {
+        world.Step(1.0f / 120.0f);
+    }
+
+    CHECK(world.Bodies().size() == 1);
+    const ex::scene::RigidBody& settled = world.Bodies()[0];
+    CHECK(std::isfinite(settled.position.y));
+    CHECK(settled.position.y >= 0.5f - 1e-3f);
+    CHECK(settled.position.y < 1.0f);
+    CHECK(settled.sleeping);
+}
+
+void TestSceneDamage() {
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 10.0;
+    charge.heightOfBurstM = 0.4;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 7;
+    settings.density = 1.0f;
+    ex::scene::Scene scene;
+    scene.Generate(settings, model);
+    CHECK(!scene.Empty());
+
+    scene.Update(model, 10.0f);
+
+    int damaged = 0;
+    int intact = 0;
+    int collapsed = 0;
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        CHECK(object.resolved);
+        if (object.damage == ex::scene::DamageState::Intact) {
+            ++intact;
+        } else {
+            ++damaged;
+        }
+        if (object.collapsed) {
+            ++collapsed;
+        }
+        if (object.damage == ex::scene::DamageState::Destroyed) {
+            CHECK(object.damageAmount > 0.9f);
+        }
+    }
+
+    CHECK(damaged > 0);
+    CHECK(intact > 0);
+    CHECK(collapsed > 0);
+
+    const std::vector<ex::scene::SceneDebrisSpawn> spawns = scene.ConsumeDebrisSpawns();
+    CHECK(!spawns.empty());
+
+    scene.Update(model, 0.1f);
+    CHECK(scene.ConsumeDebrisSpawns().empty());
+}
+
+void TestSceneFire() {
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 1000.0;
+    charge.heightOfBurstM = 0.4;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 7;
+    settings.density = 1.0f;
+    ex::scene::Scene scene;
+    scene.Generate(settings, model);
+    CHECK(!scene.Empty());
+
+    scene.Update(model, 10.0f);
+    CHECK(!scene.ConsumeFireSpawns().empty());
+}
+
 void TestSettingsRoundTrip() {
     ex::app::AppSettings original{};
     original.simulation.chargeMassKg = 12.5;
@@ -363,6 +494,13 @@ void TestSettingsRoundTrip() {
     original.simulation.volumeResolution = 96;
     original.simulation.bakeVolume = false;
     original.simulation.autoScaleVolume = false;
+    original.simulation.scene.enabled = true;
+    original.simulation.scene.seed = 4242;
+    original.simulation.scene.density = 1.5f;
+    original.simulation.scene.buildings = false;
+    original.simulation.scene.vehicles = true;
+    original.simulation.scene.vegetation = false;
+    original.simulation.scene.quality = 2;
 
     original.render.raymarchSteps = 77;
     original.render.exposure = 1.25f;
@@ -405,6 +543,13 @@ void TestSettingsRoundTrip() {
     CHECK(loaded.simulation.volumeResolution == 96);
     CHECK(!loaded.simulation.bakeVolume);
     CHECK(!loaded.simulation.autoScaleVolume);
+    CHECK(loaded.simulation.scene.enabled);
+    CHECK(loaded.simulation.scene.seed == 4242u);
+    CHECK_NEAR(loaded.simulation.scene.density, 1.5f, 1e-4);
+    CHECK(!loaded.simulation.scene.buildings);
+    CHECK(loaded.simulation.scene.vehicles);
+    CHECK(!loaded.simulation.scene.vegetation);
+    CHECK(loaded.simulation.scene.quality == 2);
 
     CHECK(loaded.render.raymarchSteps == 77);
     CHECK_NEAR(loaded.render.exposure, 1.25f, 1e-4);
@@ -469,6 +614,10 @@ int main() {
     TestVolumeBaker();
     TestVolumeBakerAutoScale();
     TestVolumeBakeDeterminism();
+    TestSceneGeneration();
+    TestSceneDamage();
+    TestSceneFire();
+    TestPhysicsWorld();
     TestSettingsRoundTrip();
     TestFuseAndDetonation();
 

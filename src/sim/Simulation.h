@@ -5,6 +5,7 @@
 #include "sim/BlastModel.h"
 #include "sim/ParticleSystem.h"
 #include "sim/VolumeBaker.h"
+#include "scene/SceneTypes.h"
 
 namespace ex::core {
 class ThreadPool;
@@ -44,6 +45,9 @@ struct SimulationSettings {
     int volumeResolution = 128;
     bool bakeVolume = true;
     bool autoScaleVolume = true;
+
+    // Procedural environment
+    scene::SceneSettings scene{};
 };
 
 class Simulation {
@@ -81,6 +85,7 @@ public:
     const ParticleSystem& Particles() const { return particles_; }
     VolumeBaker& Volume() { return volume_; }
     const VolumeBaker& Volume() const { return volume_; }
+    const scene::Scene& Scene() const { return scene_; }
 
     // Waits until all pending volume work is finished and adopts the result.
     void FinishPendingVolumeWork();
@@ -91,11 +96,13 @@ public:
 private:
     void Detonate();
     void ScheduleVolumeBake(double dtReal);
+    void UpdateScene(double dtSim);
 
     SimulationSettings settings_{};
     BlastModel blast_{};
     ParticleSystem particles_{};
     VolumeBaker volume_{};
+    scene::Scene scene_{};
     core::ThreadPool* pool_ = nullptr;
 
     double realTime_ = 0.0;

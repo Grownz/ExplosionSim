@@ -140,10 +140,14 @@ bool Renderer::Initialize(GfxDevice& device) {
                             device_->DedicatedVideoMemory())) {
         LogWarn("High-fidelity GPU solver unavailable.");
     }
+    if (!sceneRenderer_.Initialize(device_->Device())) {
+        LogWarn("Procedural scene renderer unavailable.");
+    }
     return true;
 }
 
 void Renderer::Shutdown() {
+    sceneRenderer_.Shutdown();
     solver_.Shutdown();
     volumeSRV_.Reset();
     volumeTexture_.Reset();
@@ -1015,6 +1019,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->OMSetDepthStencilState(depthWrite_.Get(), 0);
         context->PSSetShader(groundPS_.Get(), nullptr, 0);
         context->Draw(3, 0);
+    }
+
+    // --- Procedural scene ---------------------------------------------------
+    if (simulation.Settings().scene.enabled && !simulation.Scene().Empty()) {
+        sceneRenderer_.Render(context, simulation.Scene(), hdrRTV, device_->DepthDSV());
     }
 
     // Snapshot the depth buffer so subsequent passes can sample it without a

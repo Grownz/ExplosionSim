@@ -9,6 +9,7 @@
 #include "gfx/Camera.h"
 #include "gfx/GfxDevice.h"
 #include "gfx/GpuEulerSolver.h"
+#include "gfx/SceneRenderer.h"
 #include "sim/Simulation.h"
 
 namespace ex::gfx {
@@ -145,6 +146,7 @@ private:
     bool activeVolumeSplit_ = false;
 
     GpuEulerSolver solver_;
+    SceneRenderer sceneRenderer_;
     uint64_t solverBlastSerial_ = ~uint64_t(0);
     bool solverPrepared_ = false;
     bool solverCapWarned_ = false;

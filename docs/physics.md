@@ -277,7 +277,27 @@ back.
 - The mode is intentionally slow-motion: 24 steps per frame advance a fraction of a
   millisecond of physical time.
 
-## 9. Limitations
+## 9. Procedural environment
+
+The scene is not a structural finite-element model. It reuses the analytic blast field:
+
+- free-air arrival time from the shock-speed curve (`EstimateArrivalTimeS`);
+- Friedlander pressure and its analytic impulse integral (`OverpressureImpulsePaS`);
+- thermal fluence (`ThermalFluenceJm2`).
+
+Damage uses a pressure-impulse criterion per object type (window, masonry, steel and
+vegetation ranges; see `src/scene/Scene.cpp`). Heavy or destroyed buildings collapse into
+pre-fractured chunks; vehicles and trees become 6-DOF rigid bodies. The rigid-body solver
+uses an isotropic inertia approximation, an averaged ground contact point and
+bounding-sphere body-body proxies, so rubble piles are plausible rather than exact.
+Thermal ignition uses material thresholds; burning is visual (ember tint and particles),
+not a combustion simulation.
+
+Limitations: no blast shielding between objects, no soil/structure interaction, no
+progressive structural failure beyond the chunk joints, and the impulse thresholds are
+calibrated for visual plausibility rather than code compliance.
+
+## 10. Limitations
 
 - The shock is integrated from an empirical fit, not solved from the Euler equations.
 - No Richtmyer-Meshkov or Kelvin-Helmholtz instabilities are resolved; turbulence is
