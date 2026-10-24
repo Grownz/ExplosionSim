@@ -27,6 +27,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Default playback no longer loops after the blast; the grid overlay (including the
   metre scale) is enabled by default.
 
+### Changed
+
+- Fireball rendering overhaul: hot filamentary core, cooler soot-rich surface, stronger
+  Planckian emission, longer incandescence, and a growing soot shell.
+- Dust and smoke now form a turbulent envelope and a shock-lifted base surge that
+  progressively obscure the cooling fireball; particles were darkened and enlarged.
+- Default volume resolution raised to 128³ and ray-march steps to 128.
+
 ## [0.1.0] - 2026-10-24
 
 First public version.

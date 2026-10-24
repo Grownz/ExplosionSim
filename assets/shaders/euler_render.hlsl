@@ -47,5 +47,6 @@ void CSRender(uint3 id : SV_DispatchThreadID)
 
     float density = saturate(products * 0.90 + shock * 0.18);
 
-    RenderVolume[id] = float4(density, saturate(visibleTemperature / 12000.0), 0.0, 1.0);
+    RenderVolume[id] = float4(density, saturate(visibleTemperature / 12000.0), 0.0,
+                              saturate(sootDensity * 20.0));
 }

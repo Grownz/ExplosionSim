@@ -26,6 +26,10 @@ start-up at 0.4 m above the ground**.
 - **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
   1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
   pressure waveform.
+- **Fire and smoke** – the fireball emits Planckian blackbody radiation from a hot,
+  filamentary core through a cooler, soot-rich surface. A growing smoke envelope and a
+  shock-lifted dust skirt progressively obscure the cooling fireball, as in real
+  detonations.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
@@ -172,7 +176,7 @@ Implemented effects:
 
 ## Rendering
 
-- 96³ (configurable) RGBA32F volume, baked on the worker pool at up to 30 Hz
+- 128³ (configurable) RGBA32F volume, baked on the worker pool at up to 30 Hz
 - GPU ray marching with jittered sampling, emission/absorption and Henyey-Greenstein
   scattering
 - Instanced billboard particles with soft depth fade

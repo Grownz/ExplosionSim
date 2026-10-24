@@ -14,9 +14,9 @@
 namespace ex::gfx {
 
 struct RenderSettings {
-    int raymarchSteps = 96;
-    float exposure = 0.9f;
-    float bloomStrength = 0.22f;
+    int raymarchSteps = 128;
+    float exposure = 0.8f;
+    float bloomStrength = 0.10f;
     bool enableVolume = true;
     bool enableParticles = true;
     bool enableGround = true;

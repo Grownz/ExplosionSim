@@ -153,7 +153,7 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
     params.shockRadius = float(state.shockRadius);
     params.shockMach = float(state.shockMach);
     params.burstY = float(height);
-    params.extinctionScale = float(1.2 / std::max(fireballRadius, 0.5));
+    params.extinctionScale = float(0.9 / std::max(fireballRadius, 0.5));
     params.voxelSize = voxelSize;
 
     // The cloud emerges from the cooling fireball.
@@ -276,6 +276,8 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                 float density = 0.0f;
                 float temperature = ambient;
                 float dust = 0.0f;
+                float soot = 0.0f;
+                float fireballDistance = 0.0f;
 
                 // --- Fireball ----------------------------------------------
                 if (p.fireballVisible) {
@@ -283,35 +285,81 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                     const float dy = worldY - p.fireballY;
                     const float dz = worldZ - p.fireballZ;
                     const float distanceSq = dx * dx + dy * dy + dz * dz;
+                    fireballDistance = std::sqrt(distanceSq);
 
+                    const float noiseScale = 7.0f / fireballRadius;
                     if (distanceSq < fireballRadiusSq * 2.25f) {
-                        const float distance = std::sqrt(distanceSq);
-                        const float noiseScale = 2.6f / fireballRadius;
 
-                        // Lumpy surface: perturb the effective radius with a
-                        // 3D noise field.
-                        const float lump = ValueNoise(
-                            (worldX + 17.0f) * noiseScale, (worldY - 9.0f) * noiseScale,
-                            (worldZ + 31.0f) * noiseScale);
+                        // Lumpy, filamentary surface.
+                        const float lump =
+                            0.62f * ValueNoise((worldX + 17.0f) * noiseScale,
+                                               (worldY - 9.0f) * noiseScale,
+                                               (worldZ + 31.0f) * noiseScale) +
+                            0.38f * ValueNoise((worldX - 3.0f) * noiseScale * 2.4f,
+                                               (worldY + 11.0f) * noiseScale * 2.4f,
+                                               (worldZ - 19.0f) * noiseScale * 2.4f);
                         const float effectiveRadius =
-                            fireballRadius * (0.80f + 0.42f * lump);
-                        const float q = distance / std::max(effectiveRadius, 0.01f);
-                        const float falloff = 1.0f - SmoothStep(0.55f, 1.18f, q);
+                            fireballRadius * (0.62f + 0.56f * lump);
+                        const float q = fireballDistance / std::max(effectiveRadius, 0.01f);
+                        const float falloff = 1.0f - SmoothStep(0.35f, 1.10f, q);
 
                         if (falloff > 0.001f) {
-                            density += 2.0f * std::pow(falloff, 1.15f);
+                            // High-frequency detail: mottled temperature and
+                            // soot, plus density holes that reveal the hot core.
+                            const float detail = ValueNoise(
+                                (worldX + 3.0f) * noiseScale * 2.2f,
+                                (worldY - 13.0f) * noiseScale * 2.2f,
+                                (worldZ + 29.0f) * noiseScale * 2.2f);
 
-                            // Filamentary temperature structure.
+                            // Flame filaments: dense pockets with cooler gaps.
+                            const float filament = ValueNoise(
+                                (worldX + 41.0f) * noiseScale * 2.1f,
+                                (worldY - 7.0f) * noiseScale * 2.1f,
+                                (worldZ + 13.0f) * noiseScale * 2.1f);
+                            const float flame = 0.60f + 0.85f * filament;
+                            density += 2.4f * std::pow(falloff, 1.15f) * flame *
+                                       (0.55f + 0.90f * detail);
+
+                            // Hot core with a cooler, soot-rich surface.
                             const float heatNoise = ValueNoise(
-                                (worldX - 5.0f) * noiseScale * 1.9f,
-                                (worldY + 23.0f) * noiseScale * 1.9f,
-                                (worldZ + 7.0f) * noiseScale * 1.9f);
+                                (worldX - 5.0f) * noiseScale * 1.7f,
+                                (worldY + 23.0f) * noiseScale * 1.7f,
+                                (worldZ + 7.0f) * noiseScale * 1.7f);
                             const float core =
-                                falloff * (0.65f + 0.70f * heatNoise);
-                            const float hot = (0.22f + 0.62f * core) *
-                                                  (p.fireballTemperature - ambient) +
-                                              ambient;
+                                Saturate(1.0f - 0.9f * q) * (0.70f + 0.55f * heatNoise);
+                            const float hot = ambient +
+                                              (p.fireballTemperature - ambient) *
+                                                  (0.22f + 1.20f * core) *
+                                                  (0.72f + 0.55f * detail);
                             temperature = std::max(temperature, hot);
+
+                            // Soot shell forms as the surface cools; noise
+                            // breaks it into dark, uneven patches.
+                            const float sootRamp = Saturate((p.time - 0.02f) / 0.25f);
+                            const float shell = SmoothStep(0.52f, 0.98f, q);
+                            soot = std::max(soot, shell * sootRamp * (0.45f + 0.75f * detail));
+                        }
+                    }
+
+                    // --- Cooling smoke envelope ---------------------------
+                    // A turbulent smoke shell grows around the fireball and
+                    // progressively hides the glowing surface.
+                    const float smokeRamp = Saturate((p.time - 0.035f) / 0.30f);
+                    if (smokeRamp > 0.01f) {
+                        const float radius = fireballRadius * (1.02f + 0.55f * smokeRamp);
+                        const float q = fireballDistance / std::max(radius, 0.05f);
+                        if (q < 2.0f) {
+                            const float ring = std::exp(-std::pow((q - 0.95f) / 0.42f, 2.0f));
+                            const float inner = std::exp(-std::pow(q / 0.95f, 2.0f));
+                            const float turbulence =
+                                0.55f + 0.85f * ValueNoise(worldX * noiseScale * 0.8f + 5.0f,
+                                                           worldY * noiseScale * 0.8f - 3.0f,
+                                                           worldZ * noiseScale * 0.8f + 9.0f);
+                            const float shell = (ring + 0.85f * inner) * turbulence;
+                            density += 2.20f * shell * smokeRamp;
+                            const float smokeTemperature = ambient;
+                            temperature = std::max(temperature, smokeTemperature);
+                            soot = std::max(soot, 0.95f * shell * smokeRamp);
                         }
                     }
                 }
@@ -360,6 +408,7 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                                                          (0.35f + 0.65f * falloff);
                         temperature = std::max(temperature, hot);
                         dust = std::max(dust, 0.25f * falloff);
+                        soot = std::max(soot, 0.65f * falloff * p.cloudStrength);
                     }
 
                     // --- Stem ----------------------------------------------
@@ -387,8 +436,31 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                                 temperature,
                                 ambient + (p.cloudTemperature - ambient) * 0.55f * falloff * verticalMask);
                             dust = std::max(dust, 0.55f * falloff * verticalMask);
+                            soot = std::max(soot, 0.70f * falloff * verticalMask);
                         }
                     }
+                }
+
+                // --- Base dust surge ---------------------------------------
+                // The shock lifts a thick dust skirt around the fireball. It
+                // rises, grows and increasingly obscures the lower fireball.
+                if (worldY < fireballRadius * 3.0f) {
+                        const float baseRamp = Saturate((p.time - 0.015f) / 0.15f);
+                        if (baseRamp > 0.01f) {
+                            const float radial = Length2D(worldX, worldZ);
+                            const float baseRadius = fireballRadius * 1.9f;
+                            const float ringOffset =
+                                (radial - baseRadius * 0.55f) / (baseRadius * 0.65f);
+                            const float ring = std::exp(-ringOffset * ringOffset);
+                            const float height = std::exp(-worldY /
+                                                          (fireballRadius * 0.80f + 0.25f));
+                            const float turbulence =
+                                0.55f + 0.80f * ValueNoise(worldX * 3.1f + 2.0f,
+                                                           worldY * 3.1f - 5.0f,
+                                                           worldZ * 3.1f + 7.0f);
+                            density += 1.35f * ring * height * turbulence * baseRamp;
+                            dust = std::max(dust, 0.95f * ring * height * baseRamp);
+                        }
                 }
 
                 // --- Ground dust ring (only the part inside the box) ------
@@ -409,13 +481,13 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
                 if (density > 0.002f) {
                     out[0] = density;
                     out[1] = Saturate(temperature / kTemperatureScale);
-                    out[2] = dust;
-                    out[3] = 1.0f;
+                    out[2] = Saturate(dust);
+                    out[3] = Saturate(soot);
                 } else {
                     out[0] = 0.0f;
                     out[1] = 0.0f;
                     out[2] = 0.0f;
-                    out[3] = 1.0f;
+                    out[3] = 0.0f;
                 }
             }
         }

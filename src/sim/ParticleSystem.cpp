@@ -81,7 +81,7 @@ void ParticleSystem::Initialize(int capacity) {
     rangeBegin_[int(ParticleKind::Smoke)] = debris + sparks + fire;
     rangeEnd_[int(ParticleKind::Smoke)] = debris + sparks + fire + smoke;
     rangeBegin_[int(ParticleKind::Dust)] = debris + sparks + fire + smoke;
-    rangeEnd_[int(ParticleKind::Dust)] = capacity;
+    rangeEnd_[int(ParticleKind::Dust)] = rangeBegin_[int(ParticleKind::Dust)] + dust;
 
     additive_.reserve(size_t(capacity));
     alpha_.reserve(size_t(capacity));
@@ -143,7 +143,7 @@ void ParticleSystem::Detonate(const BlastModel& model) {
     SpawnDebris(model, int(float(rangeEnd_[int(ParticleKind::Debris)]) * 0.85f * countScale_));
     SpawnSparks(model, int(float(rangeEnd_[int(ParticleKind::Spark)]) * 0.75f * countScale_));
     SpawnBaseDust(model, int(500.0f * countScale_));
-    SpawnFire(model, int(float(rangeEnd_[int(ParticleKind::Fire)]) * 0.20f * countScale_));
+    SpawnFire(model, int(float(rangeEnd_[int(ParticleKind::Fire)]) * 0.10f * countScale_));
 }
 
 void ParticleSystem::SpawnDebris(const BlastModel& model, int count) {
@@ -315,10 +315,10 @@ void ParticleSystem::UpdateSpawners(float dt, const BlastModel& model) {
         p.velocity.z = std::sin(ringAngle) * rng_.Range(6.0f, 26.0f);
         p.velocity.y = rng_.Range(4.0f, 22.0f) + float(state.cloudRiseSpeed) * 0.35f;
 
-        p.size = rng_.Range(0.8f, 2.6f) * std::min(2.5f, smokeRadiusScale * 0.12f + 1.0f) * sizeScale_ * 0.6f;
+        p.size = rng_.Range(0.8f, 2.6f) * std::min(2.5f, smokeRadiusScale * 0.12f + 1.0f) * sizeScale_ * 0.8f;
         p.life = 0.0f;
         p.maxLife = rng_.Range(7.0f, 16.0f);
-        p.temperature = rng_.Range(700.0f, 1400.0f);
+        p.temperature = rng_.Range(350.0f, 650.0f);
         p.opacity = 0.0f;
         p.growth = rng_.Range(0.6f, 2.4f) * sizeScale_;
         p.drag = 0.0f;
@@ -352,7 +352,7 @@ void ParticleSystem::UpdateSpawners(float dt, const BlastModel& model) {
             p.velocity.z = std::sin(angle) * outward;
             p.velocity.y = rng_.Range(2.0f, 11.0f);
 
-            p.size = rng_.Range(2.5f, 7.0f) * sizeScale_;
+            p.size = rng_.Range(2.5f, 7.0f) * sizeScale_ * 1.2f;
             p.life = 0.0f;
             p.maxLife = rng_.Range(9.0f, 22.0f);
             p.temperature = rng_.Range(300.0f, 420.0f);
@@ -497,7 +497,7 @@ void ParticleSystem::IntegrateRange(int begin, int end, float dt, const Forces& 
 
             const float fadeIn = std::clamp(p.life / 0.6f, 0.0f, 1.0f);
             const float fadeOut = 1.0f - std::clamp((lifeRatio - 0.55f) / 0.45f, 0.0f, 1.0f);
-            p.opacity = 0.42f * fadeIn * fadeOut;
+            p.opacity = 0.65f * fadeIn * fadeOut;
             break;
         }
         case ParticleKind::Dust: {
@@ -520,7 +520,7 @@ void ParticleSystem::IntegrateRange(int begin, int end, float dt, const Forces& 
 
             const float fadeIn = std::clamp(p.life / 1.2f, 0.0f, 1.0f);
             const float fadeOut = 1.0f - std::clamp((lifeRatio - 0.5f) / 0.5f, 0.0f, 1.0f);
-            p.opacity = 0.20f * fadeIn * fadeOut;
+            p.opacity = 0.30f * fadeIn * fadeOut;
             break;
         }
         default:
@@ -560,17 +560,17 @@ void ParticleSystem::BuildBatches() {
         } else if (p.kind == ParticleKind::Fire) {
             instance.color = BlackbodyColor(p.temperature);
             instance.opacity = p.opacity;
-            instance.pad0 = 0.32f;
+            instance.pad0 = 0.25f;
             fire_.push_back(instance);
         } else {
             // Lit albedo; the particle shader applies a cheap directional term.
             const float warmth = std::clamp((p.temperature - ambientTemperature_) / 900.0f, 0.0f, 1.0f);
-            const XMFLOAT3 cool = p.kind == ParticleKind::Smoke ? XMFLOAT3(0.38f, 0.37f, 0.36f)
-                                                                : XMFLOAT3(0.52f, 0.45f, 0.34f);
+            const XMFLOAT3 cool = p.kind == ParticleKind::Smoke ? XMFLOAT3(0.18f, 0.17f, 0.16f)
+                                                                : XMFLOAT3(0.55f, 0.46f, 0.34f);
             const XMFLOAT3 warm = XMFLOAT3(0.85f, 0.42f, 0.16f);
-            instance.color = XMFLOAT3(cool.x + (warm.x - cool.x) * warmth * 0.5f,
-                                      cool.y + (warm.y - cool.y) * warmth * 0.5f,
-                                      cool.z + (warm.z - cool.z) * warmth * 0.5f);
+            instance.color = XMFLOAT3(cool.x + (warm.x - cool.x) * warmth * 0.25f,
+                                      cool.y + (warm.y - cool.y) * warmth * 0.25f,
+                                      cool.z + (warm.z - cool.z) * warmth * 0.25f);
             alpha_.push_back(instance);
         }
     }

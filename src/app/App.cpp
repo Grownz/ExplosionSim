@@ -246,7 +246,7 @@ void App::FrameCamera() {
     if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
         const float half =
             std::clamp(5.0f * float(blast.FireballMaxRadiusM()), 1.0f, 30.0f);
-        camera_.SetTarget(DirectX::XMFLOAT3(0.0f, half * 0.6f, 0.0f), half * 2.0f);
+        camera_.SetTarget(DirectX::XMFLOAT3(0.0f, half * 0.45f, 0.0f), half * 1.3f);
         if (options_.headless) {
             camera_.SetOrientation(options_.azimuth, options_.elevation);
         }

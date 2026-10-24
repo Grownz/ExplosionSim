@@ -39,7 +39,7 @@ struct SimulationSettings {
 
     // Performance
     int particleBudget = 40000;
-    int volumeResolution = 96;
+    int volumeResolution = 128;
     bool bakeVolume = true;
 };
 

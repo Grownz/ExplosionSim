@@ -79,7 +79,7 @@ The volume is drawn before the smoke particles so soot composites over the fireb
 
 ### Volume texture
 
-- 96³ by default (32…160 configurable), `R32G32B32A32_FLOAT`
+- 128³ by default (32…160 configurable), `R32G32B32A32_FLOAT`
 - updated with `UpdateSubresource` when the baker publishes a new version
 - linear clamp sampler, no mipmaps
 - the shader jitters ray start positions to hide slice banding and adds procedural noise
@@ -173,9 +173,9 @@ GPU/driver combination.
 
 ## Performance notes
 
-- Volume resolution dominates CPU cost: 96³ costs roughly 5–15 ms per bake on a modern
-  8-core CPU, 128³ roughly twice that.
-- Ray-march steps dominate GPU cost: 96 steps at 1600×900 is comfortable on a mid-range
+- Volume resolution dominates CPU cost: 128³ costs roughly 10–25 ms per bake on a modern
+  8-core CPU, 96³ roughly half that.
+- Ray-march steps dominate GPU cost: 128 steps at 1600×900 is comfortable on a mid-range
   GPU; 192 steps is intended for stills.
 - Particle count can be reduced in the UI; 40 000 particles is the default and leaves
   plenty of headroom.

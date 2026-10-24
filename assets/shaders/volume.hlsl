@@ -53,22 +53,40 @@ float4 PSVolume(VSOut input) : SV_Target
         if (density > 0.002)
         {
             float temperature = sample.g * 12000.0;
+            float soot = sample.a;
+            float dust = sample.b;
 
             // Billowing structure: modulate the density with a rising 3D noise
-            // field. The frequency adapts to the fireball size so small charges
-            // show the same amount of detail as large ones.
-            float detailScale = 2.0 / max(Misc2.z, 0.25);
-            float structure = Fbm3(position * detailScale + windDrift);
-            density *= lerp(0.30, 1.75, structure);
-            temperature *= lerp(0.80, 1.12, structure);
+            // field. The frequency adapts to the fireball size and the vertical
+            // stretch creates flame-like tongues.
+            float detailScale = 10.0 / max(Misc2.z, 0.25);
+            float3 noisePosition = position * detailScale + windDrift;
+            noisePosition.y *= 0.75;
+            float structure = Fbm3(noisePosition);
+            float fine = ValueNoise3(noisePosition * 3.0 + 11.0);
+            density *= lerp(0.05, 2.40, structure) * (0.60 + 0.70 * fine);
+            temperature *= lerp(0.55, 1.30, structure);
 
-            float heat = smoothstep(600.0, 1500.0, temperature);
+            float heat = smoothstep(550.0, 1250.0, temperature);
             float3 blackbody = BlackbodyRGB(temperature);
-            float coreBoost = 0.65 + 1.7 * smoothstep(2200.0, 3800.0, temperature);
-            float3 emission = blackbody * density * heat * coreBoost * 0.55 * VolumeParams.x;
+            float coreBoost = 0.75 + 0.90 * smoothstep(2400.0, 4300.0, temperature);
+            float3 emission = blackbody * density * heat * coreBoost * 1.10 * VolumeParams.x;
 
-            float3 albedo = lerp(float3(0.26, 0.24, 0.22), float3(0.55, 0.47, 0.36), sample.b);
+            // Cold soot absorbs the fireball light; hot soot glows.
+            float coldSoot = soot * saturate((2400.0 - temperature) / 1500.0);
+            emission *= lerp(1.0, 0.10, coldSoot);
+
+            float3 albedo = lerp(float3(0.05, 0.045, 0.04), float3(0.22, 0.18, 0.13), dust);
             float3 scattering = albedo * density * (sunLight + ambientLight);
+
+            // Fireball light scattered by dust and smoke: warm near the blast,
+            // dark farther out.
+            float3 toFireball = Fireball.xyz - position;
+            float fireDistanceSq = dot(toFireball, toFireball);
+            float fireRadius = max(Misc2.z, 0.2);
+            float fireLight = Fireball.w * 1.8 * fireRadius * fireRadius /
+                              (fireDistanceSq + fireRadius * fireRadius * 1.2);
+            scattering += albedo * density * fireLight * float3(1.0, 0.42, 0.12);
 
             accum += transmittance * (emission + scattering) * stepSize;
             transmittance *= exp(-density * extinctionScale * stepSize);

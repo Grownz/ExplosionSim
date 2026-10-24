@@ -53,7 +53,7 @@ void BlastModel::Configure(const Charge& charge, const Environment& environment)
     // Growth and cooling time scales, fitted to the observed behaviour of
     // nuclear and large conventional fireballs.
     fireballGrowthTau_ = 0.05 * std::pow(kilotons, 0.25) + 0.004;
-    fireballCoolTau_ = std::max(1.2 * std::pow(kilotons, 0.15), 0.30);
+    fireballCoolTau_ = std::max(1.2 * std::pow(kilotons, 0.15), 0.75);
 
     // Thermal energy that remains in the rising cloud (~12 % of the yield).
     const double cloudEnergy = 0.12 * charge_.EnergyJ();

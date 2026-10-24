@@ -97,8 +97,12 @@ conventional charges. The visible surface temperature is held at 3600 K during f
 
 ```
 T(t) = T_amb + (T_surf - T_amb) · exp(-(t - t_f)/τ_c)
-τ_c = max(1.2 · W_kt^0.15, 0.3) s
+τ_c = max(1.2 · W_kt^0.15, 0.75) s
 ```
+
+The volume field uses a hot core (up to ~1.4 × T_surf) and a cooler, soot-rich surface,
+so the blackbody colour ranges from yellow-white in the core to deep orange-red at the
+rim. A soot shell forms as the surface cools and absorbs the emission.
 
 The emitted colour is computed from Planck's law via the Planckian locus approximation
 (Kim et al., 2002), converted to linear sRGB. Emission is integrated along the view ray
@@ -160,10 +164,15 @@ The renderer consumes a 3D field with
 
 - `R` – extinction density,
 - `G` – temperature / 12 000 K,
-- `B` – dust fraction (albedo selector).
+- `B` – dust fraction (albedo selector),
+- `A` – soot fraction (dark, absorbing).
 
-The fireball is a sphere with a noise-perturbed radius and a filamentary temperature
-field; the shock front is a thin shell with the post-shock temperature ratio
+The fireball is a sphere with a noise-perturbed radius, a hot core and a filamentary
+temperature field. A soot shell forms on the cooling surface, and a turbulent smoke
+envelope grows around the fireball and progressively hides it. A thick dust skirt is
+lifted at the base by the shock; it is lit by the fireball and later obscures the lower
+half of the cooling fireball. The shock front is a thin shell with the post-shock
+temperature ratio
 
 ```
 T₂/T₁ = [(2γM² - (γ-1))((γ-1)M² + 2)] / [(γ+1)² M²]

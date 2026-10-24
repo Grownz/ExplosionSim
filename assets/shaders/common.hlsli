@@ -178,7 +178,7 @@ float3 SkyColor(float3 direction)
 
     float sunDot = saturate(dot(direction, SunDirection.xyz));
     color += SunColor.rgb * pow(sunDot, 24.0) * 0.12;
-    color += SunColor.rgb * smoothstep(0.9993, 0.9999, sunDot) * 1.6;
+    color += SunColor.rgb * smoothstep(0.9995, 0.99995, sunDot) * 0.9;
 
     // Thin, high altostratus deck.
     if (height > 0.02)

@@ -85,7 +85,7 @@ float4 PSAdditive(ParticleOutput input) : SV_Target
 
     float falloff = exp(-radiusSquared * 3.2) * (1.0 - radiusSquared);
     float fade = SoftDepthFade(input);
-    float3 color = input.color * falloff * input.opacity * 3.2 * input.intensity;
+    float3 color = input.color * falloff * input.opacity * 2.6 * input.intensity;
     return float4(color * fade, 1.0);
 }
 
