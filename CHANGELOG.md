@@ -71,6 +71,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Rigid bodies were created in Jolt with the raw Z coordinate while the return path
+  mirrored Z, so every body (including detached chunks) was mirrored across the Z axis.
+  Buildings whose chunks detached therefore appeared to vanish from their location. The
+  creation now uses the same mirror conversion; a round-trip test covers it.
 - The orbit camera could be dragged below the ground plane (negative pitch, low target or
   a large zoom-out). The desired target height is clamped to the ground and the pitch is
   limited to the angle at which the orbit position would reach a 0.4 m clearance, both for

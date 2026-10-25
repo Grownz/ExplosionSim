@@ -388,6 +388,22 @@ void TestSceneGeneration() {
     CHECK(second.GenerationHash() == 0);
 }
 
+void TestBodyPositionRoundTrip() {
+    // Regression: the Jolt boundary mirrors Z, so a body must come back at the
+    // same world position it was created at.
+    ex::scene::PhysicsWorld world;
+    ex::scene::RigidBody body;
+    body.position = DirectX::XMFLOAT3(12.0f, 3.0f, -7.0f);
+    body.halfExtents = DirectX::XMFLOAT3(0.5f, 0.5f, 0.5f);
+    body.isStatic = true;
+    CHECK(world.AddBody(body) == 0);
+    world.Step(1.0f / 120.0f);
+    const ex::scene::RigidBody& mirrored = world.Bodies()[0];
+    CHECK_NEAR(mirrored.position.x, 12.0f, 1e-4);
+    CHECK_NEAR(mirrored.position.y, 3.0f, 1e-4);
+    CHECK_NEAR(mirrored.position.z, -7.0f, 1e-4);
+}
+
 void TestPhysicsWorld() {
     ex::scene::PhysicsWorld world;
     ex::scene::RigidBody body;
@@ -963,6 +979,7 @@ int main() {
     RUN(TestSceneDamage);
     RUN(TestSceneFire);
     RUN(TestFrustumCulling);
+    RUN(TestBodyPositionRoundTrip);
     RUN(TestPhysicsWorld);
     RUN(TestFrictionSliding);
     RUN(TestDropNoTilt);

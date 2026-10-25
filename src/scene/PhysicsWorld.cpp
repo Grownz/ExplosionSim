@@ -296,7 +296,7 @@ int PhysicsWorld::AddBody(const RigidBody& body) {
     JPH::RefConst<JPH::Shape> shape =
         new JPH::BoxShape(JPH::Vec3(hx, hy, hz));
     JPH::BodyCreationSettings settings(
-        shape.GetPtr(), JPH::RVec3(copy.position.x, copy.position.y, copy.position.z),
+        shape.GetPtr(), ToJolt(copy.position),
         ToJolt(copy.orientation),
         copy.isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic,
         copy.isStatic ? Layers::NON_MOVING : Layers::MOVING);
