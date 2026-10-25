@@ -439,8 +439,7 @@ void SceneRenderer::BuildMeshes() {
 }
 
 void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
-                                 const scene::Scene& scene,
-                                 const XMFLOAT4X4& viewProj) {
+                                 const scene::Scene& scene, const ViewInfo& view) {
     if (!device_ || !context) {
         return;
     }
@@ -451,7 +450,7 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
     }
 
     const auto& bodies = scene.Physics().Bodies();
-    const BoundingFrustum frustum(XMLoadFloat4x4(&viewProj));
+    const BoundingFrustum frustum(XMLoadFloat4x4(&view.viewProj));
     auto visible = [&frustum](const XMFLOAT3& center, float radius) {
         const BoundingSphere sphere(center, radius);
         return frustum.Contains(sphere) != DISJOINT;
@@ -544,6 +543,12 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
                           chunk.half.z * chunk.half.z) *
                 1.3f;
             if (!visible(chunkCenter, chunkRadius)) {
+                continue;
+            }
+            // Level of detail: drop chunks that cover less than a pixel.
+            const float chunkDistance = XMVectorGetX(
+                XMVector3Length(XMLoadFloat3(&chunkCenter) - XMLoadFloat3(&view.eye)));
+            if (chunkRadius * view.projScale / std::max(chunkDistance, 0.01f) < 1.0f) {
                 continue;
             }
 

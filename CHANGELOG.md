@@ -19,7 +19,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Directional shadow map for the procedural scene (2048x2048, 3x3 PCF). The scene pass is
   split into a depth-only shadow pass and a main pass, and the ground samples the same
   map, so buildings cast long shadows across the terrain.
-- Camera-frustum culling for intact objects and detached chunks.
+- Camera-frustum culling for intact objects and detached chunks, a distance-based fade
+  of the procedural facade and sub-pixel culling of distant rubble chunks.
 - Density scaling beyond the object budget: `scene.density` also packs `ceil(density)`
   smaller objects into each city block.
 - Scene generation and benchmark logs report building/vehicle/tree, chunk and rigid-body

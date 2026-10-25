@@ -100,6 +100,13 @@ float4 PSScene(VSOutput input) : SV_Target
     float3 baseColor = input.Color;
     float sunAmount = saturate(dot(normal, sunDirection));
 
+    float3 toCamera = input.WorldPosition - CameraPosition.xyz;
+    float viewDistance = length(toCamera);
+
+    // Level of detail: fade the procedural facade out with distance so that
+    // far buildings do not shimmer and their pixels stay cheap.
+    float detailFade = 1.0 - saturate((viewDistance - 150.0) / 150.0);
+
     // Procedural facade: windows on the vertical faces, darker roof on top.
     if (input.Params.w < 0.5)
     {
@@ -110,8 +117,8 @@ float4 PSScene(VSOutput input) : SV_Target
             float bayCell = frac(horizontal / 2.6);
             if (floorCell > 0.22 && floorCell < 0.82 && bayCell > 0.18 && bayCell < 0.82)
             {
-                baseColor = float3(0.06, 0.10, 0.16);
-                sunAmount = 0.12;
+                baseColor = lerp(baseColor, float3(0.06, 0.10, 0.16), detailFade);
+                sunAmount = lerp(sunAmount, 0.12, detailFade);
             }
         }
         else if (normal.y > 0.5)
@@ -135,8 +142,6 @@ float4 PSScene(VSOutput input) : SV_Target
     color += float3(1.0, 0.35, 0.08) * burning * ember;
 
     // Distance haze, matching the ground and sky.
-    float3 toCamera = input.WorldPosition - CameraPosition.xyz;
-    float viewDistance = length(toCamera);
     float3 viewDirection = toCamera / max(viewDistance, 1e-4);
     float fog = 1.0 - exp(-max(viewDistance - 40.0, 0.0) * 0.0022);
     color = lerp(color, SkyColor(viewDirection), saturate(fog));

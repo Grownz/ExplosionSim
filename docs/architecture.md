@@ -197,9 +197,10 @@ main thread.
 meshes (box buildings with shader-generated windows, low-poly vehicles and trees). It is
 split into a depth-only shadow pass (2048x2048 directional map, 3x3 PCF, camera-frustum
 culling of casters) and a main pass that runs after the ground, so buildings correctly
-occlude the fireball and smoke and cast shadows on the terrain. A distance haze matches
-the ground and sky. Determinism is preserved by a seeded RNG, fixed physics substeps and
-a generation hash exposed for tests.
+occlude the fireball and smoke and cast shadows on the terrain. Distance-based level of
+detail fades the procedural facade beyond 150 m and drops rubble chunks below one pixel.
+A distance haze matches the ground and sky. Determinism is preserved by a seeded RNG,
+fixed physics substeps and a generation hash exposed for tests.
 
 ### Integration with the application
 

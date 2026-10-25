@@ -1059,9 +1059,12 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     context->PSSetConstantBuffers(2, 1, &shadowBuffer);
 
     // --- Shadow map ---------------------------------------------------------
-    XMFLOAT4X4 viewProj{};
-    XMStoreFloat4x4(&viewProj, camera.ViewProjectionMatrix());
-    sceneRenderer_.RenderShadow(context, simulation.Scene(), viewProj);
+    SceneRenderer::ViewInfo sceneView{};
+    XMStoreFloat4x4(&sceneView.viewProj, camera.ViewProjectionMatrix());
+    sceneView.eye = camera.Position();
+    sceneView.projScale =
+        float(hdr_.height) / (2.0f * std::tan(camera.FovY() * 0.5f));
+    sceneRenderer_.RenderShadow(context, simulation.Scene(), sceneView);
 
     // --- Ground ------------------------------------------------------------
     if (settings.enableGround) {

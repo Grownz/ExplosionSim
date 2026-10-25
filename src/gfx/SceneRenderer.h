@@ -26,10 +26,17 @@ public:
     bool Initialize(ID3D11Device* device);
     void Shutdown();
 
+    // Camera data used for culling and level of detail.
+    struct ViewInfo {
+        DirectX::XMFLOAT4X4 viewProj{};
+        DirectX::XMFLOAT3 eye{};
+        float projScale = 1.0f; // pixels per world unit at one metre
+    };
+
     // Renders the scene into the directional shadow map and clears it when the
     // scene is disabled. Must run before the ground pass.
     void RenderShadow(ID3D11DeviceContext* context, const scene::Scene& scene,
-                      const DirectX::XMFLOAT4X4& viewProj);
+                      const ViewInfo& view);
 
     // Main opaque scene pass. Must run after the ground pass and before the
     // depth snapshot / volumetric pass.
