@@ -70,6 +70,142 @@ void AddBox(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
     }
 }
 
+XMFLOAT3 Normalize3(const XMFLOAT3& v) {
+    const float length = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+    if (length < 1e-6f) {
+        return XMFLOAT3(0.0f, 1.0f, 0.0f);
+    }
+    return XMFLOAT3(v.x / length, v.y / length, v.z / length);
+}
+
+// Emits a quad with the winding flipped if needed so the geometric normal points
+// along `normal`.
+void AddQuadOriented(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
+                     const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c,
+                     const XMFLOAT3& d, const XMFLOAT3& normal, const XMFLOAT3& color) {
+    auto emit = [&](const XMFLOAT3& p0, const XMFLOAT3& p1, const XMFLOAT3& p2) {
+        const XMFLOAT3 e1(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
+        const XMFLOAT3 e2(p2.x - p0.x, p2.y - p0.y, p2.z - p0.z);
+        const XMFLOAT3 geometric(e1.y * e2.z - e1.z * e2.y,
+                                 e1.z * e2.x - e1.x * e2.z,
+                                 e1.x * e2.y - e1.y * e2.x);
+        if (geometric.x * normal.x + geometric.y * normal.y + geometric.z * normal.z <
+            0.0f) {
+            AddTriangle(vertices, indices, p0, p2, p1, normal, color);
+        } else {
+            AddTriangle(vertices, indices, p0, p1, p2, normal, color);
+        }
+    };
+    emit(a, b, c);
+    emit(a, c, d);
+}
+
+// Emits a triangle with the winding flipped if needed so the geometric normal
+// points along `normal`.
+void AddTriangleOriented(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
+                         const XMFLOAT3& a, const XMFLOAT3& b, const XMFLOAT3& c,
+                         const XMFLOAT3& normal, const XMFLOAT3& color) {
+    const XMFLOAT3 e1(b.x - a.x, b.y - a.y, b.z - a.z);
+    const XMFLOAT3 e2(c.x - a.x, c.y - a.y, c.z - a.z);
+    const XMFLOAT3 geometric(e1.y * e2.z - e1.z * e2.y,
+                             e1.z * e2.x - e1.x * e2.z,
+                             e1.x * e2.y - e1.y * e2.x);
+    if (geometric.x * normal.x + geometric.y * normal.y + geometric.z * normal.z < 0.0f) {
+        AddTriangle(vertices, indices, a, c, b, normal, color);
+    } else {
+        AddTriangle(vertices, indices, a, b, c, normal, color);
+    }
+}
+
+// Box with chamfered edges and corners. The physics body stays a box; the bevel
+// removes the hard right angles from the rubble silhouette.
+void AddBeveledBox(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
+                   const XMFLOAT3& half, float bevel, const XMFLOAT3& color) {
+    const float b = std::min({bevel, half.x * 0.35f, half.y * 0.35f, half.z * 0.35f});
+    const float hx = half.x;
+    const float hy = half.y;
+    const float hz = half.z;
+
+    // Vertex on the `axis` face at the corner (sx, sy, sz); the two tangent
+    // coordinates are inset by the bevel.
+    auto vertex = [&](int axis, float sx, float sy, float sz) {
+        return XMFLOAT3(sx * (axis == 0 ? hx : hx - b),
+                        sy * (axis == 1 ? hy : hy - b),
+                        sz * (axis == 2 ? hz : hz - b));
+    };
+
+    struct FaceCorners {
+        int axis;
+        float signs[4][3];
+        XMFLOAT3 normal;
+    };
+    const FaceCorners faces[6] = {
+        {0, {{1, -1, -1}, {1, -1, 1}, {1, 1, 1}, {1, 1, -1}}, {1, 0, 0}},
+        {0, {{-1, -1, 1}, {-1, -1, -1}, {-1, 1, -1}, {-1, 1, 1}}, {-1, 0, 0}},
+        {1, {{-1, 1, -1}, {1, 1, -1}, {1, 1, 1}, {-1, 1, 1}}, {0, 1, 0}},
+        {1, {{-1, -1, 1}, {1, -1, 1}, {1, -1, -1}, {-1, -1, -1}}, {0, -1, 0}},
+        {2, {{-1, -1, 1}, {-1, 1, 1}, {1, 1, 1}, {1, -1, 1}}, {0, 0, 1}},
+        {2, {{1, -1, -1}, {1, 1, -1}, {-1, 1, -1}, {-1, -1, -1}}, {0, 0, -1}},
+    };
+
+    for (const FaceCorners& face : faces) {
+        XMFLOAT3 corners[4];
+        for (int i = 0; i < 4; ++i) {
+            corners[i] = vertex(face.axis, face.signs[i][0], face.signs[i][1],
+                                face.signs[i][2]);
+        }
+        AddQuadOriented(vertices, indices, corners[0], corners[1], corners[2],
+                        corners[3], face.normal, color);
+    }
+
+    // Edge chamfers: 12 quads.
+    for (int s0 = -1; s0 <= 1; s0 += 2) {
+        for (int s1 = -1; s1 <= 1; s1 += 2) {
+            // Along Z: X face and Y face.
+            {
+                const XMFLOAT3 a = vertex(0, float(s0), float(s1), -1.0f);
+                const XMFLOAT3 b2 = vertex(0, float(s0), float(s1), 1.0f);
+                const XMFLOAT3 c = vertex(1, float(s0), float(s1), 1.0f);
+                const XMFLOAT3 d = vertex(1, float(s0), float(s1), -1.0f);
+                AddQuadOriented(vertices, indices, a, b2, c, d,
+                                Normalize3(XMFLOAT3(float(s0), float(s1), 0.0f)), color);
+            }
+            // Along Y: X face and Z face.
+            {
+                const XMFLOAT3 a = vertex(0, float(s0), -1.0f, float(s1));
+                const XMFLOAT3 b2 = vertex(0, float(s0), 1.0f, float(s1));
+                const XMFLOAT3 c = vertex(2, float(s0), 1.0f, float(s1));
+                const XMFLOAT3 d = vertex(2, float(s0), -1.0f, float(s1));
+                AddQuadOriented(vertices, indices, a, b2, c, d,
+                                Normalize3(XMFLOAT3(float(s0), 0.0f, float(s1))), color);
+            }
+            // Along X: Y face and Z face.
+            {
+                const XMFLOAT3 a = vertex(1, -1.0f, float(s0), float(s1));
+                const XMFLOAT3 b2 = vertex(1, 1.0f, float(s0), float(s1));
+                const XMFLOAT3 c = vertex(2, 1.0f, float(s0), float(s1));
+                const XMFLOAT3 d = vertex(2, -1.0f, float(s0), float(s1));
+                AddQuadOriented(vertices, indices, a, b2, c, d,
+                                Normalize3(XMFLOAT3(0.0f, float(s0), float(s1))), color);
+            }
+        }
+    }
+
+    // Corner triangles: 8.
+    for (int sx = -1; sx <= 1; sx += 2) {
+        for (int sy = -1; sy <= 1; sy += 2) {
+            for (int sz = -1; sz <= 1; sz += 2) {
+                const XMFLOAT3 a = vertex(0, float(sx), float(sy), float(sz));
+                const XMFLOAT3 b2 = vertex(1, float(sx), float(sy), float(sz));
+                const XMFLOAT3 c = vertex(2, float(sx), float(sy), float(sz));
+                const XMFLOAT3 normal =
+                    Normalize3(XMFLOAT3(float(sx), float(sy), float(sz)));
+                AddTriangleOriented(vertices, indices, a, b2, c, normal, color);
+            }
+        }
+    }
+}
+
 void AddCone(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
              const XMFLOAT3& baseCenter, float radius, float height,
              const XMFLOAT3& color, int segments = 7) {
@@ -445,12 +581,11 @@ void SceneRenderer::BuildMeshes() {
         CreateMesh(vertices, indices, meshes_[6]);
     }
 
-    // 7: unit box centred at the origin, used for building chunks.
+    // 7: chamfered unit box, used for building chunks.
     {
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
-        AddBox(vertices, indices, XMFLOAT3(0.0f, 0.0f, 0.0f),
-               XMFLOAT3(0.5f, 0.5f, 0.5f), white);
+        AddBeveledBox(vertices, indices, XMFLOAT3(0.5f, 0.5f, 0.5f), 0.10f, white);
         CreateMesh(vertices, indices, meshes_[7]);
     }
 
@@ -562,6 +697,11 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         instance.color = color;
         instance.params = XMFLOAT4(object.damageAmount, sway, object.swayPhase, type);
         instance.state = XMFLOAT4(object.burning ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        // Building space for the facade (buildings are axis-aligned).
+        instance.textureOrigin =
+            XMFLOAT4(object.position.x, 0.0f, object.position.z, 0.0f);
+        instance.textureScale =
+            XMFLOAT4(object.size.x, object.size.y, object.size.z, 0.0f);
         meshes_[meshIndex].instances.push_back(instance);
     }
 
@@ -607,8 +747,16 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             }
             XMStoreFloat4x4(&instance.transform, world);
             instance.color = chunk.color;
-            instance.params = XMFLOAT4(1.0f, 0.0f, 0.0f, 3.0f);
+            // The damage overlay is deliberately partial so the facade stays
+            // readable on the rubble.
+            instance.params =
+                XMFLOAT4(object.damageAmount * 0.7f, 0.0f, 0.0f, 3.0f);
             instance.state = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+            // Map the chunk mesh back to the original building space.
+            instance.textureOrigin =
+                XMFLOAT4(chunk.center.x, chunk.center.y, chunk.center.z, 0.0f);
+            instance.textureScale = XMFLOAT4(chunk.half.x * 2.0f, chunk.half.y * 2.0f,
+                                             chunk.half.z * 2.0f, 0.0f);
             meshes_[7].instances.push_back(instance);
         }
     }

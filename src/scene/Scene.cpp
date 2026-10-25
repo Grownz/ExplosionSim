@@ -200,35 +200,45 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
 
         if (type == SceneObjectType::Building) {
             const int quality = std::clamp(settings_.quality, 0, 2);
-            const int nx = quality >= 2 ? 3 : (quality >= 1 ? 2 : 1);
-            const int ny = quality >= 2 ? 4 : (quality >= 1 ? 3 : 2);
+            const int nx = quality >= 2 ? 3 : (quality >= 1 ? 3 : 2);
+            const int ny = quality >= 2 ? 5 : (quality >= 1 ? 4 : 3);
             const int nz = nx;
             const float sx = size.x / float(nx);
             const float sy = size.y / float(ny);
             const float sz = size.z / float(nz);
 
             // Jittered split planes give non-uniform chunks without changing the
-            // grid topology or the OBB physics.
+            // grid topology or the OBB physics. The jitter is clamped so no chunk
+            // becomes thinner than a quarter cell.
             std::vector<float> splitX(nx + 1);
             std::vector<float> splitY(ny + 1);
             std::vector<float> splitZ(nz + 1);
-            for (int i = 0; i <= nx; ++i) {
+            const float minX = 0.28f * sx;
+            const float minY = 0.28f * sy;
+            const float minZ = 0.28f * sz;
+            splitX[0] = x - size.x * 0.5f;
+            splitX[nx] = x + size.x * 0.5f;
+            for (int i = 1; i < nx; ++i) {
                 const float base = x - size.x * 0.5f + size.x * float(i) / float(nx);
-                const float jitter =
-                    (i > 0 && i < nx) ? rng.Range(-0.16f, 0.16f) * sx : 0.0f;
-                splitX[i] = base + jitter;
+                const float jitter = rng.Range(-0.28f, 0.28f) * sx;
+                splitX[i] = std::clamp(base + jitter, splitX[i - 1] + minX,
+                                       splitX[nx] - minX * float(nx - i));
             }
-            for (int i = 0; i <= ny; ++i) {
+            splitY[0] = 0.0f;
+            splitY[ny] = size.y;
+            for (int i = 1; i < ny; ++i) {
                 const float base = size.y * float(i) / float(ny);
-                const float jitter =
-                    (i > 0 && i < ny) ? rng.Range(-0.16f, 0.16f) * sy : 0.0f;
-                splitY[i] = base + jitter;
+                const float jitter = rng.Range(-0.28f, 0.28f) * sy;
+                splitY[i] = std::clamp(base + jitter, splitY[i - 1] + minY,
+                                       splitY[ny] - minY * float(ny - i));
             }
-            for (int i = 0; i <= nz; ++i) {
+            splitZ[0] = z - size.z * 0.5f;
+            splitZ[nz] = z + size.z * 0.5f;
+            for (int i = 1; i < nz; ++i) {
                 const float base = z - size.z * 0.5f + size.z * float(i) / float(nz);
-                const float jitter =
-                    (i > 0 && i < nz) ? rng.Range(-0.16f, 0.16f) * sz : 0.0f;
-                splitZ[i] = base + jitter;
+                const float jitter = rng.Range(-0.28f, 0.28f) * sz;
+                splitZ[i] = std::clamp(base + jitter, splitZ[i - 1] + minZ,
+                                       splitZ[nz] - minZ * float(nz - i));
             }
 
             for (int ix = 0; ix < nx; ++ix) {
@@ -245,9 +255,8 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                             (splitZ[iz + 1] - splitZ[iz]) * 0.5f);
                         const float shade = rng.Range(0.90f, 1.04f);
                         chunk.color = DirectX::XMFLOAT4(
-                            object.color.x * 0.82f * shade,
-                            object.color.y * 0.80f * shade,
-                            object.color.z * 0.78f * shade, 1.0f);
+                            object.color.x * shade, object.color.y * shade,
+                            object.color.z * shade, 1.0f);
                         chunk.gridY = iy;
                         object.chunks.push_back(chunk);
                     }
@@ -743,11 +752,17 @@ std::vector<uint8_t> Scene::ComputeSupport(const SceneObject& object) const {
         const int current = queue.front();
         queue.pop();
         const SceneChunk& chunk = object.chunks[current];
+        if (chunk.neighborBroken.size() != chunk.neighbors.size()) {
+            continue;
+        }
         for (size_t n = 0; n < chunk.neighbors.size(); ++n) {
-            if (chunk.neighborBroken[n]) {
+            if (n < chunk.neighborBroken.size() && chunk.neighborBroken[n]) {
                 continue;
             }
             const int next = chunk.neighbors[n];
+            if (next < 0 || next >= count) {
+                continue;
+            }
             if (supported[next] || object.chunks[next].detached) {
                 continue;
             }

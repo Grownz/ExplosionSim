@@ -19,8 +19,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   falling debris piles up against them. Detached chunks reuse the same body and are
   switched to dynamic, and a contact impulse above 500 N s damages the struck chunk's
   joints, which can start a local cascade.
-- Jittered chunk split planes (+-16 % per axis) give non-uniform rubble without changing
-  the grid topology or the OBB physics.
+- Finer, irregular chunking: the default grid is now 2x3x2, `scene.quality = 1` uses
+  3x4x3 and `quality = 2` 3x5x3, the split planes jitter by +-28 % per axis with a
+  minimum chunk width of 0.28 cell, and the chunk mesh is a chamfered box (bevel 0.10 of
+  the half extent). Rubble loses most of its right angles while the physics body stays an
+  OBB.
+- Building chunks keep the facade of the part they broke off from: every chunk instance
+  carries a texture origin and scale that maps its mesh-local position back to the
+  original building space, and blast damage is drawn as a procedural char and crack
+  overlay on top of the intact facade instead of a flat recolour.
+- High-fidelity mode follows the playback time-scale slider: the configured
+  `solverStepsPerFrame` is the budget at the default 0.06 and is scaled by
+  `timeScale / 0.06` (clamped to 1..96 steps), so slower playback resolves the same
+  simulated interval with fewer, faster steps and faster playback with more.
 - Blast shielding with nine rays per receiver: each ray accumulates the optical depth of
   every building it crosses (`exp(-depth / 3 m)`), a diffraction floor keeps shadowed
   receivers from going to zero, and an optional `sceneGroundReflection` setting adds a
@@ -47,6 +58,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `ParticleSystem::Reset` stored the absolute range start in the per-species cursor,
+  but `AcquireSlot` treats the cursor as an offset inside the range. Every detonation
+  therefore indexed past the species range and corrupted the heap, which showed up as
+  intermittent crashes of the test suite and the application. The cursor is now reset to
+  zero.
 - Scene culling used `DirectX::BoundingFrustum` with the combined view-projection matrix,
   but that type expects a pure projection matrix. Objects and rubble disappeared at most
   camera angles. The six planes are now extracted directly from the view-projection

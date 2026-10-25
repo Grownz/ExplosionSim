@@ -819,29 +819,36 @@ void TestProgressiveCollapse() {
 }
 
 int main() {
-    TestChargeScaling();
-    TestAtmosphere();
-    TestAltitudeScaling();
-    TestOverpressureFit();
-    TestBrodeCrossover();
-    TestBlastEvolution();
-    TestSmallChargeScaling();
-    TestThreadPool();
-    TestVolumeBaker();
-    TestVolumeBakerAutoScale();
-    TestVolumeBakeDeterminism();
-    TestSceneGeneration();
-    TestSceneDamage();
-    TestSceneFire();
-    TestFrustumCulling();
-    TestPhysicsWorld();
-    TestFrictionSliding();
-    TestDropNoTilt();
-    TestBroadphaseManyBodies();
-    TestStackSettles();
-    TestProgressiveCollapse();
-    TestSettingsRoundTrip();
-    TestFuseAndDetonation();
+    setvbuf(stdout, nullptr, _IONBF, 0);
+#define RUN(test)                    \
+    do {                             \
+        std::printf("[test] %s\n", #test); \
+        test();                      \
+    } while (0)
+    RUN(TestChargeScaling);
+    RUN(TestAtmosphere);
+    RUN(TestAltitudeScaling);
+    RUN(TestOverpressureFit);
+    RUN(TestBrodeCrossover);
+    RUN(TestBlastEvolution);
+    RUN(TestSmallChargeScaling);
+    RUN(TestThreadPool);
+    RUN(TestVolumeBaker);
+    RUN(TestVolumeBakerAutoScale);
+    RUN(TestVolumeBakeDeterminism);
+    RUN(TestSceneGeneration);
+    RUN(TestSceneDamage);
+    RUN(TestSceneFire);
+    RUN(TestFrustumCulling);
+    RUN(TestPhysicsWorld);
+    RUN(TestFrictionSliding);
+    RUN(TestDropNoTilt);
+    RUN(TestBroadphaseManyBodies);
+    RUN(TestStackSettles);
+    RUN(TestProgressiveCollapse);
+    RUN(TestSettingsRoundTrip);
+    RUN(TestFuseAndDetonation);
+#undef RUN
 
     if (g_failures == 0) {
         std::printf("All physics tests passed.\n");

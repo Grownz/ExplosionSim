@@ -6,6 +6,8 @@ struct SceneInstance
     float4 Color;
     float4 Params; // x = damage, y = sway amplitude, z = phase, w = type (0 building, 1 vehicle, 2 tree, 3 rubble)
     float4 State;  // x = burning
+    float4 TextureOrigin;
+    float4 TextureScale;
 };
 
 StructuredBuffer<SceneInstance> Instances : register(t0);
@@ -43,6 +45,9 @@ struct VSOutput
     float3 Color : TEXCOORD2;
     float4 Params : TEXCOORD3;
     float4 State : TEXCOORD4;
+    float3 LocalPosition : TEXCOORD5;
+    float4 TextureOrigin : TEXCOORD6;
+    float4 TextureScale : TEXCOORD7;
 };
 
 float3 ApplySway(float3 local, SceneInstance instance)
@@ -69,6 +74,9 @@ VSOutput VSScene(VSInput input, uint instanceID : SV_InstanceID)
     output.Color = input.Color * instance.Color.rgb;
     output.Params = instance.Params;
     output.State = instance.State;
+    output.LocalPosition = input.Position;
+    output.TextureOrigin = instance.TextureOrigin;
+    output.TextureScale = instance.TextureScale;
     return output;
 }
 
@@ -141,13 +149,18 @@ float4 PSScene(VSOutput input) : SV_Target
     // far buildings do not shimmer and their pixels stay cheap.
     float detailFade = 1.0 - saturate((viewDistance - 150.0) / 150.0);
 
+    // The mesh-local position maps back to the original building space, so
+    // rubble keeps the facade of the part it broke off from.
+    const float3 facadePos = input.TextureOrigin.xyz + input.LocalPosition * input.TextureScale.xyz;
+
     // Procedural facade: windows on the vertical faces, darker roof on top.
-    if (input.Params.w < 0.5)
+    // Buildings (0) and rubble (3) share it; vehicles and trees do not.
+    if (input.Params.w < 0.5 || input.Params.w > 2.5)
     {
         if (abs(normal.y) < 0.5)
         {
-            float horizontal = abs(normal.x) > 0.5 ? input.WorldPosition.z : input.WorldPosition.x;
-            float floorCell = frac(input.WorldPosition.y / 3.2);
+            float horizontal = abs(normal.x) > 0.5 ? facadePos.z : facadePos.x;
+            float floorCell = frac(facadePos.y / 3.2);
             float bayCell = frac(horizontal / 2.6);
             if (floorCell > 0.22 && floorCell < 0.82 && bayCell > 0.18 && bayCell < 0.82)
             {
@@ -163,9 +176,18 @@ float4 PSScene(VSOutput input) : SV_Target
 
     sunAmount *= SampleShadow(input.WorldPosition, normal);
 
-    // Blast damage: darken and char.
+    // Blast damage is an overlay: irregular char and cracks over the intact
+    // facade, never a flat recolour.
     float damage = saturate(input.Params.x);
-    baseColor = lerp(baseColor, float3(0.07, 0.065, 0.06), damage * 0.75);
+    if (damage > 0.01)
+    {
+        const float crackNoise = Fbm3(float3(facadePos.x * 0.55, facadePos.y * 0.35,
+                                             facadePos.z * 0.55));
+        const float crackMask = smoothstep(0.42, 0.60, crackNoise);
+        const float soot = Fbm3(facadePos * 0.12 + float3(3.1, 1.7, 5.3));
+        const float charAmount = damage * (0.22 + 0.45 * crackMask + 0.20 * soot);
+        baseColor = lerp(baseColor, float3(0.055, 0.05, 0.045), saturate(charAmount));
+    }
 
     float3 ambient = float3(0.16, 0.17, 0.20);
     float3 color = baseColor * (SunColor.rgb * sunAmount * 1.15 + ambient);

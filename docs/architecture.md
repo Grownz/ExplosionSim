@@ -185,8 +185,10 @@ generation, plus the number of buildings that block the line of sight to ground 
 
 At the arrival time a pressure-impulse criterion sets the damage state
 (intact/light/heavy/destroyed). Heavy or destroyed buildings are split into pre-fractured
-chunks along jittered planes (2x3x2 by default; `scene.quality` changes the grid), so no
-two neighbours share the same dimensions. Vehicles and trees become 6-DOF rigid bodies,
+chunks along jittered planes (2x3x2 by default, 3x4x3 at `scene.quality = 1` and 3x5x3 at
+`quality = 2`), so no two neighbours share the same dimensions. The split planes move by
+up to +-28 % of a cell but never closer than 0.28 cell to their neighbour, which keeps
+every chunk usable as an OBB while removing most of the grid's right angles. Vehicles and trees become 6-DOF rigid bodies,
 and burning objects emit fire particles.
 
 Collapse is progressive. Each chunk edge carries a joint; the blast load sets a failure
@@ -209,7 +211,11 @@ depth of every building the ray crosses (`exp(-depth/3 m)`), applies a diffracti
 around the nearest occluder and, optionally, a ground-reflection factor near the surface.
 
 `SceneRenderer` draws the intact objects and active chunks as instanced procedural
-meshes (box buildings with shader-generated windows, low-poly vehicles and trees). It is
+meshes (box buildings with shader-generated windows, low-poly vehicles and trees). Chunks
+use a chamfered box mesh and carry a per-instance texture origin and scale; the shader
+maps the mesh-local position back into the original building space, so each fragment
+keeps the facade it broke off from. Blast damage is a procedural char and crack overlay
+on that facade rather than a flat recolour. The renderer is
 split into a depth-only shadow pass and a main pass that runs after the ground. The shadow
 pass renders three cascades (2048/1024/1024) with slope-scaled normal offset and 5x5 PCF;
 the far cascade draws only the large silhouettes. Trees switch to a single-cone mesh
@@ -222,7 +228,11 @@ generation hash exposed for tests.
 - The `Renderer` owns the solver and detects a new detonation through
   `Simulation::BlastSerial()`.
 - While the charge is armed no solver work is done; after detonation the solver is
-  initialised and advanced by `solverStepsPerFrame` steps per rendered frame.
+  initialised and advanced once per rendered frame. `solverStepsPerFrame` is the budget
+  at the default playback scale of 0.06; the actual step count is
+  `round(solverStepsPerFrame * timeScale / 0.06)`, clamped to 1..96. The playback
+  slider therefore speeds up or slows down the numerical solution without touching the
+  CFL time step.
 - The reduced-order model still advances, but its time is driven by the solver's
   simulated advance (`Simulation::AdvanceExternal`), so the camera, fireball light and
   readouts stay in sync.

@@ -104,7 +104,9 @@ void ParticleSystem::Reset() {
     dustSpawnAccumulator_ = 0.0f;
     for (int i = 0; i < int(ParticleKind::Count); ++i) {
         aliveByKind_[i] = 0;
-        cursor_[i] = rangeBegin_[i];
+        // The cursor is an offset inside the species range, not an absolute
+        // index (AcquireSlot adds rangeBegin_ itself).
+        cursor_[i] = 0;
     }
     rng_.Seed(0xC0FFEEull);
     detonationTime_ = 0.0f;

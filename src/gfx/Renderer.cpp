@@ -930,7 +930,17 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
             if (solver_.HasVolume()) {
                 if (!solverPrepared_ && !solverPaused_) {
                     MaybeExpandSolver(simulation);
-                    solver_.Step(std::clamp(simulation.Settings().solverStepsPerFrame, 1, 96));
+                    // The playback time scale drives the number of solver steps:
+                    // 0.06 (the default) keeps the configured step budget, slower
+                    // settings take fewer steps, faster ones more (up to the cap).
+                    const double referenceScale = 0.06;
+                    const double ratio = std::clamp(
+                        simulation.Settings().timeScale / referenceScale, 0.05, 8.0);
+                    const int baseSteps =
+                        std::clamp(simulation.Settings().solverStepsPerFrame, 1, 96);
+                    const int steps =
+                        std::clamp(int(std::lround(double(baseSteps) * ratio)), 1, 96);
+                    solver_.Step(steps);
                 }
                 solverVolume = solver_.VolumeSRV();
             }

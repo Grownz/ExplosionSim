@@ -548,6 +548,8 @@ int App::RunHeadless() {
         LogInfo("Particles: %d, volume bake %.2f ms at %d^3, workers %d",
                 simulation_.Particles().AliveCount(), simulation_.Volume().LastBakeMilliseconds(),
                 simulation_.Volume().Resolution(), int(pool_->WorkerCount()));
+        LogInfo("Simulation time after benchmark: %.3f s (solver %.4f s)",
+                simulation_.Time(), renderer_.Solver().time);
         const scene::SceneStats sceneStats = simulation_.Scene().Stats();
         LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %d rigid bodies "
                 "(%d static structure)",

@@ -287,7 +287,10 @@ The scene is not a structural finite-element model. It reuses the analytic blast
 
 Damage uses a pressure-impulse criterion per object type (window, masonry, steel and
 vegetation ranges; see `src/scene/Scene.cpp`). Heavy or destroyed buildings split into
-pre-fractured chunks along jittered planes; vehicles and trees become 6-DOF rigid bodies.
+pre-fractured chunks along jittered planes (2x3x2 by default, 3x4x3/3x5x3 at higher
+`scene.quality`); the planes jitter by up to +-28 % of a cell and keep a minimum width of
+0.28 cell, so the rubble is irregular but every chunk stays a valid OBB. Vehicles and
+trees become 6-DOF rigid bodies.
 The rigid-body solver uses the analytic box inertia tensor, an averaged ground contact
 point and true oriented-box contacts: a 15-axis saturating-axis test (three face axes per
 box plus nine edge-edge cross products) selects the minimum-overlap axis, and the incident

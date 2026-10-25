@@ -61,6 +61,10 @@ private:
         DirectX::XMFLOAT4 color;
         DirectX::XMFLOAT4 params;
         DirectX::XMFLOAT4 state;
+        // Maps the mesh-local position back to the original building space so
+        // rubble keeps the facade of the part it broke off from.
+        DirectX::XMFLOAT4 textureOrigin;
+        DirectX::XMFLOAT4 textureScale;
     };
 
     struct Mesh {
