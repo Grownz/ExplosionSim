@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- High-fidelity mode now forms a mushroom cap instead of a narrow rising column. The
+  auto-scale follows the measured plume (78 % trigger, 12 % margin) instead of expanding
+  to the analytic cloud at 70 %, keeping the grid fine while the cap forms. A sub-grid
+  drag and toroidal vortex-ring force around the analytic cloud radius spin the plume
+  into a cap; the render uses a separate low soot threshold for the diluted smoke, and
+  the camera frames the analytic cloud rather than the solver domain.
+
+### Fixed
+
+- The high-fidelity plume rose as a thin column because the auto-scale coarsened the grid
+  before the vortex ring formed and the render's soot threshold hid the diluted cap.
+
 ## [0.4.0] - 2026-10-25
 
 ### Added

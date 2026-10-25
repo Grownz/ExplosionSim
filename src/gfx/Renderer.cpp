@@ -752,28 +752,27 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
         return;
     }
 
-    constexpr double kAnalyticTriggerFraction = 0.70;
-    constexpr double kSafetyFraction = 0.95;
+    constexpr double kTriggerFraction = 0.78;
+    constexpr double kFieldMargin = 1.12;
     constexpr float kExpansion = 1.3f;
     constexpr float kMaxAccuracy = 16.0f;
 
-    // The analytic cloud provides the growth *timing*; expanding as soon as the
-    // measured field is already near the boundary keeps the grid coarse during
-    // the plume rise and visibly diffuses the cap. The measured field is used
-    // as a hard safety net at 95 %, so the analytic estimate can never let the
-    // field clip.
-    const sim::BlastState& state = simulation.Blast().State();
-    const double analyticHalf = std::max({state.fireballRadius * 2.4,
-                                          state.cloudRadius * 1.35, 0.5});
-    const double analyticTop =
-        std::max({state.fireballCenterY + state.fireballRadius * 2.0,
-                  state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
-
-    double safetyHalf = 0.0;
-    double safetyTop = 0.0;
+    // Follow the measured plume: the analytic cloud overestimates the early
+    // cap, and expanding to fit it coarsens the grid before the vortex ring has
+    // formed. The analytic model is only a fallback until the first reduction
+    // result is available.
+    double requiredHalf = 0.0;
+    double requiredTop = 0.0;
     if (solver_.HasFieldBounds()) {
-        safetyHalf = double(solver_.FieldRadius()) * 1.02;
-        safetyTop = double(solver_.FieldTop()) * 1.02;
+        requiredHalf = std::max(double(solver_.FieldRadius()) * kFieldMargin, 0.5);
+        requiredTop = std::max(double(solver_.FieldTop()) * kFieldMargin, 1.0);
+    } else {
+        const sim::BlastState& state = simulation.Blast().State();
+        requiredHalf = std::max({state.fireballRadius * 2.4,
+                                 state.cloudRadius * 1.35, 0.5});
+        requiredTop =
+            std::max({state.fireballCenterY + state.fireballRadius * 2.0,
+                      state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
     }
 
     // A single 1.3x step is not always enough after a fast plume rise, so keep
@@ -783,10 +782,8 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
         const sim::VolumeBounds& bounds = solver_.Bounds();
         const double half = 0.5 * (bounds.max.x - bounds.min.x);
         const double top = bounds.max.y;
-        const bool tooWide = analyticHalf > half * kAnalyticTriggerFraction ||
-                             safetyHalf > half * kSafetyFraction;
-        const bool tooTall = analyticTop > top * kAnalyticTriggerFraction ||
-                             safetyTop > top * kSafetyFraction;
+        const bool tooWide = requiredHalf > half * kTriggerFraction;
+        const bool tooTall = requiredTop > top * kTriggerFraction;
         if (!tooWide && !tooTall) {
             break;
         }
@@ -819,6 +816,7 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
     int guard = 0;
     while (solver_.Stats().time < targetTime && guard++ < 4096) {
         MaybeExpandSolver(simulation);
+        solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius), float(simulation.Blast().State().cloudCenterY));
         solver_.Step(16);
 
         // Keep the analytic model in sync so the ground effects, dust and the
@@ -862,6 +860,7 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
 
         const long long remaining = targetSteps - solver_.Stats().steps;
         const int batch = int(std::min<long long>(remaining, 16));
+        solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius), float(simulation.Blast().State().cloudCenterY));
         solver_.Step(batch);
 
         const double advance = solver_.ConsumeAdvance();
@@ -940,6 +939,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
                         std::clamp(simulation.Settings().solverStepsPerFrame, 1, 96);
                     const int steps =
                         std::clamp(int(std::lround(double(baseSteps) * ratio)), 1, 96);
+                    solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius), float(simulation.Blast().State().cloudCenterY));
                     solver_.Step(steps);
                 }
                 solverVolume = solver_.VolumeSRV();

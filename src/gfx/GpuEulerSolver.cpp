@@ -232,7 +232,7 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
                                  depositRadius_, float(config_.heightOfBurstM));
     constants_.physics = XMFLOAT4(float(config_.gravity), float(config_.gasConstant), kCooling,
                                   float(time_));
-    constants_.extra = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+    constants_.extra = XMFLOAT4(plumeRadius_, plumeCenterY_, 0.0f, 0.0f);
     constants_.oldDomainMin =
         XMFLOAT4(oldBounds_.min.x, oldBounds_.min.y, oldBounds_.min.z, oldDx_);
     constants_.oldDomainMax =

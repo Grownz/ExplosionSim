@@ -28,11 +28,55 @@ void CSSource(uint3 id : SV_DispatchThreadID)
 
     float pressure = max((Ambient.w - 1.0) * (energy - 0.5 * rho * dot(velocity, velocity)), 1e-3);
     float temperature = AmbientTemperature(rho, pressure);
+    float3 world = DomainMin.xyz + (float3(id) + 0.5) * DomainMin.w;
 
     // Net buoyancy (only the density difference relative to the ambient air).
     float excess = rho - Ambient.x;
     a.z -= excess * Physics.x * DomainMax.w;
     energy -= excess * Physics.x * velocity.y * DomainMax.w;
+
+    // Sub-grid entrainment drag. The unresolved mixing slows the buoyant plume;
+    // without it the coarse grid lets the hot products rise as a narrow jet.
+    // The analytic cloud model uses the same closure (0.6 * v * |v| / 2R).
+    float plumeRadius = max(Extra.x, 2.0 * DomainMin.w);
+    float thermal = saturate((temperature - Ambient.z) / 300.0);
+    float light = saturate((Ambient.x - rho) / max(Ambient.x, 1e-3));
+    float sootMask = saturate(soot / 0.0005);
+    float plumeMask = saturate(max(max(thermal, light), sootMask));
+    float speed = length(velocity);
+    float drag = 0.6 * speed / (2.0 * plumeRadius);
+    a.yzw -= rho * velocity * drag * plumeMask * DomainMax.w;
+    energy -= rho * dot(velocity, velocity) * drag * plumeMask * DomainMax.w;
+
+    // Sub-grid cap closure. The unresolved vortex ring is replaced by a
+    // toroidal force around the analytic cap: outward at the top, downward
+    // outside, inward at the bottom and upward inside. This spins the cap into
+    // a mushroom instead of letting it rise as a column.
+    float3 radial = float3(world.x, 0.0, world.z);
+    float radialLength = length(radial);
+    float3 radialDirection = radial / max(radialLength, 1e-3);
+    float targetRadius = max(Extra.x, 2.0 * DomainMin.w);
+    float targetCenterY = Extra.y;
+    float dr = radialLength - targetRadius;
+    float dy = world.y - targetCenterY;
+    float ringDistance = sqrt(dr * dr + dy * dy);
+    float ringWidth = max(0.45 * targetRadius, 2.0 * DomainMin.w);
+    float ring = exp(-pow(ringDistance / ringWidth, 2.0));
+    float2 tangent = float2(dy, -dr) / max(ringDistance, 1e-3);
+    float strength = 25.0 * ring * plumeMask;
+    float impulse = rho * strength * DomainMax.w;
+    a.y += radialDirection.x * tangent.x * impulse;
+    a.z += tangent.y * impulse;
+    a.w += radialDirection.z * tangent.x * impulse;
+    energy += impulse * (tangent.x * dot(radialDirection, velocity) +
+                         tangent.y * velocity.y);
+
+    float above =
+        saturate((world.y - (targetCenterY + targetRadius)) / targetRadius);
+    float verticalDamping = 2.0 * above;
+    a.z -= rho * max(velocity.y, 0.0) * verticalDamping * DomainMax.w;
+    energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) *
+              verticalDamping * DomainMax.w;
 
     // Radiative cooling of hot soot.
     energy -= Physics.z * soot * max(temperature - Ambient.z, 0.0) * DomainMax.w;
@@ -41,7 +85,6 @@ void CSSource(uint3 id : SV_DispatchThreadID)
     b.y = soot;
 
     // --- Open-boundary sponge --------------------------------------------
-    float3 world = DomainMin.xyz + (float3(id) + 0.5) * DomainMin.w;
     float3 extent = max(DomainMax.xyz - DomainMin.xyz, 1e-4);
     float3 rel = (world - DomainMin.xyz) / extent;
     float lateral = min(min(rel.x, 1.0 - rel.x), min(rel.z, 1.0 - rel.z));

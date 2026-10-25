@@ -253,6 +253,10 @@ back.
 - Buoyancy uses the density difference relative to the ambient air, so the uniform
   ambient atmosphere does not accelerate.
 - A soot cooling term removes energy from hot products.
+- A sub-grid entrainment closure adds drag `0.6 v|v| / (2R)` and a toroidal force around
+  the analytic cloud radius and centre. It represents the vortex ring that forms the
+  mushroom cap, which the coarse grid cannot resolve; the render uses a lower soot
+  threshold for the diluted cap smoke.
 - The render conversion applies a sub-grid **soot incandescence** temperature floor. The
   raymarcher adds gradient-based sun shading from the density field. The temperature floor
   represents the optical thickness and afterburning of the products, which the adiabatic

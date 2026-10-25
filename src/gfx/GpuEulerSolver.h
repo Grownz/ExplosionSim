@@ -64,6 +64,13 @@ public:
     // reproducible; the interactive path keeps the non-blocking pipeline.
     void SetDeterministic(bool deterministic) { deterministic_ = deterministic; }
 
+    // Analytic cloud radius and centre used by the sub-grid entrainment/cap
+    // closure. Call before stepping with the current reduced-order cloud state.
+    void SetPlumeModel(float radius, float centerY) {
+        plumeRadius_ = radius > 0.0f ? radius : 0.0f;
+        plumeCenterY_ = centerY;
+    }
+
     // Simulated time advanced since the last call (used to keep the reduced
     // order model and the particles in sync with the solver).
     double ConsumeAdvance();
@@ -165,6 +172,8 @@ private:
     double advance_ = 0.0;
     float maxSpeed_ = 4000.0f;
     float lastDt_ = 0.0f;
+    float plumeRadius_ = 0.0f;
+    float plumeCenterY_ = 0.0f;
     long long totalSteps_ = 0;
     bool hasVolume_ = false;
     bool initialized_ = false;

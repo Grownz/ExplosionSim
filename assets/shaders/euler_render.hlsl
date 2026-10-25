@@ -32,6 +32,7 @@ void CSRender(uint3 id : SV_DispatchThreadID)
     float sootDensity = max(sootSum / 8.0, 0.0);
 
     float products = smoothstep(0.004, 0.030, sootDensity);
+    float smoke = smoothstep(0.0005, 0.008, sootDensity);
 
     // Soot incandescence: the detonation products are optically thick and stay
     // hot through afterburning, which the adiabatic Euler solve does not
@@ -64,7 +65,7 @@ void CSRender(uint3 id : SV_DispatchThreadID)
     float glow = smoothstep(900.0, 2200.0, visibleTemperature);
     float emitTemperature = lerp(Ambient.z, visibleTemperature, glow);
 
-    float density = saturate(products * 0.92);
+    float density = saturate(smoke * 0.92);
 
     // The ground-reflected boundary layer spreads the products into a flat,
     // star-shaped disc on the coarse grid. Fade the lowest layer so it reads as

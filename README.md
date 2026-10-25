@@ -181,8 +181,9 @@ range.
 | **Reduced-order** (default) | Validated engineering blast model with analytic fireball, cloud, debris, sparks, smoke and dust. Covers the complete timeline. | Overview, full event, particles |
 | **High-fidelity (GPU Euler)** | 3D compressible Euler finite-volume solver with HLLC fluxes and MUSCL reconstruction, running in D3D11 compute shaders. | Early blast (0–50 ms), shock structure, fireball dynamics |
 
-The high-fidelity mode is a genuine numerical solution, not a visual approximation, but
-it is deliberately slow-motion: 24 solver steps per frame at 128³ advance roughly
+The high-fidelity mode is a genuine finite-volume Euler solution for the blast, with a
+sub-grid entrainment and vortex-ring closure for the mushroom cap that the coarse grid
+cannot resolve. It is deliberately slow-motion: 24 solver steps per frame at 128³ advance roughly
 0.3–0.5 ms of physical time per frame. Particle rendering is disabled in this mode
 because the volume is the physical solution. For a headless capture use e.g.
 `--high-fidelity --time 0.005`.
@@ -202,17 +203,22 @@ High-fidelity settings (Physics & Effects panel):
   reflecting ground and an absorbing sponge at the lateral/top boundaries
 - Uses the moist-air density and virtual temperature; wind drifts the rendered volume
 - Shares the domain-warped detail noise with the reduced-order volume
-- **Solver auto-scale** – the analytic cloud sets the growth timing at 70 % of the
-  domain, while a GPU reduction measures the visible detonation products every step and
-  acts as a hard safety net at 95 %. The radial measurement ignores the base surge below
+- **Solver auto-scale** – a GPU reduction measures the visible detonation products and
+  expands the domain when the plume approaches 78 % of the boundary (12 % margin), so the
+  grid stays as fine as possible while the vortex ring forms. The analytic cloud is only a
+  fallback until the first reduction result is available. The radial measurement ignores the base surge below
   25 % of the domain height, so the low ground surge no longer coarsens the grid during
-  the plume rise. When either criterion fires, the domain grows by 1.3× and the
+  the plume rise. When the criterion fires, the domain grows by 1.3× and the
   conservative state is resampled onto the new grid on the GPU. Several steps can run in
   one frame, so a fast plume rise is caught before it clips. The voxel count stays fixed,
   so the effective accuracy drops while the CFL step grows; the UI shows the domain,
   voxel size, measured plume top/radius, accuracy factor and number of expansions. The
   accuracy budget is ×16. Can be disabled in the high-fidelity panel or with
   `--no-solver-auto-scale`.
+- **Sub-grid cap closure** - the coarse grid cannot resolve the vortex ring that forms
+  the mushroom head. A drag term (`0.6 v|v| / 2R`) and a toroidal force around the
+  analytic cloud radius spin the rising plume into a cap; the render uses a separate low
+  soot threshold for the diluted smoke, and the camera frames the analytic cloud.
 - 1024³ is not available for the solver: four RGBA32F ping-pong state volumes plus the
   render volume would need about 76 GB of VRAM
 

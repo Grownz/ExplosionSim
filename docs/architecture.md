@@ -156,14 +156,25 @@ momentum. The lateral and top boundaries use zero-gradient ghost cells plus an a
 sponge over the outer 6 % of the domain, which relaxes the state towards ambient so
 outgoing acoustic waves do not reflect back into the plume.
 
+### Sub-grid cap closure
+
+The coarse grid cannot resolve the vortex ring that forms the mushroom head. The source
+pass adds a drag term `0.6 v|v| / (2R)` (the same entrainment closure as the analytic
+cloud) and a toroidal force around the analytic cloud radius and centre: outward at the
+cap top, downward outside, inward at the bottom and upward inside. The render conversion
+uses a lower soot threshold for the diluted smoke than for the incandescent products, and
+the camera frames the analytic cloud rather than the solver domain.
+
 ### Auto-scale (domain expansion)
 
 When auto-scale is enabled, the reduction pass also reports the bounding box of the
 visible detonation products (maximum height and maximum `|x|/|z|` radius). The radial
 measurement ignores the low base surge below 25 % of the domain height, which otherwise
-expands the box long before the cloud needs it. The analytic cloud drives the growth
-timing at 70 % of the domain; the measured bounds are a hard safety net at 95 %. When
-either criterion fires, the renderer calls `RescaleDomain`, which grows the box by 1.3×
+expands the box long before the cloud needs it. The measured bounds drive the expansion:
+the domain grows when the plume approaches 78 % of the boundary, with a 12 % margin, so
+the grid stays as fine as possible while the cap forms. The analytic cloud is only a
+fallback until the first reduction result is available. When the criterion fires, the
+renderer calls `RescaleDomain`, which grows the box by 1.3×
 (up to an accuracy factor of 16). The expansion is repeated if one step is not enough, so
 a fast plume rise is caught before it clips. A compute pass resamples the six conserved
 variables trilinearly onto the new grid (ambient outside the old domain) using the
