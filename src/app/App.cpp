@@ -552,6 +552,9 @@ int App::RunHeadless() {
         LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %d rigid bodies",
                 sceneStats.buildings, sceneStats.vehicles, sceneStats.trees,
                 sceneStats.chunks, sceneStats.bodies);
+        LogInfo("Physics: %d awake of %d bodies",
+                simulation_.Scene().Physics().AwakeCount(),
+                simulation_.Scene().Physics().BodyCount());
     } else {
         if (options_.screenshotPath.empty()) {
             LogError("Headless mode requires --screenshot <path> or --benchmark.");

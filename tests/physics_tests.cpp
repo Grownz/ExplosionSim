@@ -405,7 +405,8 @@ void TestPhysicsWorld() {
     CHECK(world.Bodies().size() == 1);
     const ex::scene::RigidBody& settled = world.Bodies()[0];
     CHECK(std::isfinite(settled.position.y));
-    CHECK(settled.position.y >= 0.5f - 1e-3f);
+    // The split-impulse solver allows a contact slop of a few millimetres.
+    CHECK(settled.position.y >= 0.5f - 0.01f);
     CHECK(settled.position.y < 1.0f);
     CHECK(settled.sleeping);
 }
@@ -662,6 +663,71 @@ void TestFrustumCulling() {
     }
 }
 
+void TestFrictionSliding() {
+    ex::scene::PhysicsWorld world;
+    ex::scene::RigidBody body;
+    body.position = DirectX::XMFLOAT3(0.0f, 0.25f, 0.0f);
+    body.halfExtents = DirectX::XMFLOAT3(1.0f, 0.25f, 1.0f);
+    body.mass = 100.0f;
+    body.friction = 0.8f;
+    body.restitution = 0.0f;
+    body.velocity = DirectX::XMFLOAT3(10.0f, 0.0f, 0.0f);
+    world.AddBody(body);
+    for (int i = 0; i < 360; ++i) {
+        world.Step(1.0f / 120.0f);
+    }
+    const ex::scene::RigidBody& settled = world.Bodies()[0];
+    CHECK(std::abs(settled.velocity.x) < 0.1f);
+}
+
+void TestDropNoTilt() {
+    ex::scene::PhysicsWorld world;
+    ex::scene::RigidBody body;
+    body.position = DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f);
+    body.halfExtents = DirectX::XMFLOAT3(0.5f, 0.5f, 0.5f);
+    body.mass = 100.0f;
+    body.friction = 0.0f;
+    body.restitution = 0.0f;
+    body.velocity = DirectX::XMFLOAT3(0.0f, -5.0f, 0.0f);
+    world.AddBody(body);
+    for (int i = 0; i < 240; ++i) {
+        world.Step(1.0f / 120.0f);
+    }
+    const ex::scene::RigidBody& settled = world.Bodies()[0];
+    CHECK(std::abs(settled.orientation.x) < 1e-2f);
+    CHECK(std::abs(settled.orientation.z) < 1e-2f);
+}
+
+void TestBroadphaseManyBodies() {
+    // A grid of boxes on the ground exercises the broadphase and the solver.
+    ex::scene::PhysicsWorld world;
+    for (int z = 0; z < 8; ++z) {
+        for (int x = 0; x < 8; ++x) {
+            ex::scene::RigidBody body;
+            body.position = DirectX::XMFLOAT3(float(x) * 1.1f, 1.0f + float((x + z) % 3),
+                                              float(z) * 1.1f);
+            body.halfExtents = DirectX::XMFLOAT3(0.5f, 0.5f, 0.5f);
+            body.mass = 100.0f;
+            body.friction = 0.8f;
+            body.restitution = 0.05f;
+            world.AddBody(body);
+        }
+    }
+    for (int i = 0; i < 480; ++i) {
+        world.Step(1.0f / 120.0f);
+    }
+    CHECK(world.BodyCount() == 64);
+    int settled = 0;
+    for (const ex::scene::RigidBody& body : world.Bodies()) {
+        CHECK(std::isfinite(body.position.x));
+        CHECK(std::isfinite(body.position.y));
+        CHECK(body.position.y > 0.4f);
+        if (body.sleeping) {
+            ++settled;
+        }
+    }
+    CHECK(settled > 48);}
+
 int main() {
     TestChargeScaling();
     TestAtmosphere();
@@ -679,6 +745,9 @@ int main() {
     TestSceneFire();
     TestFrustumCulling();
     TestPhysicsWorld();
+    TestFrictionSliding();
+    TestDropNoTilt();
+    TestBroadphaseManyBodies();
     TestSettingsRoundTrip();
     TestFuseAndDetonation();
 

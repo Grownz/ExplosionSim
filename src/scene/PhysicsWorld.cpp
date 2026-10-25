@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
+#include <cstdint>
 
 using namespace DirectX;
 
@@ -11,6 +12,26 @@ namespace ex::scene {
 namespace {
 
 constexpr float kGravity = 9.80665f;
+constexpr float kCellSize = 4.0f;
+constexpr int kGridSlots = 65536;
+
+uint64_t CellKey(int x, int y, int z) {
+    const uint64_t ux = uint64_t(uint32_t(x + (1 << 20))) & 0x1FFFFF;
+    const uint64_t uy = uint64_t(uint32_t(y + (1 << 20))) & 0x1FFFFF;
+    const uint64_t uz = uint64_t(uint32_t(z + (1 << 20))) & 0x1FFFFF;
+    return (ux << 42) | (uy << 21) | uz;
+}
+
+XMMATRIX InverseInertiaWorld(const RigidBody& body) {
+    const XMMATRIX rotation = XMMatrixRotationQuaternion(XMLoadFloat4(&body.orientation));
+    const XMMATRIX diagonal = XMMatrixSet(
+        body.invInertiaLocal.x, 0.0f, 0.0f, 0.0f,
+        0.0f, body.invInertiaLocal.y, 0.0f, 0.0f,
+        0.0f, 0.0f, body.invInertiaLocal.z, 0.0f,
+        0.0f, 0.0f, 0.0f, 0.0f);
+    // Row-vector convention: I_world = R^T * I_local * R.
+    return XMMatrixTranspose(rotation) * diagonal * rotation;
+}
 
 float HalfAt(const XMFLOAT3& half, int axis) {
     return axis == 0 ? half.x : (axis == 1 ? half.y : half.z);
@@ -146,6 +167,13 @@ void BuildManifold(const Obb& a, const Obb& b, const XMVECTOR& normal, float pen
 
 void PhysicsWorld::Clear() {
     bodies_.clear();
+    slots_.clear();
+    usedSlots_.clear();
+    insertBody_.clear();
+    insertNext_.clear();
+    pairs_.clear();
+    aabbMin_.clear();
+    aabbMax_.clear();
 }
 
 int PhysicsWorld::AddBody(const RigidBody& body) {
@@ -159,11 +187,26 @@ int PhysicsWorld::AddBody(const RigidBody& body) {
                       copy.halfExtents.z * copy.halfExtents.z);
     }
     copy.boundingRadius = std::max(copy.boundingRadius, 0.1f);
-    const float inertia =
-        0.4f * copy.mass * copy.boundingRadius * copy.boundingRadius;
-    copy.invInertia = 1.0f / std::max(inertia, 1e-3f);
+    const float hx = std::max(copy.halfExtents.x, 0.01f);
+    const float hy = std::max(copy.halfExtents.y, 0.01f);
+    const float hz = std::max(copy.halfExtents.z, 0.01f);
+    // Solid box inertia: Ixx = m/3 * (hy^2 + hz^2), and so on.
+    copy.invInertiaLocal =
+        XMFLOAT3(3.0f / (copy.mass * (hy * hy + hz * hz)),
+                 3.0f / (copy.mass * (hx * hx + hz * hz)),
+                 3.0f / (copy.mass * (hx * hx + hy * hy)));
     bodies_.push_back(copy);
     return int(bodies_.size()) - 1;
+}
+
+int PhysicsWorld::AwakeCount() const {
+    int count = 0;
+    for (const RigidBody& body : bodies_) {
+        if (!body.sleeping) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 void PhysicsWorld::Step(float dt) {
@@ -202,13 +245,11 @@ void PhysicsWorld::Step(float dt) {
         ResolveGround(body, dt);
     }
 
-    for (size_t i = 0; i < bodies_.size(); ++i) {
-        for (size_t j = i + 1; j < bodies_.size(); ++j) {
-            if (bodies_[i].sleeping && bodies_[j].sleeping) {
-                continue;
-            }
-            ResolvePair(bodies_[i], bodies_[j]);
-        }
+    BuildBroadphase();
+    for (uint64_t key : pairs_) {
+        const int a = int(key >> 32);
+        const int b = int(key & 0xFFFFFFFFu);
+        ResolvePair(bodies_[a], bodies_[b]);
     }
 
     for (RigidBody& body : bodies_) {
@@ -229,6 +270,104 @@ void PhysicsWorld::Step(float dt) {
             body.sleepTimer = 0.0f;
         }
     }
+}
+
+void PhysicsWorld::BuildBroadphase() {
+    const int count = int(bodies_.size());
+    if (int(slots_.size()) != kGridSlots) {
+        slots_.assign(kGridSlots, CellSlot{});
+    } else {
+        for (int slot : usedSlots_) {
+            slots_[slot].head = -1;
+        }
+    }
+    usedSlots_.clear();
+    insertBody_.clear();
+    insertNext_.clear();
+    pairs_.clear();
+    aabbMin_.resize(count);
+    aabbMax_.resize(count);
+
+    auto insert = [&](uint64_t key, int body) {
+        uint64_t hash = key * 0x9E3779B97F4A7C15ull;
+        hash ^= hash >> 29;
+        int slot = int(hash & uint64_t(kGridSlots - 1));
+        int probes = 0;
+        while (slots_[slot].head >= 0 && slots_[slot].key != key) {
+            slot = (slot + 1) & (kGridSlots - 1);
+            if (++probes >= kGridSlots) {
+                return;
+            }
+        }
+        if (slots_[slot].head < 0) {
+            slots_[slot].key = key;
+            usedSlots_.push_back(slot);
+        }
+        insertBody_.push_back(body);
+        insertNext_.push_back(slots_[slot].head);
+        slots_[slot].head = int(insertBody_.size()) - 1;
+    };
+
+    for (int i = 0; i < count; ++i) {
+        const RigidBody& body = bodies_[i];
+        const XMMATRIX rotation =
+            XMMatrixRotationQuaternion(XMLoadFloat4(&body.orientation));
+        const XMFLOAT3& half = body.halfExtents;
+        const float ex = std::abs(XMVectorGetX(rotation.r[0])) * half.x +
+                         std::abs(XMVectorGetX(rotation.r[1])) * half.y +
+                         std::abs(XMVectorGetX(rotation.r[2])) * half.z;
+        const float ey = std::abs(XMVectorGetY(rotation.r[0])) * half.x +
+                         std::abs(XMVectorGetY(rotation.r[1])) * half.y +
+                         std::abs(XMVectorGetY(rotation.r[2])) * half.z;
+        const float ez = std::abs(XMVectorGetZ(rotation.r[0])) * half.x +
+                         std::abs(XMVectorGetZ(rotation.r[1])) * half.y +
+                         std::abs(XMVectorGetZ(rotation.r[2])) * half.z;
+
+        aabbMin_[i] = XMFLOAT3(body.position.x - ex, body.position.y - ey,
+                               body.position.z - ez);
+        aabbMax_[i] = XMFLOAT3(body.position.x + ex, body.position.y + ey,
+                               body.position.z + ez);
+
+        const int cx0 = int(std::floor(aabbMin_[i].x / kCellSize));
+        const int cy0 = int(std::floor(aabbMin_[i].y / kCellSize));
+        const int cz0 = int(std::floor(aabbMin_[i].z / kCellSize));
+        const int cx1 = int(std::floor(aabbMax_[i].x / kCellSize));
+        const int cy1 = int(std::floor(aabbMax_[i].y / kCellSize));
+        const int cz1 = int(std::floor(aabbMax_[i].z / kCellSize));
+        for (int cx = cx0; cx <= cx1; ++cx) {
+            for (int cy = cy0; cy <= cy1; ++cy) {
+                for (int cz = cz0; cz <= cz1; ++cz) {
+                    insert(CellKey(cx, cy, cz), i);
+                }
+            }
+        }
+    }
+
+    for (int slot : usedSlots_) {
+        for (int i = slots_[slot].head; i >= 0; i = insertNext_[i]) {
+            const int a = insertBody_[i];
+            for (int j = insertNext_[i]; j >= 0; j = insertNext_[j]) {
+                const int b = insertBody_[j];
+                if (a == b) {
+                    continue;
+                }
+                const int lo = a < b ? a : b;
+                const int hi = a < b ? b : a;
+                if (bodies_[lo].sleeping && bodies_[hi].sleeping) {
+                    continue;
+                }
+                if (aabbMin_[lo].x > aabbMax_[hi].x || aabbMax_[lo].x < aabbMin_[hi].x ||
+                    aabbMin_[lo].y > aabbMax_[hi].y || aabbMax_[lo].y < aabbMin_[hi].y ||
+                    aabbMin_[lo].z > aabbMax_[hi].z || aabbMax_[lo].z < aabbMin_[hi].z) {
+                    continue;
+                }
+                pairs_.push_back((uint64_t(uint32_t(lo)) << 32) | uint64_t(uint32_t(hi)));
+            }
+        }
+    }
+
+    std::sort(pairs_.begin(), pairs_.end());
+    pairs_.erase(std::unique(pairs_.begin(), pairs_.end()), pairs_.end());
 }
 
 void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
@@ -280,13 +419,15 @@ void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
 
     if (normalVelocity < 0.0f) {
         const XMVECTOR rn = XMVector3Cross(r, normal);
+        const XMMATRIX invInertia = InverseInertiaWorld(body);
         const float denominator =
-            body.invMass + body.invInertia * XMVectorGetX(XMVector3Dot(rn, rn));
+            body.invMass +
+            XMVectorGetX(XMVector3Dot(rn, XMVector3TransformNormal(rn, invInertia)));
         const float impulse =
             -(1.0f + body.restitution) * normalVelocity / std::max(denominator, 1e-6f);
         if (impulse > 0.0f) {
             velocity += normal * (impulse * body.invMass);
-            omega += rn * (impulse * body.invInertia);
+            omega += XMVector3TransformNormal(rn * impulse, invInertia);
 
             XMVECTOR tangential = pointVelocity - normal * normalVelocity;
             const float tangentialSpeed = XMVectorGetX(XMVector3Length(tangential));
@@ -364,6 +505,8 @@ void PhysicsWorld::ResolvePair(RigidBody& a, RigidBody& b) {
     }
 
     const float restitution = std::min(a.restitution, b.restitution);
+    const XMMATRIX invInertiaA = InverseInertiaWorld(a);
+    const XMMATRIX invInertiaB = InverseInertiaWorld(b);
 
     XMVECTOR velocityA = XMLoadFloat3(&a.velocity);
     XMVECTOR omegaA = XMLoadFloat3(&a.angularVelocity);
@@ -389,8 +532,10 @@ void PhysicsWorld::ResolvePair(RigidBody& a, RigidBody& b) {
             const XMVECTOR rnB = XMVector3Cross(rB, bestAxis);
             const float denominator =
                 a.invMass + b.invMass +
-                a.invInertia * XMVectorGetX(XMVector3Dot(rnA, rnA)) +
-                b.invInertia * XMVectorGetX(XMVector3Dot(rnB, rnB));
+                XMVectorGetX(XMVector3Dot(
+                    rnA, XMVector3TransformNormal(rnA, invInertiaA))) +
+                XMVectorGetX(XMVector3Dot(
+                    rnB, XMVector3TransformNormal(rnB, invInertiaB)));
             const float impulse =
                 -(1.0f + restitution) * normalVelocity / std::max(denominator, 1e-6f);
             if (impulse <= 0.0f) {
@@ -399,9 +544,9 @@ void PhysicsWorld::ResolvePair(RigidBody& a, RigidBody& b) {
 
             const XMVECTOR normalImpulse = bestAxis * impulse;
             velocityA -= normalImpulse * a.invMass;
-            omegaA -= rnA * (impulse * a.invInertia);
+            omegaA -= XMVector3TransformNormal(rnA * impulse, invInertiaA);
             velocityB += normalImpulse * b.invMass;
-            omegaB += rnB * (impulse * b.invInertia);
+            omegaB += XMVector3TransformNormal(rnB * impulse, invInertiaB);
 
             XMVECTOR tangential = relative - bestAxis * normalVelocity;
             const float tangentialSpeed = XMVectorGetX(XMVector3Length(tangential));
@@ -411,8 +556,10 @@ void PhysicsWorld::ResolvePair(RigidBody& a, RigidBody& b) {
                 const XMVECTOR rtB = XMVector3Cross(rB, t);
                 const float denominatorT =
                     a.invMass + b.invMass +
-                    a.invInertia * XMVectorGetX(XMVector3Dot(rtA, rtA)) +
-                    b.invInertia * XMVectorGetX(XMVector3Dot(rtB, rtB));
+                    XMVectorGetX(XMVector3Dot(
+                        rtA, XMVector3TransformNormal(rtA, invInertiaA))) +
+                    XMVectorGetX(XMVector3Dot(
+                        rtB, XMVector3TransformNormal(rtB, invInertiaB)));
                 float frictionImpulse =
                     -tangentialSpeed / std::max(denominatorT, 1e-6f);
                 const float maxFriction =
@@ -420,9 +567,9 @@ void PhysicsWorld::ResolvePair(RigidBody& a, RigidBody& b) {
                 frictionImpulse =
                     std::clamp(frictionImpulse, -maxFriction, maxFriction);
                 velocityA -= t * (frictionImpulse * a.invMass);
-                omegaA -= rtA * (frictionImpulse * a.invInertia);
+                omegaA -= XMVector3TransformNormal(rtA * frictionImpulse, invInertiaA);
                 velocityB += t * (frictionImpulse * b.invMass);
-                omegaB += rtB * (frictionImpulse * b.invInertia);
+                omegaB += XMVector3TransformNormal(rtB * frictionImpulse, invInertiaB);
             }
         }
     }

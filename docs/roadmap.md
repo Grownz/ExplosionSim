@@ -8,6 +8,33 @@ physically correct as the budget allows, and fast enough to stay above 60 fps at
 
 Target releases: `0.4.0` (phases 1-2), `0.5.0` (phases 3-4), `0.6.0` (phase 5).
 
+## Status (2026-10-25)
+
+- **1.1 Broadphase - done.** Uniform grid with 4 m cells, AABB insertion and a
+  sorted, de-duplicated pair list. At `scene.density = 3` the simulation cost per
+  1/120 s step dropped from ~13.7 ms to ~5.8 ms.
+- **1.4 Inertia tensor - done.** Analytic box inertia; both ground and pair
+  contacts now use the world-space inverse inertia, so long chunks tumble instead
+  of rotating like cubes.
+- **1.5 Sleeping - unchanged.** The existing per-body sleep is kept. Island
+  sleeping was implemented but reverted together with the solver rewrite below.
+- **1.2 / 1.3 - deferred.** The clipped manifold, warm starting and split impulse
+  were implemented and tested, but the sequential-impulse solver becomes unstable
+  with three or four contact points per manifold. The old solver's stability
+  depended on its single-point fallback for touching boxes. Restoring these
+  features needs a proper block solver.
+
+### Findings for the block solver work
+
+- The LCP right-hand side must include `A * lambda_old`; omitting it makes warm
+  starting inject energy instead of removing it.
+- Four coplanar contact points make the normal system rank-deficient and converge
+  very slowly under Gauss-Seidel; three points are statically determinate.
+- Two points leave a box free to rock about the connecting line, which shows up as
+  a slow collapse of stacks after about a second.
+- The previous solver only looked stable because touching boxes produced a single
+  centroid contact (no contact torque).
+
 ## 0. Baseline and budget
 
 Measured with `--benchmark --frames 120 --reduced-order --time 1.5 --charge 20000`,

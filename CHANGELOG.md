@@ -24,8 +24,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Density scaling beyond the object budget: `scene.density` also packs `ceil(density)`
   smaller objects into each city block.
 - Scene generation and benchmark logs report building/vehicle/tree, chunk and rigid-body
-  counts.
+  counts, plus the number of awake bodies.
 - `--distance-scale` now also applies to the reduced-order camera framing.
+- Uniform-grid broadphase for the rigid-body world (4 m cells, AABB insertion, sorted and
+  de-duplicated pairs). At `scene.density = 3` the simulation cost per 1/120 s step
+  dropped from ~13.7 ms to ~5.8 ms.
+- Analytic box inertia tensor. Ground and body-body contacts use the world-space inverse
+  inertia, so long chunks tumble instead of rotating like cubes.
 
 ### Fixed
 

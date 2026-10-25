@@ -2,23 +2,23 @@
 
 #include <DirectXMath.h>
 
+#include <cstdint>
 #include <vector>
 
 namespace ex::scene {
 
-// 6-DOF rigid body with an isotropic inertia approximation. Boxes are used for
-// ground contacts, bounding spheres for body-body contacts; this keeps the
-// solver stable and deterministic while still producing tumbling and piling.
+// 6-DOF rigid body. Collision uses oriented boxes; the inertia tensor is the
+// analytic box tensor, stored as a body-space diagonal.
 struct RigidBody {
     DirectX::XMFLOAT3 position{};
     DirectX::XMFLOAT3 velocity{};
     DirectX::XMFLOAT4 orientation{0.0f, 0.0f, 0.0f, 1.0f};
     DirectX::XMFLOAT3 angularVelocity{};
     DirectX::XMFLOAT3 halfExtents{0.5f, 0.5f, 0.5f};
+    DirectX::XMFLOAT3 invInertiaLocal{1.0f, 1.0f, 1.0f};
     float boundingRadius = 0.5f;
     float mass = 1.0f;
     float invMass = 1.0f;
-    float invInertia = 1.0f;
     float restitution = 0.2f;
     float friction = 0.6f;
     float linearDamping = 0.02f;
@@ -27,6 +27,8 @@ struct RigidBody {
     bool sleeping = false;
 };
 
+// Box rigid bodies with a uniform-grid broadphase, oriented-box contacts and
+// per-body sleeping.
 class PhysicsWorld {
 public:
     void Clear();
@@ -36,12 +38,28 @@ public:
     const std::vector<RigidBody>& Bodies() const { return bodies_; }
     std::vector<RigidBody>& Bodies() { return bodies_; }
     int BodyCount() const { return int(bodies_.size()); }
+    int AwakeCount() const;
 
 private:
+    struct CellSlot {
+        uint64_t key = 0;
+        int head = -1;
+    };
+
+    void BuildBroadphase();
     void ResolveGround(RigidBody& body, float dt);
     void ResolvePair(RigidBody& a, RigidBody& b);
 
     std::vector<RigidBody> bodies_;
+
+    // Broadphase scratch, reused between steps.
+    std::vector<CellSlot> slots_;
+    std::vector<int> usedSlots_;
+    std::vector<int> insertBody_;
+    std::vector<int> insertNext_;
+    std::vector<uint64_t> pairs_;
+    std::vector<DirectX::XMFLOAT3> aabbMin_;
+    std::vector<DirectX::XMFLOAT3> aabbMax_;
 };
 
 } // namespace ex::scene
