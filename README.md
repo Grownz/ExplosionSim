@@ -5,7 +5,7 @@
 [![build](https://github.com/Grownz/ExplosionSim/actions/workflows/build.yml/badge.svg)](https://github.com/Grownz/ExplosionSim/actions/workflows/build.yml)
 [![version](https://img.shields.io/badge/version-0.3.0-orange.svg)](CHANGELOG.md)
 
-![Explosion Simulator](docs/screenshots/hero.png)
+![Explosion Simulator: mushroom cloud over a destroyed town](docs/screenshots/hero.png)
 
 A native C++20 application that couples a reduced-order blast model with a Direct3D 11
 volumetric renderer. The reference scenario is a **200 g TNT charge detonated 2 s after
