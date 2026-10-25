@@ -23,7 +23,8 @@ bool SceneChanged(const SimulationSettings& a, const SimulationSettings& b) {
            a.scene.density != b.scene.density || a.scene.buildings != b.scene.buildings ||
            a.scene.vehicles != b.scene.vehicles ||
            a.scene.vegetation != b.scene.vegetation ||
-           a.scene.quality != b.scene.quality;
+           a.scene.quality != b.scene.quality ||
+           a.scene.voronoiChunks != b.scene.voronoiChunks;
 }
 
 } // namespace

@@ -153,6 +153,8 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
         ParseBool(values, "sceneVehicles", simulation.scene.vehicles);
     simulation.scene.vegetation =
         ParseBool(values, "sceneVegetation", simulation.scene.vegetation);
+    simulation.scene.voronoiChunks =
+        ParseBool(values, "sceneVoronoiChunks", simulation.scene.voronoiChunks);
     simulation.scene.quality =
         std::clamp(ParseInt(values, "sceneQuality", simulation.scene.quality), 0, 2);
     simulation.scene.groundReflection =
@@ -215,6 +217,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "sceneBuildings=" << (simulation.scene.buildings ? "true" : "false") << "\n";
     stream << "sceneVehicles=" << (simulation.scene.vehicles ? "true" : "false") << "\n";
     stream << "sceneVegetation=" << (simulation.scene.vegetation ? "true" : "false") << "\n";
+    stream << "sceneVoronoiChunks=" << (simulation.scene.voronoiChunks ? "true" : "false") << "\n";
     stream << "sceneQuality=" << simulation.scene.quality << "\n";
     stream << "sceneGroundReflection=" << simulation.scene.groundReflection << "\n";
 

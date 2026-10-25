@@ -19,6 +19,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   falling debris piles up against them. Detached chunks reuse the same body and are
   switched to dynamic, and a contact impulse above 500 N s damages the struck chunk's
   joints, which can start a local cascade.
+- Optional Voronoi rubble (roadmap 2.3 phase B, *Environment > Voronoi chunks*,
+  `scene.voronoiChunks`, default off): each building is split into convex cells
+  clipped to its box. The cells keep flat-shaded hulls for rendering and a
+  principal-component fitted OBB as the collision proxy, and shared faces become the
+  joints of the existing support graph. Hulls are drawn with one non-instanced draw call
+  per building through a per-vertex chunk id.
 - Finer, irregular chunking: the default grid is now 2x3x2, `scene.quality = 1` uses
   3x4x3 and `quality = 2` 3x5x3, the split planes jitter by +-28 % per axis with a
   minimum chunk width of 0.28 cell, and the chunk mesh is a chamfered box (bevel 0.10 of

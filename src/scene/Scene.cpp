@@ -1,6 +1,7 @@
 #include "scene/SceneTypes.h"
 
 #include "core/Random.h"
+#include "scene/VoronoiFracture.h"
 
 #include <algorithm>
 #include <cmath>
@@ -118,6 +119,165 @@ void SlotOffset(int index, int slotsPerAxis, float slotSize, float block, float&
     outZ = (float(row) + 0.5f) * slotSize - block * 0.5f;
 }
 
+// Grid fracture: jittered split planes give non-uniform chunks without changing
+// the topology or the OBB physics. This is the default and the fast path.
+void BuildGridChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int quality,
+                     core::Rng& rng) {
+    const float x = object.position.x;
+    const float z = object.position.z;
+    const int nx = quality >= 2 ? 3 : (quality >= 1 ? 3 : 2);
+    const int ny = quality >= 2 ? 5 : (quality >= 1 ? 4 : 3);
+    const int nz = nx;
+    const float sx = size.x / float(nx);
+    const float sy = size.y / float(ny);
+    const float sz = size.z / float(nz);
+
+    // The jitter is clamped so no chunk becomes thinner than a quarter cell.
+    std::vector<float> splitX(nx + 1);
+    std::vector<float> splitY(ny + 1);
+    std::vector<float> splitZ(nz + 1);
+    const float minX = 0.28f * sx;
+    const float minY = 0.28f * sy;
+    const float minZ = 0.28f * sz;
+    splitX[0] = x - size.x * 0.5f;
+    splitX[nx] = x + size.x * 0.5f;
+    for (int i = 1; i < nx; ++i) {
+        const float base = x - size.x * 0.5f + size.x * float(i) / float(nx);
+        const float jitter = rng.Range(-0.28f, 0.28f) * sx;
+        splitX[i] = std::clamp(base + jitter, splitX[i - 1] + minX,
+                               splitX[nx] - minX * float(nx - i));
+    }
+    splitY[0] = 0.0f;
+    splitY[ny] = size.y;
+    for (int i = 1; i < ny; ++i) {
+        const float base = size.y * float(i) / float(ny);
+        const float jitter = rng.Range(-0.28f, 0.28f) * sy;
+        splitY[i] = std::clamp(base + jitter, splitY[i - 1] + minY,
+                               splitY[ny] - minY * float(ny - i));
+    }
+    splitZ[0] = z - size.z * 0.5f;
+    splitZ[nz] = z + size.z * 0.5f;
+    for (int i = 1; i < nz; ++i) {
+        const float base = z - size.z * 0.5f + size.z * float(i) / float(nz);
+        const float jitter = rng.Range(-0.28f, 0.28f) * sz;
+        splitZ[i] = std::clamp(base + jitter, splitZ[i - 1] + minZ,
+                               splitZ[nz] - minZ * float(nz - i));
+    }
+
+    for (int ix = 0; ix < nx; ++ix) {
+        for (int iy = 0; iy < ny; ++iy) {
+            for (int iz = 0; iz < nz; ++iz) {
+                SceneChunk chunk;
+                chunk.center = DirectX::XMFLOAT3(
+                    (splitX[ix] + splitX[ix + 1]) * 0.5f,
+                    (splitY[iy] + splitY[iy + 1]) * 0.5f,
+                    (splitZ[iz] + splitZ[iz + 1]) * 0.5f);
+                chunk.half = DirectX::XMFLOAT3(
+                    (splitX[ix + 1] - splitX[ix]) * 0.5f,
+                    (splitY[iy + 1] - splitY[iy]) * 0.5f,
+                    (splitZ[iz + 1] - splitZ[iz]) * 0.5f);
+                chunk.volume = 8.0f * chunk.half.x * chunk.half.y * chunk.half.z;
+                chunk.surfaceArea =
+                    4.0f * (chunk.half.x * chunk.half.y +
+                            chunk.half.y * chunk.half.z +
+                            chunk.half.x * chunk.half.z);
+                const float shade = rng.Range(0.90f, 1.04f);
+                chunk.color = DirectX::XMFLOAT4(
+                    object.color.x * shade, object.color.y * shade,
+                    object.color.z * shade, 1.0f);
+                chunk.gridY = iy;
+                object.chunks.push_back(chunk);
+            }
+        }
+    }
+
+    // Structural support graph: connect each chunk to its six grid neighbours.
+    // The collapse pass breaks these joints and flood-fills the remaining
+    // support from the ground.
+    auto indexAt = [nx, ny, nz](int ix, int iy, int iz) {
+        return (ix * ny + iy) * nz + iz;
+    };
+    for (int ix = 0; ix < nx; ++ix) {
+        for (int iy = 0; iy < ny; ++iy) {
+            for (int iz = 0; iz < nz; ++iz) {
+                const int index = indexAt(ix, iy, iz);
+                if (ix > 0) {
+                    object.chunks[index].neighbors.push_back(
+                        indexAt(ix - 1, iy, iz));
+                }
+                if (ix + 1 < nx) {
+                    object.chunks[index].neighbors.push_back(
+                        indexAt(ix + 1, iy, iz));
+                }
+                if (iy > 0) {
+                    object.chunks[index].neighbors.push_back(
+                        indexAt(ix, iy - 1, iz));
+                }
+                if (iy + 1 < ny) {
+                    object.chunks[index].neighbors.push_back(
+                        indexAt(ix, iy + 1, iz));
+                }
+                if (iz > 0) {
+                    object.chunks[index].neighbors.push_back(
+                        indexAt(ix, iy, iz - 1));
+                }
+                if (iz + 1 < nz) {
+                    object.chunks[index].neighbors.push_back(
+                        indexAt(ix, iy, iz + 1));
+                }
+            }
+        }
+    }
+    for (SceneChunk& chunk : object.chunks) {
+        chunk.neighborBroken.assign(chunk.neighbors.size(), 0);
+    }
+}
+
+// Voronoi fracture (roadmap 2.3 phase B): convex cells clipped to the building
+// box. The cells keep a flat-shaded hull for rendering and a fitted OBB as the
+// collision proxy, so the rigid-body solver is unchanged.
+void BuildVoronoiChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int quality,
+                        core::Rng& rng) {
+    const float targetCellVolume =
+        quality >= 2 ? 24.0f : (quality >= 1 ? 45.0f : 90.0f);
+    const float volume = size.x * size.y * size.z;
+    const int cellCount =
+        std::clamp(int(volume / targetCellVolume + 0.5f), 6, 72);
+
+    std::vector<FractureCell> cells;
+    FractureBoxVoronoi(
+        DirectX::XMFLOAT3(object.position.x, size.y * 0.5f, object.position.z),
+        DirectX::XMFLOAT3(size.x * 0.5f, size.y * 0.5f, size.z * 0.5f), cellCount,
+        rng.NextU32() ^ (object.id * 0x9E3779B9u), cells);
+    if (cells.empty()) {
+        BuildGridChunks(object, size, quality, rng);
+        return;
+    }
+
+    object.chunks.reserve(cells.size());
+    for (FractureCell& cell : cells) {
+        SceneChunk chunk;
+        chunk.center = cell.center;
+        chunk.half = cell.half;
+        chunk.orientation = cell.orientation;
+        chunk.volume = cell.volume;
+        chunk.surfaceArea = cell.surfaceArea;
+        chunk.gridY = cell.grounded ? 0 : 1;
+        const float shade = rng.Range(0.90f, 1.04f);
+        chunk.color = DirectX::XMFLOAT4(object.color.x * shade,
+                                        object.color.y * shade,
+                                        object.color.z * shade, 1.0f);
+        chunk.hullPositions = std::move(cell.positions);
+        chunk.hullNormals = std::move(cell.normals);
+        chunk.hullIndices = std::move(cell.indices);
+        chunk.neighbors = std::move(cell.neighbors);
+        object.chunks.push_back(std::move(chunk));
+    }
+    for (SceneChunk& chunk : object.chunks) {
+        chunk.neighborBroken.assign(chunk.neighbors.size(), 0);
+    }
+}
+
 } // namespace
 
 void Scene::Clear() {
@@ -200,108 +360,10 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
 
         if (type == SceneObjectType::Building) {
             const int quality = std::clamp(settings_.quality, 0, 2);
-            const int nx = quality >= 2 ? 3 : (quality >= 1 ? 3 : 2);
-            const int ny = quality >= 2 ? 5 : (quality >= 1 ? 4 : 3);
-            const int nz = nx;
-            const float sx = size.x / float(nx);
-            const float sy = size.y / float(ny);
-            const float sz = size.z / float(nz);
-
-            // Jittered split planes give non-uniform chunks without changing the
-            // grid topology or the OBB physics. The jitter is clamped so no chunk
-            // becomes thinner than a quarter cell.
-            std::vector<float> splitX(nx + 1);
-            std::vector<float> splitY(ny + 1);
-            std::vector<float> splitZ(nz + 1);
-            const float minX = 0.28f * sx;
-            const float minY = 0.28f * sy;
-            const float minZ = 0.28f * sz;
-            splitX[0] = x - size.x * 0.5f;
-            splitX[nx] = x + size.x * 0.5f;
-            for (int i = 1; i < nx; ++i) {
-                const float base = x - size.x * 0.5f + size.x * float(i) / float(nx);
-                const float jitter = rng.Range(-0.28f, 0.28f) * sx;
-                splitX[i] = std::clamp(base + jitter, splitX[i - 1] + minX,
-                                       splitX[nx] - minX * float(nx - i));
-            }
-            splitY[0] = 0.0f;
-            splitY[ny] = size.y;
-            for (int i = 1; i < ny; ++i) {
-                const float base = size.y * float(i) / float(ny);
-                const float jitter = rng.Range(-0.28f, 0.28f) * sy;
-                splitY[i] = std::clamp(base + jitter, splitY[i - 1] + minY,
-                                       splitY[ny] - minY * float(ny - i));
-            }
-            splitZ[0] = z - size.z * 0.5f;
-            splitZ[nz] = z + size.z * 0.5f;
-            for (int i = 1; i < nz; ++i) {
-                const float base = z - size.z * 0.5f + size.z * float(i) / float(nz);
-                const float jitter = rng.Range(-0.28f, 0.28f) * sz;
-                splitZ[i] = std::clamp(base + jitter, splitZ[i - 1] + minZ,
-                                       splitZ[nz] - minZ * float(nz - i));
-            }
-
-            for (int ix = 0; ix < nx; ++ix) {
-                for (int iy = 0; iy < ny; ++iy) {
-                    for (int iz = 0; iz < nz; ++iz) {
-                        SceneChunk chunk;
-                        chunk.center = DirectX::XMFLOAT3(
-                            (splitX[ix] + splitX[ix + 1]) * 0.5f,
-                            (splitY[iy] + splitY[iy + 1]) * 0.5f,
-                            (splitZ[iz] + splitZ[iz + 1]) * 0.5f);
-                        chunk.half = DirectX::XMFLOAT3(
-                            (splitX[ix + 1] - splitX[ix]) * 0.5f,
-                            (splitY[iy + 1] - splitY[iy]) * 0.5f,
-                            (splitZ[iz + 1] - splitZ[iz]) * 0.5f);
-                        const float shade = rng.Range(0.90f, 1.04f);
-                        chunk.color = DirectX::XMFLOAT4(
-                            object.color.x * shade, object.color.y * shade,
-                            object.color.z * shade, 1.0f);
-                        chunk.gridY = iy;
-                        object.chunks.push_back(chunk);
-                    }
-                }
-            }
-
-            // Structural support graph: connect each chunk to its six grid
-            // neighbours. The collapse pass breaks these joints and flood-fills
-            // the remaining support from the ground.
-            auto indexAt = [nx, ny, nz](int ix, int iy, int iz) {
-                return (ix * ny + iy) * nz + iz;
-            };
-            for (int ix = 0; ix < nx; ++ix) {
-                for (int iy = 0; iy < ny; ++iy) {
-                    for (int iz = 0; iz < nz; ++iz) {
-                        const int index = indexAt(ix, iy, iz);
-                        if (ix > 0) {
-                            object.chunks[index].neighbors.push_back(
-                                indexAt(ix - 1, iy, iz));
-                        }
-                        if (ix + 1 < nx) {
-                            object.chunks[index].neighbors.push_back(
-                                indexAt(ix + 1, iy, iz));
-                        }
-                        if (iy > 0) {
-                            object.chunks[index].neighbors.push_back(
-                                indexAt(ix, iy - 1, iz));
-                        }
-                        if (iy + 1 < ny) {
-                            object.chunks[index].neighbors.push_back(
-                                indexAt(ix, iy + 1, iz));
-                        }
-                        if (iz > 0) {
-                            object.chunks[index].neighbors.push_back(
-                                indexAt(ix, iy, iz - 1));
-                        }
-                        if (iz + 1 < nz) {
-                            object.chunks[index].neighbors.push_back(
-                                indexAt(ix, iy, iz + 1));
-                        }
-                    }
-                }
-            }
-            for (SceneChunk& chunk : object.chunks) {
-                chunk.neighborBroken.assign(chunk.neighbors.size(), 0);
+            if (settings_.voronoiChunks) {
+                BuildVoronoiChunks(object, size, quality, rng);
+            } else {
+                BuildGridChunks(object, size, quality, rng);
             }
         }
 
@@ -789,7 +851,9 @@ void Scene::DetachChunk(SceneObject& object, int index) {
     const float burstZ = -object.position.z / std::max(radialLength, 1e-3f);
     const float baseSpeed =
         std::clamp(peak / 8000.0f, 1.0f, 12.0f) * (destroyed ? 1.0f : 0.6f);
-    const float volume = 8.0f * chunk.half.x * chunk.half.y * chunk.half.z;
+    const float volume = chunk.volume > 0.0f
+                             ? chunk.volume
+                             : 8.0f * chunk.half.x * chunk.half.y * chunk.half.z;
     const float mass = std::clamp(volume * 350.0f, 80.0f, 15000.0f);
     const DirectX::XMFLOAT3 velocity(burstX * baseSpeed * 0.8f, baseSpeed * 0.25f,
                                      burstZ * baseSpeed * 0.8f);
@@ -808,7 +872,7 @@ void Scene::DetachChunk(SceneObject& object, int index) {
                                     chunk.half.y * chunk.half.y +
                                     chunk.half.z * chunk.half.z);
     body.mass = mass;
-    body.orientation = DirectX::XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
+    body.orientation = chunk.orientation;
     body.velocity = velocity;
     body.angularVelocity = angular;
     body.restitution = 0.12f;
@@ -837,6 +901,7 @@ void Scene::RegisterStructureBodies(SceneObject& object,
         RigidBody body;
         body.position = chunk.center;
         body.halfExtents = chunk.half;
+        body.orientation = chunk.orientation;
         body.boundingRadius = std::sqrt(chunk.half.x * chunk.half.x +
                                         chunk.half.y * chunk.half.y +
                                         chunk.half.z * chunk.half.z);
@@ -901,8 +966,11 @@ void Scene::ApplyContactDamage(float dtSim) {
             continue;
         }
         const float area =
-            4.0f * (chunk.half.x * chunk.half.y + chunk.half.y * chunk.half.z +
-                    chunk.half.x * chunk.half.z);
+            chunk.surfaceArea > 0.0f
+                ? chunk.surfaceArea
+                : 4.0f * (chunk.half.x * chunk.half.y +
+                          chunk.half.y * chunk.half.z +
+                          chunk.half.x * chunk.half.z);
         const float pressure =
             event.impulse / (std::max(area, 0.1f) * dtSim);
         const float strength =

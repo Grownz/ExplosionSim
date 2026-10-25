@@ -188,8 +188,11 @@ At the arrival time a pressure-impulse criterion sets the damage state
 chunks along jittered planes (2x3x2 by default, 3x4x3 at `scene.quality = 1` and 3x5x3 at
 `quality = 2`), so no two neighbours share the same dimensions. The split planes move by
 up to +-28 % of a cell but never closer than 0.28 cell to their neighbour, which keeps
-every chunk usable as an OBB while removing most of the grid's right angles. Vehicles and trees become 6-DOF rigid bodies,
-and burning objects emit fire particles.
+every chunk usable as an OBB while removing most of the grid's right angles. With
+`scene.voronoiChunks` the building is instead split into convex Voronoi cells clipped to
+its box; each cell keeps a flat-shaded hull for rendering, a PCA-fitted OBB as the
+collision proxy, and its shared faces define the support joints. Vehicles and trees
+become 6-DOF rigid bodies, and burning objects emit fire particles.
 
 Collapse is progressive. Each chunk edge carries a joint; the blast load sets a failure
 time (strongly loaded joints fail almost immediately, the rest over the next few tenths of
@@ -215,7 +218,10 @@ meshes (box buildings with shader-generated windows, low-poly vehicles and trees
 use a chamfered box mesh and carry a per-instance texture origin and scale; the shader
 maps the mesh-local position back into the original building space, so each fragment
 keeps the facade it broke off from. Blast damage is a procedural char and crack overlay
-on that facade rather than a flat recolour. The renderer is
+on that facade rather than a flat recolour. With `scene.voronoiChunks` the rubble is a
+convex hull instead: all hulls live in one vertex/index buffer, each vertex names its
+chunk, and a per-chunk structured buffer supplies the rigid transform, so a whole
+building is one draw call. The renderer is
 split into a depth-only shadow pass and a main pass that runs after the ground. The shadow
 pass renders three cascades (2048/1024/1024) with slope-scaled normal offset and 5x5 PCF;
 the far cascade draws only the large silhouettes. Trees switch to a single-cone mesh

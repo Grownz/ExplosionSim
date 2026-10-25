@@ -526,6 +526,7 @@ void TestSettingsRoundTrip() {
     original.simulation.scene.vegetation = false;
     original.simulation.scene.quality = 2;
     original.simulation.scene.groundReflection = 0.7f;
+    original.simulation.scene.voronoiChunks = true;
 
     original.render.raymarchSteps = 77;
     original.render.exposure = 1.25f;
@@ -575,6 +576,7 @@ void TestSettingsRoundTrip() {
     CHECK(loaded.simulation.scene.vehicles);
     CHECK(!loaded.simulation.scene.vegetation);
     CHECK(loaded.simulation.scene.quality == 2);
+    CHECK(loaded.simulation.scene.voronoiChunks);
 
     CHECK(loaded.render.raymarchSteps == 77);
     CHECK_NEAR(loaded.render.exposure, 1.25f, 1e-4);
@@ -818,6 +820,127 @@ void TestProgressiveCollapse() {
     CHECK(maximum > initial);
 }
 
+void TestVoronoiChunks() {
+    using namespace DirectX;
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 1000.0;
+    charge.heightOfBurstM = 0.4;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 11;
+    settings.density = 1.0f;
+    settings.quality = 1;
+    settings.voronoiChunks = true;
+
+    ex::scene::Scene scene;
+    scene.Generate(settings, model);
+    CHECK(!scene.Empty());
+
+    int buildings = 0;
+    int chunks = 0;
+    int triangles = 0;
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        if (object.type != ex::scene::SceneObjectType::Building) {
+            continue;
+        }
+        ++buildings;
+        CHECK(!object.chunks.empty());
+        CHECK(!object.chunks.front().hullPositions.empty());
+        bool grounded = false;
+        for (const ex::scene::SceneChunk& chunk : object.chunks) {
+            ++chunks;
+            CHECK(chunk.hullPositions.size() >= 4);
+            CHECK(chunk.hullNormals.size() == chunk.hullPositions.size());
+            CHECK(chunk.hullIndices.size() >= 3);
+            CHECK(chunk.hullIndices.size() % 3 == 0);
+            CHECK(chunk.half.x > 0.0f && chunk.half.y > 0.0f && chunk.half.z > 0.0f);
+            CHECK(chunk.volume > 0.0f);
+            CHECK(chunk.surfaceArea > 0.0f);
+            CHECK_NEAR(XMVectorGetX(XMVector4Length(XMLoadFloat4(&chunk.orientation))),
+                       1.0f, 1e-3);
+            grounded = grounded || chunk.gridY == 0;
+            triangles += int(chunk.hullIndices.size() / 3);
+
+            // Every hull vertex lies inside the building box and inside the
+            // fitted collision box.
+            const XMVECTOR center = XMLoadFloat3(&chunk.center);
+            const XMVECTOR orientation = XMLoadFloat4(&chunk.orientation);
+            for (const DirectX::XMFLOAT3& point : chunk.hullPositions) {
+                CHECK(point.x >= object.position.x - object.size.x * 0.5f - 0.01f);
+                CHECK(point.x <= object.position.x + object.size.x * 0.5f + 0.01f);
+                CHECK(point.y >= -0.01f);
+                CHECK(point.y <= object.size.y + 0.01f);
+                CHECK(point.z >= object.position.z - object.size.z * 0.5f - 0.01f);
+                CHECK(point.z <= object.position.z + object.size.z * 0.5f + 0.01f);
+
+                const XMVECTOR local = XMVector3InverseRotate(
+                    XMLoadFloat3(&point) - center, orientation);
+                CHECK(std::abs(XMVectorGetX(local)) <= chunk.half.x + 0.05f);
+                CHECK(std::abs(XMVectorGetY(local)) <= chunk.half.y + 0.05f);
+                CHECK(std::abs(XMVectorGetZ(local)) <= chunk.half.z + 0.05f);
+            }
+            for (int neighbor : chunk.neighbors) {
+                CHECK(neighbor >= 0 && neighbor < int(object.chunks.size()));
+            }
+        }
+        CHECK(grounded);
+
+        // The support graph must be symmetric for the flood fill.
+        for (int i = 0; i < int(object.chunks.size()); ++i) {
+            for (int neighbor : object.chunks[i].neighbors) {
+                bool found = false;
+                for (int back : object.chunks[neighbor].neighbors) {
+                    found = found || back == i;
+                }
+                CHECK(found);
+            }
+        }
+    }
+    CHECK(buildings > 0);
+    CHECK(chunks > buildings * 4);
+    CHECK(triangles > 0);
+
+    // Deterministic for the same seed.
+    ex::scene::Scene again;
+    again.Generate(settings, model);
+    CHECK(again.GenerationHash() == scene.GenerationHash());
+    const ex::scene::SceneObject* first = nullptr;
+    const ex::scene::SceneObject* second = nullptr;
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        if (!object.chunks.empty()) {
+            first = &object;
+            break;
+        }
+    }
+    for (const ex::scene::SceneObject& object : again.Objects()) {
+        if (!object.chunks.empty()) {
+            second = &object;
+            break;
+        }
+    }
+    CHECK(first != nullptr && second != nullptr);
+    if (first && second) {
+        CHECK(first->chunks.size() == second->chunks.size());
+        CHECK(first->chunks.front().hullPositions.size() ==
+              second->chunks.front().hullPositions.size());
+        CHECK_NEAR(first->chunks.front().hullPositions.front().x,
+                   second->chunks.front().hullPositions.front().x, 1e-5);
+    }
+
+    // The default grid path stays free of hull data.
+    settings.voronoiChunks = false;
+    ex::scene::Scene grid;
+    grid.Generate(settings, model);
+    for (const ex::scene::SceneObject& object : grid.Objects()) {
+        if (object.type == ex::scene::SceneObjectType::Building) {
+            CHECK(object.chunks.empty() || object.chunks.front().hullPositions.empty());
+        }
+    }
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -846,6 +969,7 @@ int main() {
     RUN(TestBroadphaseManyBodies);
     RUN(TestStackSettles);
     RUN(TestProgressiveCollapse);
+    RUN(TestVoronoiChunks);
     RUN(TestSettingsRoundTrip);
     RUN(TestFuseAndDetonation);
 #undef RUN

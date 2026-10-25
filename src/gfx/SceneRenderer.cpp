@@ -260,8 +260,12 @@ bool SceneRenderer::Initialize(ID3D11Device* device) {
     std::string errors;
     auto vertexBlob = CompileShaderFile(path, "VSScene", "vs_5_0", errors);
     auto shadowBlob = CompileShaderFile(path, "VSShadow", "vs_5_0", errors);
+    auto chunkBlob = CompileShaderFile(path, "VSChunk", "vs_5_0", errors);
+    auto chunkShadowBlob =
+        CompileShaderFile(path, "VSShadowChunk", "vs_5_0", errors);
     auto pixelBlob = CompileShaderFile(path, "PSScene", "ps_5_0", errors);
-    if (!vertexBlob || !shadowBlob || !pixelBlob) {
+    if (!vertexBlob || !shadowBlob || !chunkBlob || !chunkShadowBlob ||
+        !pixelBlob) {
         LogError("Scene shaders failed to compile.");
         return false;
     }
@@ -272,6 +276,13 @@ bool SceneRenderer::Initialize(ID3D11Device* device) {
         FAILED(device->CreateVertexShader(shadowBlob->GetBufferPointer(),
                                           shadowBlob->GetBufferSize(), nullptr,
                                           &shadowVertexShader_)) ||
+        FAILED(device->CreateVertexShader(chunkBlob->GetBufferPointer(),
+                                          chunkBlob->GetBufferSize(), nullptr,
+                                          &chunkVertexShader_)) ||
+        FAILED(device->CreateVertexShader(chunkShadowBlob->GetBufferPointer(),
+                                          chunkShadowBlob->GetBufferSize(),
+                                          nullptr,
+                                          &chunkShadowVertexShader_)) ||
         FAILED(device->CreatePixelShader(pixelBlob->GetBufferPointer(),
                                          pixelBlob->GetBufferSize(), nullptr,
                                          &pixelShader_))) {
@@ -288,6 +299,19 @@ bool SceneRenderer::Initialize(ID3D11Device* device) {
                                          vertexBlob->GetBufferPointer(),
                                          vertexBlob->GetBufferSize(), &inputLayout_))) {
         LogError("Scene input layout creation failed.");
+        return false;
+    }
+
+    const D3D11_INPUT_ELEMENT_DESC chunkLayout[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"CHUNKID", 0, DXGI_FORMAT_R32_UINT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    };
+    if (FAILED(device->CreateInputLayout(chunkLayout, UINT(std::size(chunkLayout)),
+                                         chunkBlob->GetBufferPointer(),
+                                         chunkBlob->GetBufferSize(),
+                                         &chunkInputLayout_))) {
+        LogError("Chunk input layout creation failed.");
         return false;
     }
 
@@ -392,6 +416,19 @@ void SceneRenderer::Shutdown() {
         shadowTexture_[cascade].Reset();
     }
     meshes_.clear();
+    chunkInstances_.clear();
+    chunkDraws_.clear();
+    chunkInstanceCount_ = 0;
+    chunkInstanceCapacity_ = 0;
+    chunkGeometryKey_ = 0;
+    chunkGeometryValid_ = false;
+    chunkInstanceSRV_.Reset();
+    chunkInstanceBuffer_.Reset();
+    chunkIndexBuffer_.Reset();
+    chunkVertexBuffer_.Reset();
+    chunkInputLayout_.Reset();
+    chunkShadowVertexShader_.Reset();
+    chunkVertexShader_.Reset();
     blendState_.Reset();
     rasterizer_.Reset();
     depthState_.Reset();
@@ -599,6 +636,217 @@ void SceneRenderer::BuildMeshes() {
     }
 }
 
+bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
+    if (!device_) {
+        return false;
+    }
+    const bool enabled = scene.Settings().voronoiChunks;
+    const uint64_t key =
+        scene.GenerationHash() ^ (enabled ? 0x9E3779B97F4A7C15ull : 0x0ull);
+    if (chunkGeometryValid_ && key == chunkGeometryKey_) {
+        return true;
+    }
+    chunkGeometryValid_ = true;
+    chunkGeometryKey_ = key;
+    chunkDraws_.clear();
+    chunkInstanceCount_ = 0;
+    chunkInstances_.clear();
+    chunkVertexBuffer_.Reset();
+    chunkIndexBuffer_.Reset();
+    if (!enabled || scene.Empty()) {
+        return true;
+    }
+
+    std::vector<ChunkVertex> vertices;
+    std::vector<uint32_t> indices;
+    const std::vector<scene::SceneObject>& objects = scene.Objects();
+    for (size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex) {
+        const scene::SceneObject& object = objects[objectIndex];
+        if (object.chunks.empty() || object.chunks.front().hullPositions.empty()) {
+            continue;
+        }
+        ChunkDraw draw;
+        draw.indexOffset = UINT(indices.size());
+        draw.objectIndex = int(objectIndex);
+        draw.large = std::max(object.size.x, object.size.z) >= 9.0f;
+        for (const scene::SceneChunk& chunk : object.chunks) {
+            if (chunk.hullPositions.empty() ||
+                chunk.hullNormals.size() != chunk.hullPositions.size()) {
+                continue;
+            }
+            const uint32_t chunkId = chunkInstanceCount_++;
+            const uint32_t base = uint32_t(vertices.size());
+            for (size_t v = 0; v < chunk.hullPositions.size(); ++v) {
+                vertices.push_back(
+                    {chunk.hullPositions[v], chunk.hullNormals[v], chunkId});
+            }
+            for (uint32_t index : chunk.hullIndices) {
+                indices.push_back(base + index);
+            }
+        }
+        draw.indexCount = UINT(indices.size()) - draw.indexOffset;
+        if (draw.indexCount > 0) {
+            chunkDraws_.push_back(draw);
+        }
+    }
+    if (vertices.empty() || indices.empty()) {
+        return true;
+    }
+
+    D3D11_BUFFER_DESC vertexDesc{};
+    vertexDesc.ByteWidth = UINT(vertices.size() * sizeof(ChunkVertex));
+    vertexDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    vertexDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA vertexData{};
+    vertexData.pSysMem = vertices.data();
+    if (FAILED(device_->CreateBuffer(&vertexDesc, &vertexData,
+                                     &chunkVertexBuffer_))) {
+        LogError("Voronoi chunk vertex buffer creation failed.");
+        return false;
+    }
+
+    D3D11_BUFFER_DESC indexDesc{};
+    indexDesc.ByteWidth = UINT(indices.size() * sizeof(uint32_t));
+    indexDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    indexDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA indexData{};
+    indexData.pSysMem = indices.data();
+    if (FAILED(device_->CreateBuffer(&indexDesc, &indexData,
+                                     &chunkIndexBuffer_))) {
+        LogError("Voronoi chunk index buffer creation failed.");
+        return false;
+    }
+
+    chunkInstances_.assign(chunkInstanceCount_, Instance{});
+    return EnsureChunkInstanceCapacity(std::max(64u, chunkInstanceCount_));
+}
+
+bool SceneRenderer::EnsureChunkInstanceCapacity(UINT capacity) {
+    if (!device_) {
+        return false;
+    }
+    if (chunkInstanceBuffer_ && capacity <= chunkInstanceCapacity_) {
+        return true;
+    }
+    capacity = std::max({capacity, 64u, chunkInstanceCapacity_ * 2u});
+    chunkInstanceSRV_.Reset();
+    chunkInstanceBuffer_.Reset();
+
+    D3D11_BUFFER_DESC desc{};
+    desc.ByteWidth = capacity * sizeof(Instance);
+    desc.Usage = D3D11_USAGE_DYNAMIC;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    desc.StructureByteStride = sizeof(Instance);
+    if (FAILED(device_->CreateBuffer(&desc, nullptr, &chunkInstanceBuffer_))) {
+        return false;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+    srvDesc.Buffer.FirstElement = 0;
+    srvDesc.Buffer.NumElements = capacity;
+    if (FAILED(device_->CreateShaderResourceView(chunkInstanceBuffer_.Get(),
+                                                 &srvDesc,
+                                                 &chunkInstanceSRV_))) {
+        return false;
+    }
+    chunkInstanceCapacity_ = capacity;
+    return true;
+}
+
+void SceneRenderer::UpdateChunkInstances(ID3D11DeviceContext* context,
+                                         const scene::Scene& scene) {
+    if (!context || chunkInstances_.empty() || chunkDraws_.empty()) {
+        return;
+    }
+    const auto& bodies = scene.Physics().Bodies();
+    UINT index = 0;
+    for (const scene::SceneObject& object : scene.Objects()) {
+        if (object.chunks.empty() || object.chunks.front().hullPositions.empty()) {
+            continue;
+        }
+        for (const scene::SceneChunk& chunk : object.chunks) {
+            if (chunk.hullPositions.empty() ||
+                index >= UINT(chunkInstances_.size())) {
+                continue;
+            }
+            Instance& instance = chunkInstances_[index++];
+            XMMATRIX world = XMMatrixIdentity();
+            if (chunk.bodyIndex >= 0 && chunk.bodyIndex < int(bodies.size())) {
+                const scene::RigidBody& body = bodies[chunk.bodyIndex];
+                // The hull is stored in building space and the collision box
+                // has its own fitted orientation, so the visual motion is the
+                // rotation relative to that fracture pose.
+                const XMMATRIX initial = XMMatrixRotationQuaternion(
+                    XMLoadFloat4(&chunk.orientation));
+                const XMMATRIX current = XMMatrixRotationQuaternion(
+                    XMLoadFloat4(&body.orientation));
+                world = XMMatrixTranslation(-chunk.center.x, -chunk.center.y,
+                                            -chunk.center.z) *
+                        XMMatrixTranspose(initial) * current *
+                        XMMatrixTranslation(body.position.x, body.position.y,
+                                            body.position.z);
+            }
+            XMStoreFloat4x4(&instance.transform, world);
+            instance.color = chunk.color;
+            instance.params =
+                XMFLOAT4(object.damageAmount * 0.7f, 0.0f, 0.0f, 3.0f);
+            instance.state = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+            // The vertices are already in building space.
+            instance.textureOrigin = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+            instance.textureScale = XMFLOAT4(1.0f, 1.0f, 1.0f, 0.0f);
+        }
+    }
+    if (index == 0) {
+        return;
+    }
+
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context->Map(chunkInstanceBuffer_.Get(), 0,
+                            D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        return;
+    }
+    std::memcpy(mapped.pData, chunkInstances_.data(),
+                size_t(index) * sizeof(Instance));
+    context->Unmap(chunkInstanceBuffer_.Get(), 0);
+}
+
+void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
+                               const scene::Scene& scene, bool shadowPass,
+                               int cascade) {
+    if (!context || chunkDraws_.empty() || !chunkVertexBuffer_ ||
+        !chunkIndexBuffer_ || !chunkInstanceSRV_) {
+        return;
+    }
+    const auto& objects = scene.Objects();
+    const UINT stride = sizeof(ChunkVertex);
+    const UINT offset = 0;
+    ID3D11Buffer* vertexBuffer = chunkVertexBuffer_.Get();
+    context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
+    context->IASetIndexBuffer(chunkIndexBuffer_.Get(), DXGI_FORMAT_R32_UINT, 0);
+    context->IASetInputLayout(chunkInputLayout_.Get());
+    context->VSSetShader(shadowPass ? chunkShadowVertexShader_.Get()
+                                    : chunkVertexShader_.Get(),
+                         nullptr, 0);
+    ID3D11ShaderResourceView* srv = chunkInstanceSRV_.Get();
+    context->VSSetShaderResources(1, 1, &srv);
+    for (const ChunkDraw& draw : chunkDraws_) {
+        if (draw.objectIndex < 0 || draw.objectIndex >= int(objects.size()) ||
+            !objects[draw.objectIndex].collapsed) {
+            continue;
+        }
+        if (shadowPass && cascade == kShadowCascades - 1 && !draw.large) {
+            continue;
+        }
+        context->DrawIndexed(draw.indexCount, draw.indexOffset, 0);
+    }
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    context->VSSetShaderResources(1, 1, &nullSrv);
+}
+
 void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
                                  const scene::Scene& scene, const ViewInfo& view,
                                  const XMFLOAT4X4* lightViewProj) {
@@ -711,6 +959,11 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         if (!object.collapsed) {
             continue;
         }
+        // Voronoi rubble is drawn through the dedicated chunk path.
+        if (!object.chunks.empty() &&
+            !object.chunks.front().hullPositions.empty()) {
+            continue;
+        }
         for (const scene::SceneChunk& chunk : object.chunks) {
             XMFLOAT3 chunkCenter = chunk.center;
             if (chunk.bodyIndex >= 0 && chunk.bodyIndex < int(bodies.size())) {
@@ -779,6 +1032,9 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         context->Unmap(mesh.instanceBuffer.Get(), 0);
     }
 
+    BuildChunkGeometry(scene);
+    UpdateChunkInstances(context, scene);
+
     // --- Shadow pass: one draw per cascade -------------------------------
     context->OMSetDepthStencilState(depthState_.Get(), 0);
     context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
@@ -820,6 +1076,11 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()),
                                           0, 0, 0);
         }
+
+        // Voronoi rubble (phase B chunks) with the chunk shadow shader.
+        DrawChunks(context, scene, true, cascade);
+        context->IASetInputLayout(inputLayout_.Get());
+        context->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
     }
 
     ID3D11ShaderResourceView* nullSrv = nullptr;
@@ -872,6 +1133,9 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
         context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()), 0, 0,
                                       0);
     }
+
+    // Voronoi rubble with the chunk vertex shader and the shared pixel shader.
+    DrawChunks(context, scene, false, 0);
 
     ID3D11ShaderResourceView* nullSrv = nullptr;
     ID3D11ShaderResourceView* nullShadow[3] = {nullptr, nullptr, nullptr};

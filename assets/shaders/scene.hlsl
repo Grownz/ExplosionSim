@@ -11,6 +11,8 @@ struct SceneInstance
 };
 
 StructuredBuffer<SceneInstance> Instances : register(t0);
+// Per-chunk data for the Voronoi rubble; indexed by the vertex chunk id.
+StructuredBuffer<SceneInstance> ChunkInstances : register(t1);
 
 cbuffer ShadowConstants : register(b2)
 {
@@ -86,6 +88,41 @@ float4 VSShadow(VSInput input, uint instanceID : SV_InstanceID) : SV_Position
     SceneInstance instance = Instances[instanceID];
     const float3 local = ApplySway(input.Position, instance);
     const float4 world = mul(instance.Transform, float4(local, 1.0));
+    return mul(ShadowViewProj, world);
+}
+
+// Voronoi rubble: the vertices are in building space and each one names its
+// chunk. The chunk transform is the rigid motion relative to the fracture pose,
+// so intact chunks stay exactly where they were cut from the building.
+struct VSChunkInput
+{
+    float3 Position : POSITION;
+    float3 Normal : NORMAL;
+    uint ChunkID : CHUNKID;
+};
+
+VSOutput VSChunk(VSChunkInput input)
+{
+    SceneInstance instance = ChunkInstances[input.ChunkID];
+    const float4 world = mul(instance.Transform, float4(input.Position, 1.0));
+
+    VSOutput output;
+    output.Position = mul(ViewProj, world);
+    output.WorldPosition = world.xyz;
+    output.Normal = mul((float3x3)instance.Transform, input.Normal);
+    output.Color = instance.Color.rgb;
+    output.Params = instance.Params;
+    output.State = instance.State;
+    output.LocalPosition = input.Position;
+    output.TextureOrigin = instance.TextureOrigin;
+    output.TextureScale = instance.TextureScale;
+    return output;
+}
+
+float4 VSShadowChunk(VSChunkInput input) : SV_Position
+{
+    SceneInstance instance = ChunkInstances[input.ChunkID];
+    const float4 world = mul(instance.Transform, float4(input.Position, 1.0));
     return mul(ShadowViewProj, world);
 }
 

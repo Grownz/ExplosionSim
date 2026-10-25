@@ -67,6 +67,22 @@ private:
         DirectX::XMFLOAT4 textureScale;
     };
 
+    // Voronoi chunks: one global vertex/index buffer with the convex hulls in
+    // building space and one instance per chunk. Vertices carry the chunk id so
+    // a building is drawn with a single non-instanced draw call.
+    struct ChunkVertex {
+        DirectX::XMFLOAT3 position;
+        DirectX::XMFLOAT3 normal;
+        uint32_t chunkId;
+    };
+
+    struct ChunkDraw {
+        UINT indexOffset = 0;
+        UINT indexCount = 0;
+        int objectIndex = -1; // only drawn once the building is collapsing
+        bool large = true;    // drawn in the far shadow cascade
+    };
+
     struct Mesh {
         ComPtr<ID3D11Buffer> vertexBuffer;
         ComPtr<ID3D11Buffer> indexBuffer;
@@ -82,10 +98,20 @@ private:
     bool EnsureInstanceCapacity(Mesh& mesh, UINT capacity);
     void BuildMeshes();
 
+    bool BuildChunkGeometry(const scene::Scene& scene);
+    bool EnsureChunkInstanceCapacity(UINT capacity);
+    void UpdateChunkInstances(ID3D11DeviceContext* context,
+                              const scene::Scene& scene);
+    void DrawChunks(ID3D11DeviceContext* context, const scene::Scene& scene,
+                    bool shadowPass, int cascade);
+
     ComPtr<ID3D11VertexShader> vertexShader_;
     ComPtr<ID3D11VertexShader> shadowVertexShader_;
+    ComPtr<ID3D11VertexShader> chunkVertexShader_;
+    ComPtr<ID3D11VertexShader> chunkShadowVertexShader_;
     ComPtr<ID3D11PixelShader> pixelShader_;
     ComPtr<ID3D11InputLayout> inputLayout_;
+    ComPtr<ID3D11InputLayout> chunkInputLayout_;
     ComPtr<ID3D11DepthStencilState> depthState_;
     ComPtr<ID3D11RasterizerState> rasterizer_;
     ComPtr<ID3D11BlendState> blendState_;
@@ -95,6 +121,19 @@ private:
     ComPtr<ID3D11Buffer> shadowCascadeBuffer_;
     ComPtr<ID3D11SamplerState> shadowSampler_;
     std::vector<Mesh> meshes_;
+
+    // Voronoi chunk geometry and per-frame instance data.
+    ComPtr<ID3D11Buffer> chunkVertexBuffer_;
+    ComPtr<ID3D11Buffer> chunkIndexBuffer_;
+    ComPtr<ID3D11Buffer> chunkInstanceBuffer_;
+    ComPtr<ID3D11ShaderResourceView> chunkInstanceSRV_;
+    std::vector<ChunkDraw> chunkDraws_;
+    std::vector<Instance> chunkInstances_;
+    UINT chunkInstanceCount_ = 0;
+    UINT chunkInstanceCapacity_ = 0;
+    uint64_t chunkGeometryKey_ = 0;
+    bool chunkGeometryValid_ = false;
+
     ID3D11Device* device_ = nullptr;
 };
 

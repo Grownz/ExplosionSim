@@ -64,8 +64,13 @@ Target releases: `0.4.0` (phases 1-2), `0.5.0` (phases 3-4), `0.6.0` (phase 5).
 - **2.2 Static structure - done.** Chunks that are still standing become static collision
   boxes; detached chunks reuse the same body and are switched to dynamic. Contact impulses
   above 500 N s are converted to pressure and damage the struck chunk's joints.
-- **2.3 Jittered chunks - done.** Split planes are offset by up to +-16 % per axis, so no
+- **2.3 Jittered chunks - done.** Split planes are offset by up to +-28 % per axis, so no
   two neighbours share dimensions; topology and OBB physics are unchanged.
+- **2.3 phase B (Voronoi) - done as an option.** Convex cells clipped to the building box,
+  flat-shaded hulls, principal-component fitted OBB proxies and face-based joints. Enabled
+  via *Environment > Voronoi chunks* (`scene.voronoiChunks`, default off) because it costs
+  generation time, memory and one draw call per building. Measured at density 1
+  (1920x1080, 20 t): 4.48 ms/frame versus 4.28 ms for the grid.
 - **3 Blast shielding - done.** Nine rays per receiver, thickness-based optical depth,
   diffraction floor and an optional ground-reflection setting (default off).
 - **4 Shadows and LOD - done.** Three cascades (2048/1024/1024) with practical splits,
@@ -252,6 +257,12 @@ instanced. Add +-3 % colour variation.
 to the building box, one convex hull per cell. Physics via GJK/EPA (or an OBB
 approximation), rendering via one vertex/index buffer per building with per-chunk index
 ranges (loses instancing, costs memory). Only worth it if close-up rubble is a goal.
+
+**Status:** Phase A is the default. Phase B is implemented behind *Environment > Voronoi
+chunks* (`scene.voronoiChunks`): cells are clipped against each other's bisector planes,
+the collision proxy is a PCA-fitted OBB (no GJK/EPA), and the hulls are drawn with one
+non-instanced draw call per building, with the chunk id stored per vertex. The support
+graph uses shared Voronoi faces instead of the six grid neighbours.
 
 **Acceptance (A):** no two adjacent chunks share identical dimensions; the support graph
 keeps six neighbours; render cost unchanged.

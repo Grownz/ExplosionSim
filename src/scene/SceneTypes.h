@@ -35,6 +35,10 @@ struct SceneSettings {
     int quality = 1; // 0 = low, 1 = medium, 2 = high
     // 0 = free-air blast field, 1 = perfectly reflecting ground.
     float groundReflection = 0.0f;
+    // Phase B chunk geometry: Voronoi cells clipped to the building box instead
+    // of the jittered grid. Off by default because it costs memory and draw
+    // calls; the grid remains the fast path.
+    bool voronoiChunks = false;
 };
 
 struct SceneDebrisSpawn {
@@ -47,10 +51,19 @@ struct SceneDebrisSpawn {
 struct SceneChunk {
     DirectX::XMFLOAT3 center{};
     DirectX::XMFLOAT3 half{};
+    // Orientation of the collision box (identity for the grid chunks).
+    DirectX::XMFLOAT4 orientation{0.0f, 0.0f, 0.0f, 1.0f};
     DirectX::XMFLOAT4 color{};
+    float volume = 0.0f;
+    float surfaceArea = 0.0f;
     int bodyIndex = -1;
     int gridY = 0;
     bool detached = false;
+    // Convex hull in building space, flat-shaded. Only filled for Voronoi
+    // chunks; the grid path keeps using the shared beveled-box mesh.
+    std::vector<DirectX::XMFLOAT3> hullPositions;
+    std::vector<DirectX::XMFLOAT3> hullNormals;
+    std::vector<uint32_t> hullIndices;
     std::vector<int> neighbors;
     std::vector<uint8_t> neighborBroken; // parallel to neighbors
 };
