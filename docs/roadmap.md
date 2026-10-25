@@ -82,9 +82,11 @@ findings below describe the previous solver and are kept for history.
   slope-scaled normal offset, 5x5 PCF, 10 % blending into the next cascade and a
   backwards-extended light frustum for the blend band. Intact buildings are cached in a
   camera-independent world-space 4096^2 shadow map (re-rendered on scene, sun or collapse
-  changes); the dynamic cascades only contain debris, vehicles and trees, so the rubble
-  casts dynamic shadows on the ground, the intact buildings and other debris. Far-cascade
-  caster LOD, a single-cone tree mesh beyond 80 m and the facade fade.
+  changes); the dynamic cascades contain the rubble, vehicles and trees in every cascade,
+  so the rubble casts dynamic shadows on the ground, the intact buildings and other
+  debris. Chunk casters are kept up to `max(200 m, 2 * scene extent)` outside the camera
+  frustum, matching the static building map's coverage. A single-cone tree mesh beyond
+  80 m and the facade fade.
 
 Measured at density 1 with a 20 t charge and seed 1337: 3553 bodies (864 static),
 render 2.2 ms/frame at 1920x1080, physics 2.8 ms per 1/120 s step. At density 3:

@@ -93,7 +93,7 @@ private:
         UINT indexOffset = 0;
         UINT indexCount = 0;
         int objectIndex = -1; // only drawn once the building is collapsing
-        bool large = true;    // drawn in the far shadow cascade
+
     };
 
     struct Mesh {
@@ -116,7 +116,7 @@ private:
     void UpdateChunkInstances(ID3D11DeviceContext* context,
                               const scene::Scene& scene);
     void DrawChunks(ID3D11DeviceContext* context, const scene::Scene& scene,
-                    bool shadowPass, int cascade);
+                    bool shadowPass);
     bool EnsureStaticInstanceCapacity(UINT capacity);
 
     ComPtr<ID3D11VertexShader> vertexShader_;

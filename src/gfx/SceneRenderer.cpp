@@ -713,7 +713,6 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
         ChunkDraw draw;
         draw.indexOffset = UINT(indices.size());
         draw.objectIndex = int(objectIndex);
-        draw.large = std::max(object.size.x, object.size.z) >= 9.0f;
         for (const scene::SceneChunk& chunk : object.chunks) {
             if (chunk.hullPositions.empty() ||
                 chunk.hullNormals.size() != chunk.hullPositions.size()) {
@@ -860,8 +859,7 @@ void SceneRenderer::UpdateChunkInstances(ID3D11DeviceContext* context,
 }
 
 void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
-                               const scene::Scene& scene, bool shadowPass,
-                               int cascade) {
+                               const scene::Scene& scene, bool shadowPass) {
     if (!context || chunkDraws_.empty() || !chunkVertexBuffer_ ||
         !chunkIndexBuffer_ || !chunkInstanceSRV_) {
         return;
@@ -881,9 +879,6 @@ void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
     for (const ChunkDraw& draw : chunkDraws_) {
         if (draw.objectIndex < 0 || draw.objectIndex >= int(objects.size()) ||
             !objects[draw.objectIndex].collapsed) {
-            continue;
-        }
-        if (shadowPass && cascade == kShadowCascades - 1 && !draw.large) {
             continue;
         }
         context->DrawIndexed(draw.indexCount, draw.indexOffset, 0);
@@ -1127,6 +1122,10 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
 
     // Building chunks: unit boxes driven by the rigid-body transforms, plus the
     // chunks that are still supported by the structural graph.
+    // The static building map covers the whole town, so chunks are kept in the
+    // dynamic shadow pass even when they are far outside the camera frustum.
+    // At low sun angles their shadows can reach far into the visible area.
+    const float shadowCasterMargin = std::max(200.0f, scene.Extent() * 2.0f);
     for (const scene::SceneObject& object : scene.Objects()) {
         if (!object.collapsed) {
             continue;
@@ -1145,9 +1144,7 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
                 std::sqrt(chunk.half.x * chunk.half.x + chunk.half.y * chunk.half.y +
                           chunk.half.z * chunk.half.z) *
                 1.3f;
-            // Keep casters slightly outside the view so their shadows can
-            // still reach the visible area.
-            if (!visible(chunkCenter, chunkRadius + 20.0f)) {
+            if (!visible(chunkCenter, chunkRadius + shadowCasterMargin)) {
                 continue;
             }
             // Level of detail: drop chunks that cover less than a pixel.
@@ -1233,13 +1230,11 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         ID3D11Buffer* cascadeBuffer = shadowCascadeBuffer_.Get();
         context->VSSetConstantBuffers(3, 1, &cascadeBuffer);
 
-        // Intact buildings (mesh 0) are cached in the static shadow map, so the
-        // dynamic cascades only contain debris, vehicles and trees. The far
-        // cascade skips the small dynamic casters entirely.
+        // Intact buildings (mesh 0) are cached in the static shadow map; the
+        // dynamic cascades contain debris, vehicles and trees in every cascade,
+        // so rubble shadows match the building shadows at all distances.
         constexpr int kFirstDynamicMesh = 1;
-        const int maxMesh = cascade == kShadowCascades - 1
-                                ? kFirstDynamicMesh
-                                : int(meshes_.size());
+        const int maxMesh = int(meshes_.size());
         for (int m = kFirstDynamicMesh; m < maxMesh; ++m) {
             Mesh& mesh = meshes_[m];
             if (mesh.instances.empty() || !mesh.instanceBuffer) {
@@ -1257,7 +1252,7 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         }
 
         // Voronoi rubble (phase B chunks) with the chunk shadow shader.
-        DrawChunks(context, scene, true, cascade);
+        DrawChunks(context, scene, true);
         context->IASetInputLayout(inputLayout_.Get());
         context->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
     }
@@ -1314,7 +1309,7 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
     }
 
     // Voronoi rubble with the chunk vertex shader and the shared pixel shader.
-    DrawChunks(context, scene, false, 0);
+    DrawChunks(context, scene, false);
 
     ID3D11ShaderResourceView* nullSrv = nullptr;
     ID3D11ShaderResourceView* nullShadow[4] = {nullptr, nullptr, nullptr,

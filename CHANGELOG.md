@@ -70,9 +70,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   longer bit-exact across runs because Jolt uses a multithreaded job system.
 - Voronoi chunks are now the default rubble representation; the jittered grid remains
   available through *Environment > Voronoi chunks*.
-- Grid and Voronoi chunks cast dynamic shadows into the cascades. A 20 m caster margin
-  keeps rubble just outside the camera frustum in the shadow pass, so its shadows still
-  reach the visible area.
+- Grid and Voronoi chunks cast dynamic shadows into the cascades. A caster margin of
+  `max(200 m, 2 * scene extent)` keeps rubble in the shadow pass even when it is far
+  outside the camera frustum, and the dynamic casters are drawn in every cascade, so
+  chunk shadows match the cached building shadows at all distances.
 
 ### Fixed
 

@@ -230,8 +230,11 @@ whole building is one draw call. The renderer is
 split into a depth-only shadow pass and a main pass that runs after the ground. Intact
 buildings render once into a camera-independent world-space shadow map (4096^2) that is
 only invalidated by scene, sun or collapse changes; the dynamic cascades
-(2048/1024/1024) contain the rubble hulls, vehicles and trees and use 5x5 PCF, so the
-debris casts dynamic shadows onto the ground, the intact buildings and other rubble. The last 10 % ofeach cascade blends into the next one, and the next cascade's light frustum is extended
+(2048/1024/1024) contain the rubble hulls, vehicles and trees in every cascade and use
+5x5 PCF, so the debris casts dynamic shadows onto the ground, the intact buildings and
+other rubble. Chunk casters are kept up to `max(200 m, 2 * scene extent)` outside the
+camera frustum, matching the static map's coverage. The last 10 % of each cascade blends
+into the next one, and the next cascade's light frustum is extended
 backwards to cover the blend band. Trees switch to a single-cone mesh
 beyond 80 m and the procedural facade fades beyond 150 m. A distance haze matches the
 ground and sky. Determinism is preserved by a seeded RNG, fixed physics substeps and a
