@@ -79,8 +79,11 @@ findings below describe the previous solver and are kept for history.
 - **3 Blast shielding - done.** Nine rays per receiver, thickness-based optical depth,
   diffraction floor and an optional ground-reflection setting (default off).
 - **4 Shadows and LOD - done.** Three cascades (2048/1024/1024) with practical splits,
-  slope-scaled normal offset, 5x5 PCF, far-cascade caster LOD, a single-cone tree mesh
-  beyond 80 m and the existing facade fade.
+  slope-scaled normal offset, 5x5 PCF, 10 % blending into the next cascade and a
+  backwards-extended light frustum for the blend band. Intact buildings are cached in a
+  camera-independent world-space 4096^2 shadow map (re-rendered on scene, sun or collapse
+  changes); the dynamic cascades only contain debris, vehicles and trees. Far-cascade
+  caster LOD, a single-cone tree mesh beyond 80 m and the facade fade.
 
 Measured at density 1 with a 20 t charge and seed 1337: 3553 bodies (864 static),
 render 2.2 ms/frame at 1920x1080, physics 2.8 ms per 1/120 s step. At density 3:

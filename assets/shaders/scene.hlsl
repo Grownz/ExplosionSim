@@ -17,9 +17,11 @@ StructuredBuffer<SceneInstance> ChunkInstances : register(t1);
 cbuffer ShadowConstants : register(b2)
 {
     float4x4 LightViewProj[3];
+    float4x4 StaticLightViewProj;
     float4 CascadeSplits;      // far distance of each cascade
     float4 CascadeTexel;       // 1 / shadow map size
     float4 CascadeWorldTexel;  // world size of one texel
+    float4 StaticTexel;        // x = 1/size, y = world texel, z = depth bias
 };
 
 cbuffer ShadowCascade : register(b3)
@@ -30,6 +32,7 @@ cbuffer ShadowCascade : register(b3)
 Texture2D<float> ShadowMap0 : register(t2);
 Texture2D<float> ShadowMap1 : register(t3);
 Texture2D<float> ShadowMap2 : register(t4);
+Texture2D<float> StaticShadowMap : register(t5);
 SamplerComparisonState ShadowSampler : register(s2);
 
 struct VSInput
@@ -154,21 +157,77 @@ float SampleShadowCascade(Texture2D<float> map, float4x4 lightViewProj,
     return shadow / 25.0;
 }
 
-float SampleShadow(float3 worldPosition, float3 normal)
+float SampleStaticShadow(float3 worldPosition, float3 normal)
+{
+    const float3 offsetWorld = normal * StaticTexel.y * 1.5;
+    const float3 offsetPosition = worldPosition + offsetWorld;
+    const float3 lightPosition =
+        mul(StaticLightViewProj, float4(offsetPosition, 1.0)).xyz;
+    const float2 uv = float2(0.5 + lightPosition.x * 0.5,
+                             0.5 - lightPosition.y * 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0))
+    {
+        return 1.0;
+    }
+    const float depth = lightPosition.z - StaticTexel.z;
+
+    float shadow = 0.0;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            shadow += StaticShadowMap.SampleCmpLevelZero(
+                ShadowSampler, uv + float2(x, y) * StaticTexel.x, depth);
+        }
+    }
+    return shadow / 9.0;
+}
+
+float SampleShadowDynamic(float3 worldPosition, float3 normal)
 {
     const float distance = length(worldPosition - CameraPosition.xyz);
+    const float blendWidth = 0.1;
+
     if (distance <= CascadeSplits.x)
     {
-        return SampleShadowCascade(ShadowMap0, LightViewProj[0], CascadeTexel.x,
-                                   CascadeWorldTexel.x, worldPosition, normal);
+        const float s0 = SampleShadowCascade(ShadowMap0, LightViewProj[0],
+            CascadeTexel.x, CascadeWorldTexel.x, worldPosition, normal);
+        const float t = smoothstep(1.0 - blendWidth, 1.0,
+            distance / max(CascadeSplits.x, 1e-3));
+        if (t > 0.0)
+        {
+            const float s1 = SampleShadowCascade(ShadowMap1, LightViewProj[1],
+                CascadeTexel.y, CascadeWorldTexel.y, worldPosition, normal);
+            return lerp(s0, s1, t);
+        }
+        return s0;
     }
     if (distance <= CascadeSplits.y)
     {
-        return SampleShadowCascade(ShadowMap1, LightViewProj[1], CascadeTexel.y,
-                                   CascadeWorldTexel.y, worldPosition, normal);
+        const float s1 = SampleShadowCascade(ShadowMap1, LightViewProj[1],
+            CascadeTexel.y, CascadeWorldTexel.y, worldPosition, normal);
+        const float t = smoothstep(1.0 - blendWidth, 1.0,
+            distance / max(CascadeSplits.y, 1e-3));
+        if (t > 0.0)
+        {
+            const float s2 = SampleShadowCascade(ShadowMap2, LightViewProj[2],
+                CascadeTexel.z, CascadeWorldTexel.z, worldPosition, normal);
+            return lerp(s1, s2, t);
+        }
+        return s1;
     }
     return SampleShadowCascade(ShadowMap2, LightViewProj[2], CascadeTexel.z,
                                CascadeWorldTexel.z, worldPosition, normal);
+}
+
+float SampleShadow(float3 worldPosition, float3 normal)
+{
+    // Lit only when neither the cached buildings nor the dynamic casters
+    // occlude the fragment.
+    return min(SampleShadowDynamic(worldPosition, normal),
+               SampleStaticShadow(worldPosition, normal));
 }
 
 float4 PSScene(VSOutput input) : SV_Target

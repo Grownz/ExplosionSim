@@ -42,6 +42,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Cascaded directional shadows: three cascades (2048/1024/1024) with practical splits,
   slope-scaled normal offset and 5x5 PCF. The far cascade draws only the large silhouettes,
   trees switch to a single-cone mesh beyond 80 m, and the ground samples the same cascades.
+- Shadow cascade blending and a cached static-caster map: the last 10 % of each cascade
+  fades into the next (with the next light frustum extended backwards to cover the blend
+  band), and intact buildings render once into a camera-independent world-space 4096^2
+  shadow map that is only invalidated by scene, sun or collapse changes. The dynamic
+  cascades now contain only debris, vehicles and trees; the shader combines both maps
+  with a minimum so building shadows remain at every distance.
 - Camera-frustum culling for intact objects and detached chunks, a distance-based fade
   of the procedural facade and sub-pixel culling of distant rubble chunks.
 - Density scaling beyond the object budget: `scene.density` also packs `ceil(density)`

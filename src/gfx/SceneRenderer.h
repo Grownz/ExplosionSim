@@ -36,6 +36,16 @@ public:
     static int ShadowSize(int cascade) {
         return cascade == 0 ? 2048 : 1024;
     }
+    // World-space map for the cached static casters. It is independent of the
+    // camera, so it only has to be re-rendered when the scene or sun changes.
+    static constexpr int kStaticShadowSize = 4096;
+
+    // Renders the intact buildings into the cached static shadow map. Skips the
+    // work when `key` matches the previous call.
+    void RenderStaticShadow(ID3D11DeviceContext* context,
+                            const scene::Scene& scene,
+                            const DirectX::XMFLOAT4X4& lightViewProj,
+                            uint64_t key);
 
     // Renders the scene into the cascaded directional shadow maps and clears
     // them when the scene is disabled. Must run before the ground pass.
@@ -51,6 +61,9 @@ public:
 
     ID3D11ShaderResourceView* ShadowSRV(int cascade) const {
         return shadowSRV_[cascade].Get();
+    }
+    ID3D11ShaderResourceView* StaticShadowSRV() const {
+        return staticShadowSRV_.Get();
     }
     ID3D11SamplerState* ShadowSampler() const { return shadowSampler_.Get(); }
 
@@ -104,6 +117,7 @@ private:
                               const scene::Scene& scene);
     void DrawChunks(ID3D11DeviceContext* context, const scene::Scene& scene,
                     bool shadowPass, int cascade);
+    bool EnsureStaticInstanceCapacity(UINT capacity);
 
     ComPtr<ID3D11VertexShader> vertexShader_;
     ComPtr<ID3D11VertexShader> shadowVertexShader_;
@@ -121,6 +135,16 @@ private:
     ComPtr<ID3D11Buffer> shadowCascadeBuffer_;
     ComPtr<ID3D11SamplerState> shadowSampler_;
     std::vector<Mesh> meshes_;
+
+    // Cached static-caster shadow map (intact buildings, world space).
+    ComPtr<ID3D11Texture2D> staticShadowTexture_;
+    ComPtr<ID3D11DepthStencilView> staticShadowDSV_;
+    ComPtr<ID3D11ShaderResourceView> staticShadowSRV_;
+    ComPtr<ID3D11Buffer> staticInstanceBuffer_;
+    ComPtr<ID3D11ShaderResourceView> staticInstanceSRV_;
+    UINT staticInstanceCapacity_ = 0;
+    uint64_t staticShadowKey_ = 0;
+    bool staticShadowValid_ = false;
 
     // Voronoi chunk geometry and per-frame instance data.
     ComPtr<ID3D11Buffer> chunkVertexBuffer_;

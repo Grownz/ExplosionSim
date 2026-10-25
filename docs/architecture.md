@@ -227,9 +227,12 @@ on that facade rather than a flat recolour. With `scene.voronoiChunks` the rubbl
 convex hull instead: all hulls live in one vertex/index buffer, each vertex names its
 chunk, and a per-chunk structured buffer supplies the rigid transform, so a whole
 building is one draw call. The renderer is
-split into a depth-only shadow pass and a main pass that runs after the ground. The shadow
-pass renders three cascades (2048/1024/1024) with slope-scaled normal offset and 5x5 PCF;
-the far cascade draws only the large silhouettes. Trees switch to a single-cone mesh
+split into a depth-only shadow pass and a main pass that runs after the ground. Intact
+buildings render once into a camera-independent world-space shadow map (4096^2) that is
+only invalidated by scene, sun or collapse changes; the dynamic cascades
+(2048/1024/1024) contain debris, vehicles and trees and use 5x5 PCF. The last 10 % of
+each cascade blends into the next one, and the next cascade's light frustum is extended
+backwards to cover the blend band. Trees switch to a single-cone mesh
 beyond 80 m and the procedural facade fades beyond 150 m. A distance haze matches the
 ground and sky. Determinism is preserved by a seeded RNG, fixed physics substeps and a
 generation hash exposed for tests.

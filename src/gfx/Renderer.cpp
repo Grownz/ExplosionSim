@@ -1064,10 +1064,20 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
                                 : XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
 
         for (int cascade = 0; cascade < 3; ++cascade) {
+            // Overlap the next cascade backwards by the blend band so both
+            // maps cover the last 10 % of the previous cascade.
+            constexpr float kBlendWidth = 0.1f;
+            float nearZ = splits[cascade];
+            if (cascade > 0) {
+                nearZ = std::max(
+                    splits[cascade - 1],
+                    splits[cascade] - kBlendWidth *
+                                          (splits[cascade] - splits[cascade - 1]));
+            }
             XMVECTOR corners[8];
             int corner = 0;
             for (int side = 0; side < 2; ++side) {
-                const float z = side == 0 ? splits[cascade] : splits[cascade + 1];
+                const float z = side == 0 ? nearZ : splits[cascade + 1];
                 for (int sy = -1; sy <= 1; sy += 2) {
                     for (int sx = -1; sx <= 1; sx += 2) {
                         corners[corner++] = XMVector3TransformCoord(
@@ -1100,6 +1110,24 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         }
         shadowConstants_.cascadeSplits.w = farPlane;
 
+        // Static world-space map for the intact buildings. It covers the town
+        // and is independent of the camera, so it can be cached across frames.
+        const float staticRadius = std::max(extent * 1.2f, 60.0f) + 20.0f;
+        const XMVECTOR staticCenter = XMVectorSet(0.0f, 15.0f, 0.0f, 1.0f);
+        const XMVECTOR staticEye =
+            staticCenter + sunDirection * (staticRadius * 2.0f);
+        const XMMATRIX staticView =
+            XMMatrixLookAtLH(staticEye, staticCenter, up);
+        const XMMATRIX staticProjection = XMMatrixOrthographicLH(
+            staticRadius * 2.0f, staticRadius * 2.0f, 0.1f,
+            staticRadius * 4.0f);
+        XMStoreFloat4x4(&shadowConstants_.staticLightViewProj,
+                        staticView * staticProjection);
+        shadowConstants_.staticTexel = XMFLOAT4(
+            1.0f / float(SceneRenderer::kStaticShadowSize),
+            staticRadius * 2.0f / float(SceneRenderer::kStaticShadowSize),
+            0.0006f, 0.0f);
+
         D3D11_MAPPED_SUBRESOURCE shadowMapped{};
         if (SUCCEEDED(context->Map(shadowConstantBuffer_.Get(), 0,
                                    D3D11_MAP_WRITE_DISCARD, 0, &shadowMapped))) {
@@ -1118,6 +1146,25 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     sceneView.eye = camera.Position();
     sceneView.projScale =
         float(hdr_.height) / (2.0f * std::tan(camera.FovY() * 0.5f));
+    // The static cache only depends on the scene, the sun and the set of
+    // collapsed buildings, not on the camera.
+    uint64_t staticShadowKey = simulation.Scene().GenerationHash();
+    staticShadowKey ^=
+        uint64_t(int(std::lround(settings.sunAzimuthDeg * 10.0f))) *
+        0x9E3779B97F4A7C15ull;
+    staticShadowKey ^=
+        uint64_t(int(std::lround(settings.sunElevationDeg * 10.0f))) << 32;
+    int collapsedBuildings = 0;
+    for (const scene::SceneObject& object : simulation.Scene().Objects()) {
+        if (object.collapsed) {
+            ++collapsedBuildings;
+        }
+    }
+    staticShadowKey ^= uint64_t(collapsedBuildings) * 0xBF58476D1CE4E5B9ull;
+
+    sceneRenderer_.RenderStaticShadow(context, simulation.Scene(),
+                                      shadowConstants_.staticLightViewProj,
+                                      staticShadowKey);
     sceneRenderer_.RenderShadow(context, simulation.Scene(), sceneView,
                                 shadowConstants_.lightViewProj);
 
@@ -1130,17 +1177,18 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
         context->PSSetShader(groundPS_.Get(), nullptr, 0);
 
-        ID3D11ShaderResourceView* groundShadow[3] = {
+        ID3D11ShaderResourceView* groundShadow[4] = {
             sceneRenderer_.ShadowSRV(0), sceneRenderer_.ShadowSRV(1),
-            sceneRenderer_.ShadowSRV(2)};
-        context->PSSetShaderResources(2, 3, groundShadow);
+            sceneRenderer_.ShadowSRV(2), sceneRenderer_.StaticShadowSRV()};
+        context->PSSetShaderResources(2, 4, groundShadow);
         ID3D11SamplerState* groundShadowSampler = sceneRenderer_.ShadowSampler();
         context->PSSetSamplers(2, 1, &groundShadowSampler);
 
         context->Draw(3, 0);
 
-        ID3D11ShaderResourceView* nullShadow[3] = {nullptr, nullptr, nullptr};
-        context->PSSetShaderResources(2, 3, nullShadow);
+        ID3D11ShaderResourceView* nullShadow[4] = {nullptr, nullptr, nullptr,
+                                                   nullptr};
+        context->PSSetShaderResources(2, 4, nullShadow);
         ID3D11SamplerState* nullSampler = nullptr;
         context->PSSetSamplers(2, 1, &nullSampler);
         context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());

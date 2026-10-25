@@ -4,14 +4,17 @@ Texture2D<float> SceneDepth : register(t1);
 Texture2D<float> ShadowMap0 : register(t2);
 Texture2D<float> ShadowMap1 : register(t3);
 Texture2D<float> ShadowMap2 : register(t4);
+Texture2D<float> StaticShadowMap : register(t5);
 SamplerComparisonState ShadowSampler : register(s2);
 
 cbuffer ShadowConstants : register(b2)
 {
     float4x4 LightViewProj[3];
+    float4x4 StaticLightViewProj;
     float4 CascadeSplits;
     float4 CascadeTexel;
     float4 CascadeWorldTexel;
+    float4 StaticTexel;
 };
 
 // Renders the infinite ground plane as a fullscreen ray/plane intersection and
@@ -43,22 +46,75 @@ float SampleGroundCascade(Texture2D<float> map, float4x4 lightViewProj,
     return shadow / 25.0;
 }
 
-// 5x5 PCF against the cascade selected by view distance, matching scene.hlsl.
-float SampleGroundShadow(float3 worldPosition)
+float SampleGroundStatic(float3 worldPosition)
+{
+    const float3 offsetPosition =
+        worldPosition + float3(0.0, StaticTexel.y * 1.5, 0.0);
+    const float4 lightPosition =
+        mul(StaticLightViewProj, float4(offsetPosition, 1.0));
+    const float2 uv = float2(0.5 + lightPosition.x * 0.5,
+                             0.5 - lightPosition.y * 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0))
+    {
+        return 1.0;
+    }
+    const float depth = lightPosition.z - StaticTexel.z;
+
+    float shadow = 0.0;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            shadow += StaticShadowMap.SampleCmpLevelZero(
+                ShadowSampler, uv + float2(x, y) * StaticTexel.x, depth);
+        }
+    }
+    return shadow / 9.0;
+}
+
+float SampleGroundDynamic(float3 worldPosition)
 {
     const float distance = length(worldPosition - CameraPosition.xyz);
+    const float blendWidth = 0.1;
     if (distance <= CascadeSplits.x)
     {
-        return SampleGroundCascade(ShadowMap0, LightViewProj[0], CascadeTexel.x,
-                                   CascadeWorldTexel.x, worldPosition);
+        const float s0 = SampleGroundCascade(ShadowMap0, LightViewProj[0],
+            CascadeTexel.x, CascadeWorldTexel.x, worldPosition);
+        const float t = smoothstep(1.0 - blendWidth, 1.0,
+            distance / max(CascadeSplits.x, 1e-3));
+        if (t > 0.0)
+        {
+            const float s1 = SampleGroundCascade(ShadowMap1, LightViewProj[1],
+                CascadeTexel.y, CascadeWorldTexel.y, worldPosition);
+            return lerp(s0, s1, t);
+        }
+        return s0;
     }
     if (distance <= CascadeSplits.y)
     {
-        return SampleGroundCascade(ShadowMap1, LightViewProj[1], CascadeTexel.y,
-                                   CascadeWorldTexel.y, worldPosition);
+        const float s1 = SampleGroundCascade(ShadowMap1, LightViewProj[1],
+            CascadeTexel.y, CascadeWorldTexel.y, worldPosition);
+        const float t = smoothstep(1.0 - blendWidth, 1.0,
+            distance / max(CascadeSplits.y, 1e-3));
+        if (t > 0.0)
+        {
+            const float s2 = SampleGroundCascade(ShadowMap2, LightViewProj[2],
+                CascadeTexel.z, CascadeWorldTexel.z, worldPosition);
+            return lerp(s1, s2, t);
+        }
+        return s1;
     }
     return SampleGroundCascade(ShadowMap2, LightViewProj[2], CascadeTexel.z,
                                CascadeWorldTexel.z, worldPosition);
+}
+
+// 5x5 PCF against the blended cascades and the cached static map.
+float SampleGroundShadow(float3 worldPosition)
+{
+    return min(SampleGroundDynamic(worldPosition),
+               SampleGroundStatic(worldPosition));
 }
 
 float TerrainHeight(float2 p)
