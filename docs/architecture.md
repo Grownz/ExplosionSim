@@ -190,7 +190,12 @@ count.
 block grid with buildings, vehicles on the road centre lines and trees along the
 sidewalks. `scene.density` scales both the object budget (800 at 1.0) and the number of
 objects per block (`ceil(density)`), with their footprints shrunk so that extra copies
-still fit; per-type toggles enable buildings, vehicles and vegetation. Each object stores
+still fit; per-type toggles enable buildings, vehicles and vegetation. The town extent is
+`max(10 * R_fireball + 20, 1.4 * R_destroy + two blocks)` with a 45 m floor, so intact
+objects always exist outside the destruction radius even for a 100 kt charge. The budget
+grows with the town area (capped at 3200) and blocks are sampled uniformly when the grid
+is larger than the budget; objects inside the destruction radius are rejected before
+their chunks are generated. Each object stores
 the free-air arrival time (`BlastModel::EstimateArrivalTimeS`), peak overpressure,
 Friedlander impulse (`OverpressureImpulsePaS`) and thermal fluence evaluated at
 generation, plus the number of buildings that block the line of sight to ground zero.
@@ -203,7 +208,11 @@ up to +-28 % of a cell but never closer than 0.28 cell to their neighbour, which
 every chunk usable as an OBB while removing most of the grid's right angles. With
 `scene.voronoiChunks` (the default) the building is instead split into convex Voronoi
 cells clipped to its box; each cell keeps a flat-shaded hull for rendering, a PCA-fitted
-OBB as the collision proxy, and its shared faces define the support joints. Vehicles and trees
+OBB as the collision proxy, and its shared faces define the support joints. The cap
+polygon of each clipped cell is ordered with precomputed angles and a bounded insertion
+sort: an inlined `std::atan2` comparator fed to `std::sort` could violate the
+strict-weak-ordering contract under `/fp:fast` + AVX2 and walk past the cap array for
+near-degenerate cells, which crashed large scenes. Vehicles and trees
 become 6-DOF rigid bodies, and burning objects emit fire particles.
 
 Collapse is progressive. Each chunk edge carries a joint; the blast load sets a failure

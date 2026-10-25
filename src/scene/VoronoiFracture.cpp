@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 using namespace DirectX;
 
@@ -150,12 +151,31 @@ void ClipByPlane(Polyhedron& poly, const XMFLOAT3& normal, float d, int seed) {
         const XMFLOAT3 u = Normalize(Sub(reference, Scale(normal,
                                                           Dot(reference, normal))));
         const XMFLOAT3 v = Cross(normal, u);
-        std::sort(uniqueCap.begin(), uniqueCap.end(), [&](int a, int b) {
-            const XMFLOAT3 pa = Sub(out.vertices[a], centroid);
-            const XMFLOAT3 pb = Sub(out.vertices[b], centroid);
-            return std::atan2(Dot(pa, v), Dot(pa, u)) <
-                   std::atan2(Dot(pb, v), Dot(pb, u));
-        });
+
+        // Sort the cap polygon by angle around the centroid. The angles are
+        // precomputed and the insertion sort is bounded, so the ordering never
+        // depends on std::sort's strict-weak-ordering contract. That contract is
+        // fragile here: /fp:fast + AVX2 codegen could make the inlined angle
+        // comparator read past the cap array and crash for large scenes.
+        std::vector<std::pair<float, int>> ordered;
+        ordered.reserve(uniqueCap.size());
+        for (int index : uniqueCap) {
+            const XMFLOAT3 offset = Sub(out.vertices[index], centroid);
+            ordered.emplace_back(std::atan2(Dot(offset, v), Dot(offset, u)), index);
+        }
+        for (size_t i = 1; i < ordered.size(); ++i) {
+            const std::pair<float, int> value = ordered[i];
+            size_t j = i;
+            while (j > 0 && ordered[j - 1].first > value.first) {
+                ordered[j] = ordered[j - 1];
+                --j;
+            }
+            ordered[j] = value;
+        }
+        for (size_t i = 0; i < ordered.size(); ++i) {
+            uniqueCap[i] = ordered[i].second;
+        }
+
         out.faces.push_back(std::move(uniqueCap));
         out.faceSeed.push_back(seed);
     }

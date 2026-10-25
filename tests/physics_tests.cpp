@@ -7,6 +7,7 @@
 #include "gfx/Shader.h"
 #include "scene/PhysicsWorld.h"
 #include "scene/SceneTypes.h"
+#include "scene/VoronoiFracture.h"
 #include "sim/BlastModel.h"
 #include "sim/Simulation.h"
 #include "sim/VolumeBaker.h"
@@ -957,6 +958,65 @@ void TestVoronoiChunks() {
     }
 }
 
+// Regression: this 15-cell fracture with this exact box and seed crashed inside
+// the inlined cap-angle comparator when the core was built with /fp:fast and
+// AVX2 (100 kt scene, seed 1357). Keeping the case catches a std::sort
+// regression immediately.
+void TestVoronoiCapRegression() {
+    std::vector<ex::scene::FractureCell> cells;
+    ex::scene::FractureBoxVoronoi(
+        DirectX::XMFLOAT3(135.726883f, 5.4607129f, 23.9028206f),
+        DirectX::XMFLOAT3(2.85750365f, 5.4607129f, 2.87149811f), 15, 493601596u,
+        cells);
+    CHECK(cells.size() == 15);
+    int triangles = 0;
+    for (const ex::scene::FractureCell& cell : cells) {
+        CHECK(!cell.positions.empty());
+        CHECK(cell.normals.size() == cell.positions.size());
+        CHECK(!cell.indices.empty());
+        CHECK(cell.indices.size() % 3 == 0);
+        CHECK(cell.volume > 0.0f);
+        CHECK(cell.half.x > 0.0f && cell.half.y > 0.0f && cell.half.z > 0.0f);
+        for (uint32_t index : cell.indices) {
+            CHECK(index < cell.positions.size());
+        }
+        for (const DirectX::XMFLOAT3& point : cell.positions) {
+            CHECK(std::isfinite(point.x) && std::isfinite(point.y) &&
+                  std::isfinite(point.z));
+        }
+        triangles += int(cell.indices.size() / 3);
+    }
+    CHECK(triangles > 0);
+}
+
+// The procedural town has to grow with the destruction radius: for a 100 kt
+// burst the old 160 m extent contained no intact objects at all.
+void TestSceneExtentScalesWithCharge() {
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 1.0e8; // 100 kt
+    charge.heightOfBurstM = 0.4;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 1357;
+    settings.density = 0.05f;
+    settings.quality = 0;
+    settings.voronoiChunks = false;
+
+    ex::scene::Scene scene;
+    scene.Generate(settings, model);
+
+    const float destructionRadius = float(model.FireballMaxRadiusM() * 2.0);
+    CHECK(destructionRadius > 600.0f);
+    CHECK(!scene.Empty());
+    CHECK(scene.Extent() > destructionRadius);
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        CHECK(object.distanceToBurst >= destructionRadius);
+    }
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -987,6 +1047,8 @@ int main() {
     RUN(TestStackSettles);
     RUN(TestProgressiveCollapse);
     RUN(TestVoronoiChunks);
+    RUN(TestVoronoiCapRegression);
+    RUN(TestSceneExtentScalesWithCharge);
     RUN(TestSettingsRoundTrip);
     RUN(TestFuseAndDetonation);
 #undef RUN

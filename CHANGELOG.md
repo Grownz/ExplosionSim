@@ -19,11 +19,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The high-fidelity domain cube scales with the charge (`3 * R_fireball`, up to a 2 km
   half extent) instead of being capped at 30 m; the reduced-order volume box already
   follows the fireball and cloud.
+- The procedural town now scales with the destruction radius: its extent is at least
+  `1.4 * R_destroy + two blocks` (45 m floor), so intact buildings, vehicles and trees
+  remain visible outside the blast even for a 100 kt charge. The object budget grows with
+  the town area (capped at 3200), blocks are sampled uniformly instead of filling one
+  corner, and objects inside the destruction radius are rejected before their chunks are
+  generated.
 
 ### Fixed
 
 - The high-fidelity plume rose as a thin column because the auto-scale coarsened the grid
   before the vortex ring formed and the render's soot threshold hid the diluted cap.
+- Large charges could crash while generating Voronoi building chunks (access violation in
+  `Scene::Generate`). The cap polygon was sorted with `std::sort` and an inlined
+  `std::atan2` comparator; under `/fp:fast` + AVX2 a near-degenerate cap could violate the
+  strict-weak-ordering contract and make the insertion sort read past the cap array, which
+  then indexed the vertex list with a garbage value. Caps are now ordered with precomputed
+  angles and a bounded insertion sort, which cannot walk out of bounds. A regression test
+  covers the exact 100 kt / seed 1357 cell.
 
 ## [0.4.0] - 2026-10-25
 

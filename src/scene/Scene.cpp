@@ -245,10 +245,11 @@ void BuildVoronoiChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int 
         std::clamp(int(volume / targetCellVolume + 0.5f), 6, 72);
 
     std::vector<FractureCell> cells;
+    const uint32_t cellSeed = rng.NextU32() ^ (object.id * 0x9E3779B9u);
     FractureBoxVoronoi(
         DirectX::XMFLOAT3(object.position.x, size.y * 0.5f, object.position.z),
         DirectX::XMFLOAT3(size.x * 0.5f, size.y * 0.5f, size.z * 0.5f), cellCount,
-        rng.NextU32() ^ (object.id * 0x9E3779B9u), cells);
+        cellSeed, cells);
     if (cells.empty()) {
         BuildGridChunks(object, size, quality, rng);
         return;
@@ -314,10 +315,26 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     const sim::Charge& charge = blast.GetCharge();
     const double fireball = std::max(blast.FireballMaxRadiusM(), 0.1);
     const double minRadius = std::max({fireball * 2.0, charge.RadiusM() * 2.0, 6.0});
-    extent_ = float(std::clamp(10.0 * fireball + 20.0, 45.0, 160.0));
 
-    const int budget =
-        std::max(0, int(800.0f * std::clamp(settings_.density, 0.0f, 4.0f)));
+    const float block = 16.0f;
+    const float road = 6.0f;
+    const float pitch = block + road;
+
+    // The town must extend beyond the destruction radius so that intact objects
+    // remain visible outside the blast. Two extra blocks of margin guarantee a
+    // populated ring even for very large charges, where the old 160 m cap left
+    // nothing outside the radius.
+    const double baseExtent = std::clamp(10.0 * fireball + 20.0, 45.0, 160.0);
+    const double radiusExtent = minRadius * 1.4 + 2.0 * double(pitch);
+    extent_ = float(std::max(baseExtent, radiusExtent));
+
+    // Keep roughly the same object density as the 160 m reference town, but cap
+    // the budget so a 100 kt scene still generates in a fraction of a second.
+    const double density = double(std::clamp(settings_.density, 0.0f, 4.0f));
+    const double extentScale = std::max(1.0, double(extent_) / 160.0);
+    const int maxBudget = 3200;
+    const int budget = std::clamp(
+        int(800.0 * density * extentScale * extentScale), 0, maxBudget);
     if (budget == 0) {
         return;
     }
@@ -330,9 +347,6 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
 
     core::Rng rng(uint64_t(settings_.seed) * 0x9E3779B97F4A7C15ull + 0xC0FFEEull);
 
-    const float block = 16.0f;
-    const float road = 6.0f;
-    const float pitch = block + road;
     const int cells = int(extent_ / pitch) + 1;
     const double burstHeight = charge.heightOfBurstM;
 
@@ -344,10 +358,28 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     const float slotSize = block / float(slotsPerAxis);
     const float shrink = 1.0f / std::sqrt(float(perBlock));
 
+    // For large scenes the budget is smaller than the block grid. Sample blocks
+    // uniformly instead of filling one corner row by row until the budget runs
+    // out, so the town surrounds the burst instead of clustering in a corner.
+    // The per-type base rates (empty lots, parked cars, tree spacing) keep the
+    // sampler from undershooting the category budget.
+    const int blockCount = (2 * cells + 1) * (2 * cells + 1);
+    const int blockSlots = std::max(1, blockCount * perBlock);
+    const auto keepChance = [&](int categoryBudget, float baseKeep) {
+        if (categoryBudget <= 0) {
+            return 0.0f;
+        }
+        const float target = 0.9f * float(categoryBudget) /
+                             (float(blockSlots) * baseKeep);
+        return std::min(1.0f, target);
+    };
+    const float buildingChance = keepChance(buildingBudget, 0.85f);
+    const float vehicleChance = keepChance(vehicleBudget, 0.45f);
+    const float treeChance = keepChance(treeBudget, 0.55f);
+
     auto addObject = [&](SceneObjectType type, float x, float z, float yaw,
                          DirectX::XMFLOAT3 size, int variant) {
         SceneObject object;
-        object.id = uint32_t(objects_.size());
         object.type = type;
         object.position = DirectX::XMFLOAT3(x, 0.0f, z);
         object.yaw = yaw;
@@ -358,6 +390,18 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                            ? kBuildingColors[variant & 3]
                            : DirectX::XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 
+        // Everything inside the destruction radius is gone before the first
+        // frame. Reject it before fracturing the building, which keeps huge
+        // scenes cheap and avoids generating chunks that are thrown away.
+        const double dx = double(x);
+        const double dz = double(z);
+        const double dy = double(size.y) * 0.5 - burstHeight;
+        object.distanceToBurst = float(std::sqrt(dx * dx + dz * dz + dy * dy));
+        if (object.distanceToBurst < minRadius) {
+            return;
+        }
+
+        object.id = uint32_t(objects_.size());
         if (type == SceneObjectType::Building) {
             const int quality = std::clamp(settings_.quality, 0, 2);
             if (settings_.voronoiChunks) {
@@ -365,14 +409,6 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
             } else {
                 BuildGridChunks(object, size, quality, rng);
             }
-        }
-
-        const double dx = double(x);
-        const double dz = double(z);
-        const double dy = double(size.y) * 0.5 - burstHeight;
-        object.distanceToBurst = float(std::sqrt(dx * dx + dz * dz + dy * dy));
-        if (object.distanceToBurst < minRadius) {
-            return;
         }
 
         object.arrivalTime = float(blast.EstimateArrivalTimeS(object.distanceToBurst));
@@ -390,6 +426,9 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
             const float cx = ix * pitch + block * 0.5f;
             const float cz = iz * pitch + block * 0.5f;
             if (std::abs(cx) > extent_ || std::abs(cz) > extent_) {
+                continue;
+            }
+            if (buildingChance < 1.0f && rng.Float01() >= buildingChance) {
                 continue;
             }
             if (rng.Float01() < 0.15f) {
@@ -419,6 +458,9 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     int vehicles = 0;
     for (int ix = -cells; ix <= cells && vehicles < vehicleBudget; ++ix) {
         for (int iz = -cells; iz <= cells && vehicles < vehicleBudget; ++iz) {
+            if (vehicleChance < 1.0f && rng.Float01() >= vehicleChance) {
+                continue;
+            }
             if (rng.Float01() < 0.55f) {
                 continue;
             }
@@ -448,6 +490,9 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     int trees = 0;
     for (int ix = -cells; ix <= cells && trees < treeBudget; ++ix) {
         for (int iz = -cells; iz <= cells && trees < treeBudget; ++iz) {
+            if (treeChance < 1.0f && rng.Float01() >= treeChance) {
+                continue;
+            }
             if (rng.Float01() < 0.45f) {
                 continue;
             }
