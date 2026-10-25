@@ -108,6 +108,10 @@ The application opens a window, arms the 200 g charge and detonates after two se
 | H | Hide / show the interface |
 | F12 | Save a PNG screenshot next to the executable |
 
+The orbit and pan controls stop at the ground plane: the camera stays at least 0.4 m above
+it and the look-at target cannot be pushed below it, so the view never ends up under the
+terrain.
+
 ### Command line
 
 ```text
@@ -118,7 +122,8 @@ The application opens a window, arms the 200 g charge and detonates after two se
 --charge <kg>         TNT equivalent mass
 --hob <metres>        height of burst
 --azimuth <degrees>   camera azimuth for headless captures
---elevation <degrees> camera elevation for headless captures
+--elevation <degrees> camera elevation for headless captures (clamped to the
+                      ground clearance, like the interactive orbit)
 --benchmark           render frames offscreen and print timing
 --frames <count>      number of benchmark frames (default 120)
 --high-fidelity       use the GPU Euler solver for the volume

@@ -58,6 +58,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The orbit camera could be dragged below the ground plane (negative pitch, low target or
+  a large zoom-out). The desired target height is clamped to the ground and the pitch is
+  limited to the angle at which the orbit position would reach a 0.4 m clearance, both for
+  the smoothed and the snapped state, so the view never dips under the terrain.
 - `ParticleSystem::Reset` stored the absolute range start in the per-species cursor,
   but `AcquireSlot` treats the cursor as an offset inside the range. Every detonation
   therefore indexed past the species range and corrupted the heap, which showed up as

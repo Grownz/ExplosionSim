@@ -41,6 +41,9 @@ public:
 
 private:
     DirectX::XMFLOAT3 ComputePosition() const;
+    // Clamps the desired target height and pitch so the orbit stays above the
+    // ground plane.
+    void ClampDesired();
 
     DirectX::XMFLOAT3 target_{0.0f, 18.0f, 0.0f};
     DirectX::XMFLOAT3 targetDesired_{0.0f, 18.0f, 0.0f};
