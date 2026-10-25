@@ -18,22 +18,41 @@ Target releases: `0.4.0` (phases 1-2), `0.5.0` (phases 3-4), `0.6.0` (phase 5).
   of rotating like cubes.
 - **1.5 Sleeping - unchanged.** The existing per-body sleep is kept. Island
   sleeping was implemented but reverted together with the solver rewrite below.
-- **1.2 / 1.3 - deferred.** The clipped manifold, warm starting and split impulse
-  were implemented and tested, but the sequential-impulse solver becomes unstable
-  with three or four contact points per manifold. The old solver's stability
-  depended on its single-point fallback for touching boxes. Restoring these
-  features needs a proper block solver.
+- **1.2 / 1.3 - implemented, measured, not shipped.** The complete pipeline was
+  built: clipped four-point manifold, regularised 4x4 block LCP with active-set
+  enumeration, warm starting and split impulse. The LCP is correct (symmetric
+  impulses for a symmetric contact, correct `A * lambda_old` right-hand side), but
+  the acceptance criteria were not met, so the code was reverted. The patch is
+  preserved in `docs/experiments/block-solver.patch`.
 
-### Findings for the block solver work
+### Block solver measurements (2026-10-25)
+
+- **Stability:** a tower of eight boxes still sinks ~4 cm per contact and
+  collapses after ~1.5 s. The per-contact solution is exact, but the load needs
+  many Gauss-Seidel sweeps to travel through a chain of contacts; eight to twenty
+  iterations are not enough.
+- **Scene:** rubble does not settle better than with the previous solver
+  (~0.9-1.2 m/s average speed, almost no sleeping bodies). The behaviour is
+  pre-existing, not a regression.
+- **Cost:** density 1 5.2 ms vs 2.2 ms per 1/120 s step, density 3 15.5 ms vs
+  5.8 ms (2.4-2.7x). The matrix inertia and the 4x4 solve per contact dominate.
+- **Conclusion:** the block solver improves contact correctness but not the
+  observable behaviour, at a significant cost. Shipping it would be a regression.
+
+### Findings (kept for the next attempt)
 
 - The LCP right-hand side must include `A * lambda_old`; omitting it makes warm
   starting inject energy instead of removing it.
-- Four coplanar contact points make the normal system rank-deficient and converge
-  very slowly under Gauss-Seidel; three points are statically determinate.
-- Two points leave a box free to rock about the connecting line, which shows up as
-  a slow collapse of stacks after about a second.
+- Four coplanar contact points make the normal system rank-deficient; a small
+  diagonal regularisation selects the symmetric impulse distribution.
+- Three points are statically determinate but form a right triangle on a square
+  face, so the unique impulse distribution is asymmetric and induces a slow tilt.
+- Two points leave a box free to rock about the connecting line.
 - The previous solver only looked stable because touching boxes produced a single
   centroid contact (no contact torque).
+- The remaining bottleneck is chain convergence. A future solver should add
+  shock propagation with a contact graph, graph-coloured batching, or switch to
+  XPBD, rather than more Gauss-Seidel iterations.
 
 ## 0. Baseline and budget
 
