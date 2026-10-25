@@ -14,6 +14,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The on-screen data box now includes the frame rate and lists time, TNT equivalent,
   shock-front radius and FPS in four rows inside a rounded dark-grey panel that sizes
   itself to the text.
+- The main Detonate button now switches to **Rearm** while an explosion is rendered.
+  Rearm stops the solver, resets the scene and holds the fuse; the next click on
+  **Detonate** starts the new explosion immediately.
 
 ### Changed
 
@@ -28,12 +31,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The high-fidelity domain cube scales with the charge (`3 * R_fireball`, up to a 2 km
   half extent) instead of being capped at 30 m; the reduced-order volume box already
   follows the fireball and cloud.
-- The procedural town now scales with the destruction radius: its extent is at least
-  `1.4 * R_destroy + two blocks` (45 m floor), so intact buildings, vehicles and trees
-  remain visible outside the blast even for a 100 kt charge. The object budget grows with
-  the town area (capped at 3200), blocks are sampled uniformly instead of filling one
-  corner, and objects inside the destruction radius are rejected before their chunks are
-  generated.
+- The procedural town is now a disc whose radius is the half diagonal of the previous
+  square layout. Its base extent is `max(10 * R_fireball + 20, 1.4 * R_destroy + two
+  blocks)` (45 m floor), so intact objects remain visible outside the destruction radius
+  even for a 100 kt charge. The object budget scales with the circle area (capped at
+  3200), blocks are sampled uniformly, and objects outside the disc or inside the
+  destruction radius are rejected before their chunks are generated.
+- High-fidelity playback is driven directly by the playback time scale: at 1.0 the
+  solver advances one simulated second per real second. `solverStepsPerFrame` is now only
+  a per-batch work cap, and the solver's CFL time step may grow up to 1 ms so coarse
+  auto-scaled grids can actually keep up. The "Real time" readout is wall-clock time.
 
 ### Fixed
 

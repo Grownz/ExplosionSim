@@ -330,6 +330,11 @@ void App::RestartSimulation() {
     simulation_.FinishPendingVolumeWork();
 }
 
+void App::RearmSimulation() {
+    simulation_.Rearm();
+    simulation_.FinishPendingVolumeWork();
+}
+
 bool App::CaptureScreenshot(const std::wstring& path) {
     std::vector<uint8_t> pixels;
     int width = 0;
@@ -372,12 +377,12 @@ int App::RunInteractive() {
         }
 
         const double now = clock.Now();
-        float dt = float(now - lastTime);
+        const float frameDt = std::clamp(float(now - lastTime), 0.0f, 1.0f);
         lastTime = now;
-        dt = std::clamp(dt, 0.0f, 0.1f);
+        const float dt = std::clamp(frameDt, 0.0f, 0.1f);
 
-        smoothedFrameMs = smoothedFrameMs * 0.9 + double(dt) * 1000.0 * 0.1;
-        statAccumulator_ += dt;
+        smoothedFrameMs = smoothedFrameMs * 0.9 + double(frameDt) * 1000.0 * 0.1;
+        statAccumulator_ += frameDt;
         ++statFrames_;
         if (statAccumulator_ >= 0.4) {
             fps_ = float(statFrames_ / statAccumulator_);
@@ -403,6 +408,7 @@ int App::RunInteractive() {
         HandleCameraInput(dt);
 
         bool forceRestart = false;
+        bool forceRearm = false;
         bool stepOnce = false;
         bool captureNow = false;
         if (!io.WantCaptureKeyboard) {
@@ -410,7 +416,7 @@ int App::RunInteractive() {
                 settings_.paused = !settings_.paused;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_R)) {
-                forceRestart = true;
+                forceRearm = true;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_F)) {
                 FrameCamera();
@@ -426,15 +432,15 @@ int App::RunInteractive() {
         if (!settings_.paused && !loadingScene) {
             if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
                 if (simulation_.IsArmed()) {
-                    simulation_.Update(dt);
+                    simulation_.Update(frameDt);
                 } else {
-                    const double advance = renderer_.ConsumeSolverAdvance();
+                    const double advance = renderer_.AdvanceSolver(simulation_, frameDt);
                     if (advance > 0.0) {
-                        simulation_.AdvanceExternal(advance);
+                        simulation_.AdvanceExternal(advance, frameDt);
                     }
                 }
             } else {
-                simulation_.Update(dt);
+                simulation_.Update(frameDt);
             }
         }
         renderer_.SetSolverPaused(settings_.paused || loadingScene);
@@ -452,6 +458,9 @@ int App::RunInteractive() {
         if (actions.restart) {
             forceRestart = true;
         }
+        if (actions.rearm) {
+            forceRearm = true;
+        }
         if (actions.frameCamera) {
             FrameCamera();
         }
@@ -459,7 +468,7 @@ int App::RunInteractive() {
             if (simulation_.IsArmed()) {
                 simulation_.DetonateNow();
             } else {
-                RestartSimulation();
+                forceRearm = true;
             }
             simulation_.FinishPendingVolumeWork();
         }
@@ -473,7 +482,7 @@ int App::RunInteractive() {
                     renderer_.StepSolverOnce(8);
                     const double advance = renderer_.ConsumeSolverAdvance();
                     if (advance > 0.0) {
-                        simulation_.AdvanceExternal(advance);
+                        simulation_.AdvanceExternal(advance, frameDt);
                     }
                 }
             } else {
@@ -482,6 +491,9 @@ int App::RunInteractive() {
         }
         if (forceRestart) {
             RestartSimulation();
+        }
+        if (forceRearm) {
+            RearmSimulation();
         }
 
         ImGui::Render();

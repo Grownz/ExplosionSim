@@ -330,20 +330,24 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     const float pitch = block + road;
 
     // The town must extend beyond the destruction radius so that intact objects
-    // remain visible outside the blast. Two extra blocks of margin guarantee a
-    // populated ring even for very large charges, where the old 160 m cap left
-    // nothing outside the radius.
+    // remain visible outside the blast. The old layout was a square of half
+    // extent `squareExtent`; the town is now the circumscribed disc whose radius
+    // is that square's half diagonal.
     const double baseExtent = std::clamp(10.0 * fireball + 20.0, 45.0, 160.0);
     const double radiusExtent = minRadius * 1.4 + 2.0 * double(pitch);
-    extent_ = float(std::max(baseExtent, radiusExtent));
+    const double squareExtent = std::max(baseExtent, radiusExtent);
+    constexpr double kCircleAreaRatio = 1.5707963267948966; // pi / 2
+    const double townRadius = squareExtent * 1.4142135623730951; // sqrt(2)
+    extent_ = float(townRadius);
 
-    // Keep roughly the same object density as the 160 m reference town, but cap
+    // Keep roughly the same object density as the old 160 m square town, but cap
     // the budget so a 100 kt scene still generates in a fraction of a second.
     const double density = double(std::clamp(settings_.density, 0.0f, 4.0f));
-    const double extentScale = std::max(1.0, double(extent_) / 160.0);
+    const double extentScale = std::max(1.0, squareExtent / 160.0);
     const int maxBudget = 3200;
     const int budget = std::clamp(
-        int(800.0 * density * extentScale * extentScale), 0, maxBudget);
+        int(800.0 * density * extentScale * extentScale * kCircleAreaRatio), 0,
+        maxBudget);
     if (budget == 0) {
         report(1.0f);
         return;
@@ -373,7 +377,16 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     // out, so the town surrounds the burst instead of clustering in a corner.
     // The per-type base rates (empty lots, parked cars, tree spacing) keep the
     // sampler from undershooting the category budget.
-    const int blockCount = (2 * cells + 1) * (2 * cells + 1);
+    int blockCount = 0;
+    for (int ix = -cells; ix <= cells; ++ix) {
+        for (int iz = -cells; iz <= cells; ++iz) {
+            const float cx = ix * pitch + block * 0.5f;
+            const float cz = iz * pitch + block * 0.5f;
+            if (cx * cx + cz * cz <= extent_ * extent_) {
+                ++blockCount;
+            }
+        }
+    }
     const int blockSlots = std::max(1, blockCount * perBlock);
     const auto keepChance = [&](int categoryBudget, float baseKeep) {
         if (categoryBudget <= 0) {
@@ -402,6 +415,13 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         object.color = type == SceneObjectType::Building
                            ? kBuildingColors[variant & 3]
                            : DirectX::XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+
+        // Keep the town inside the circular footprint; the block grid is a
+        // bounding square, so edge objects are rejected here.
+        const double radialSq = double(x) * double(x) + double(z) * double(z);
+        if (radialSq > double(extent_) * double(extent_)) {
+            return;
+        }
 
         // Everything inside the destruction radius is gone before the first
         // frame. Reject it before fracturing the building, which keeps huge
@@ -438,7 +458,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         for (int iz = -cells; iz <= cells && buildings < buildingBudget; ++iz) {
             const float cx = ix * pitch + block * 0.5f;
             const float cz = iz * pitch + block * 0.5f;
-            if (std::abs(cx) > extent_ || std::abs(cz) > extent_) {
+            if (cx * cx + cz * cz > extent_ * extent_) {
                 continue;
             }
             if (buildingChance < 1.0f && rng.Float01() >= buildingChance) {
@@ -489,7 +509,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                                    : ix * pitch + rng.Range(0.0f, block);
             const float z = alongX ? iz * pitch + rng.Range(0.0f, block)
                                    : iz * pitch + block + road * 0.5f;
-            if (std::abs(x) > extent_ || std::abs(z) > extent_) {
+            if (x * x + z * z > extent_ * extent_) {
                 continue;
             }
             const float yaw = alongX ? 90.0f : 0.0f;
@@ -527,7 +547,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                             rng.Range(-road * 0.4f, road * 0.4f);
             const float z = iz * pitch + block + road * 0.5f +
                             rng.Range(-road * 0.4f, road * 0.4f);
-            if (std::abs(x) > extent_ || std::abs(z) > extent_) {
+            if (x * x + z * z > extent_ * extent_) {
                 continue;
             }
             for (int slot = 0; slot < perBlock && trees < treeBudget; ++slot) {

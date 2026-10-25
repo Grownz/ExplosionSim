@@ -448,7 +448,7 @@ void GpuEulerSolver::Step(int steps) {
     while (remaining > 0) {
         PollReduction();
         lastSpeed = std::max(maxSpeed_, 1.0f);
-        const float dt = std::clamp(kCfl * dx_ / lastSpeed, 1e-7f, 5e-5f);
+        const float dt = std::clamp(kCfl * dx_ / lastSpeed, 1e-7f, 1.0e-3f);
         const int batch = std::min(remaining, kMaxBatchSteps);
 
         for (int step = 0; step < batch; ++step) {

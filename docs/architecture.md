@@ -67,6 +67,10 @@ process Win32 messages
 `StepFixed` provides deterministic stepping for headless captures: it does not use the
 real-time clock and can be driven to an exact simulation time.
 
+The main Detonate button becomes **Rearm** once an explosion is being rendered. Rearm
+stops the solver, resets the scene/volume and holds the fuse; the next **Detonate** press
+starts the new explosion immediately.
+
 ## Rendering pipeline
 
 | Pass | Target | Notes |
@@ -200,12 +204,14 @@ count.
 block grid with buildings, vehicles on the road centre lines and trees along the
 sidewalks. `scene.density` scales both the object budget (800 at 1.0) and the number of
 objects per block (`ceil(density)`), with their footprints shrunk so that extra copies
-still fit; per-type toggles enable buildings, vehicles and vegetation. The town extent is
-`max(10 * R_fireball + 20, 1.4 * R_destroy + two blocks)` with a 45 m floor, so intact
-objects always exist outside the destruction radius even for a 100 kt charge. The budget
-grows with the town area (capped at 3200) and blocks are sampled uniformly when the grid
-is larger than the budget; objects inside the destruction radius are rejected before
-their chunks are generated. Each object stores
+still fit; per-type toggles enable buildings, vehicles and vegetation. The town is a disc
+whose radius is the half diagonal of the previous square layout
+(`sqrt(2) * max(10 * R_fireball + 20, 1.4 * R_destroy + two blocks)`, 45 m floor), so
+intact objects always exist outside the destruction radius even for a 100 kt charge. The
+budget grows with the circle area (π/2 relative to the old square, capped at 3200) and
+blocks are sampled uniformly when the grid is larger than the budget; objects outside the
+disc or inside the destruction radius are rejected before their chunks are generated.
+Each object stores
 the free-air arrival time (`BlastModel::EstimateArrivalTimeS`), peak overpressure,
 Friedlander impulse (`OverpressureImpulsePaS`) and thermal fluence evaluated at
 generation, plus the number of buildings that block the line of sight to ground zero.
@@ -276,11 +282,12 @@ generation hash exposed for tests.
 - The `Renderer` owns the solver and detects a new detonation through
   `Simulation::BlastSerial()`.
 - While the charge is armed no solver work is done; after detonation the solver is
-  initialised and advanced once per rendered frame. `solverStepsPerFrame` is the budget
-  at the default playback scale of 0.06; the actual step count is
-  `round(solverStepsPerFrame * timeScale / 0.06)`, clamped to 1..96. The playback
-  slider therefore speeds up or slows down the numerical solution without touching the
-  CFL time step.
+  advanced once per rendered frame to the playback target: `realDt * timeScale`
+  simulated seconds, with 1.0 meaning real time. The solver's CFL step is smaller, so
+  `AdvanceSolver` submits enough steps to cover the target (up to a safety cap).
+  `solverStepsPerFrame` now only caps the work submitted per batch. The explicit time
+  step follows the CFL condition with a 1 ms upper bound, so coarse auto-scaled grids can
+  actually keep up with real-time playback. The "Real time" readout is wall-clock time.
 - The reduced-order model still advances, but its time is driven by the solver's
   simulated advance (`Simulation::AdvanceExternal`), so the camera, fireball light and
   readouts stay in sync.
@@ -295,7 +302,9 @@ At 128³ with 24 steps per frame the solver and renderer reach about 50 fps at 1
 on an RTX 3090. 96³ is roughly twice as fast. The GPU work is dominated by the three
 sweeps; the reduction and render passes are comparatively cheap. 256³ is about eight
 times more expensive per step, 512³ about 64 times; those grids are intended for stills
-or very slow motion. A VRAM guard rejects a grid that would need more than 75 % of the
+or very slow motion. Real-time playback (time scale 1.0) submits many more steps and
+lowers the frame rate; coarse auto-scaled grids use the larger CFL step (up to 1 ms).
+A VRAM guard rejects a grid that would need more than 75 % of the
 dedicated video memory.
 
 ## Determinism and headless mode

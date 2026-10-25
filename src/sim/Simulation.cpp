@@ -61,6 +61,8 @@ void Simulation::StartSceneGeneration(const scene::SceneSettings& settings,
         sceneThread_.join();
     }
     pendingScene_.reset();
+    // Reset the visible town immediately; the worker fills the replacement.
+    scene_.Clear();
     sceneReady_.store(false, std::memory_order_relaxed);
     sceneCompleted_ = false;
     sceneProgress_.store(0.0f, std::memory_order_relaxed);
@@ -135,13 +137,21 @@ bool Simulation::ConsumeSceneCompletion() {
 void Simulation::LogSceneStats() {
     if (scene_.Settings().enabled && !scene_.Empty()) {
         const scene::SceneStats stats = scene_.Stats();
-        LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %.0f m extent",
+        LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %.0f m radius",
                 stats.buildings, stats.vehicles, stats.trees, stats.chunks,
                 scene_.Extent());
     }
 }
 
 void Simulation::Reset() {
+    ResetInternal(false);
+}
+
+void Simulation::Rearm() {
+    ResetInternal(true);
+}
+
+void Simulation::ResetInternal(bool holdFuse) {
     if (!initialized_) {
         return;
     }
@@ -174,9 +184,10 @@ void Simulation::Reset() {
     realTime_ = 0.0;
     bakeAccumulator_ = 0.0;
     detonated_ = false;
+    fuseHeld_ = holdFuse;
     fuseRemaining_ = std::max(0.0, settings_.fuseSeconds);
 
-    if (fuseRemaining_ <= 0.0) {
+    if (!fuseHeld_ && fuseRemaining_ <= 0.0) {
         Detonate();
     }
 }
@@ -187,6 +198,7 @@ void Simulation::Detonate() {
     }
 
     detonated_ = true;
+    fuseHeld_ = false;
     fuseRemaining_ = 0.0;
     ++blastSerial_;
 
@@ -264,13 +276,15 @@ void Simulation::Update(float realDt) {
 
     PollSceneGeneration();
 
-    realDt = std::clamp(realDt, 0.0f, 0.1f);
+    realDt = std::max(realDt, 0.0f);
     realTime_ += realDt;
 
     if (!detonated_) {
-        fuseRemaining_ -= double(realDt);
-        if (fuseRemaining_ <= 0.0) {
-            Detonate();
+        if (!fuseHeld_) {
+            fuseRemaining_ -= double(realDt);
+            if (fuseRemaining_ <= 0.0) {
+                Detonate();
+            }
         }
         return;
     }
@@ -299,9 +313,11 @@ void Simulation::StepFixed(double dtSim) {
     }
 
     if (!detonated_) {
-        fuseRemaining_ -= dtSim;
-        if (fuseRemaining_ <= 0.0) {
-            Detonate();
+        if (!fuseHeld_) {
+            fuseRemaining_ -= dtSim;
+            if (fuseRemaining_ <= 0.0) {
+                Detonate();
+            }
         }
         return;
     }
@@ -315,7 +331,7 @@ void Simulation::StepFixed(double dtSim) {
     realTime_ += dtSim;
 }
 
-void Simulation::AdvanceExternal(double dtSim) {
+void Simulation::AdvanceExternal(double dtSim, double realDt) {
     if (!initialized_ || !detonated_ || dtSim <= 0.0) {
         return;
     }
@@ -325,7 +341,7 @@ void Simulation::AdvanceExternal(double dtSim) {
     if (settings_.mode == SimulationMode::ReducedOrder) {
         particles_.Update(float(dtSim), blast_, *pool_);
     }
-    realTime_ += dtSim;
+    realTime_ += realDt >= 0.0 ? realDt : dtSim;
 }
 
 void Simulation::UpdateScene(double dtSim) {

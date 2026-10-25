@@ -46,6 +46,10 @@ public:
     void Render(sim::Simulation& simulation, const Camera& camera, const RenderSettings& settings);
     void SetSolverPaused(bool paused) { solverPaused_ = paused; }
 
+    // Advances the high-fidelity solver so its simulated time matches the
+    // playback time scale for this frame. Returns the advanced simulation time.
+    double AdvanceSolver(sim::Simulation& simulation, float realDt);
+
     // Advances the GPU solver to a target simulation time (headless captures).
     void PrepareHighFidelity(sim::Simulation& simulation, double targetTime);
 
@@ -111,6 +115,7 @@ private:
     bool EnsureTargets(int width, int height);
     bool CreateTarget(Target& target, int width, int height);
     EulerConfig MakeEulerConfig(const sim::Simulation& simulation) const;
+    bool EnsureSolver(sim::Simulation& simulation);
     void MaybeExpandSolver(const sim::Simulation& simulation);
     void UploadVolume(const sim::VolumeFrame& frame);
     void UploadParticles(const std::vector<sim::ParticleInstance>& instances,

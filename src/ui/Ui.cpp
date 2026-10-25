@@ -164,7 +164,8 @@ bool PhysSlider(const char* label, double* value, float minValue, float maxValue
     return changed;
 }
 
-void DrawDetonation(app::AppSettings& settings, UiActions& actions) {
+void DrawDetonation(app::AppSettings& settings, const sim::Simulation& simulation,
+                    UiActions& actions) {
     SectionHeader("DETONATION");
 
     double massKg = settings.simulation.chargeMassKg;
@@ -222,11 +223,23 @@ void DrawDetonation(app::AppSettings& settings, UiActions& actions) {
     ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccent);
-    if (ImGui::Button("DETONATE##main_detonate", ImVec2(-1.0f, ImGui::GetFontSize() * 2.2f))) {
-        actions.detonateNow = true;
+    const bool rendering = !simulation.IsArmed();
+    const char* mainLabel =
+        rendering ? "REARM##main_detonate" : "DETONATE##main_detonate";
+    if (ImGui::Button(mainLabel, ImVec2(-1.0f, ImGui::GetFontSize() * 2.2f))) {
+        if (rendering) {
+            actions.rearm = true;
+        } else {
+            actions.detonateNow = true;
+        }
     }
     ImGui::PopStyleColor(3);
-    Hint("Equivalent TNT energy: the charge mass is converted with 4.184 MJ/kg.");
+    if (rendering) {
+        Hint("Stops the current solver and resets the scene. The next click starts "
+             "the new explosion.");
+    } else {
+        Hint("Equivalent TNT energy: the charge mass is converted with 4.184 MJ/kg.");
+    }
 }
 
 void DrawAtmosphere(app::AppSettings& settings, UiActions& actions) {
@@ -289,7 +302,7 @@ void DrawPlayback(app::AppSettings& settings, UiActions& actions, const sim::Sim
     }
     ImGui::SameLine();
     if (ImGui::Button("Rearm")) {
-        actions.restart = true;
+        actions.rearm = true;
     }
 
     float timeScale = float(settings.simulation.timeScale);
@@ -298,6 +311,13 @@ void DrawPlayback(app::AppSettings& settings, UiActions& actions, const sim::Sim
         settings.simulation.timeScale = double(timeScale);
         actions.applySimulationSettings = true;
     }
+
+    if (ImGui::Button("Set real time (1x)", ImVec2(-1.0f, 0.0f))) {
+        settings.simulation.timeScale = 1.0;
+        actions.applySimulationSettings = true;
+    }
+    Hint("Playback speed: 1.0 plays one simulated second per real second. The "
+         "high-fidelity solver follows this scale directly.");
 
     if (ImGui::Checkbox("Loop simulation", &settings.simulation.loop)) {
         actions.applySimulationSettings = true;
@@ -309,7 +329,11 @@ void DrawPlayback(app::AppSettings& settings, UiActions& actions, const sim::Sim
 
     if (simulation.IsArmed()) {
         ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
-        Readout("Fuse", "%.2f s", simulation.FuseRemaining());
+        if (simulation.IsFuseHeld()) {
+            Readout("State", "Ready to detonate");
+        } else {
+            Readout("Fuse", "%.2f s", simulation.FuseRemaining());
+        }
         ImGui::PopStyleColor();
         if (ImGui::Button("Detonate now", ImVec2(-1.0f, 0.0f))) {
             actions.detonateNow = true;
@@ -377,7 +401,7 @@ void DrawEnvironment(app::AppSettings& settings, const sim::Simulation& simulati
     }
 
     Readout("Objects", "%d", int(simulation.Scene().Objects().size()));
-    Readout("Scene extent", "%.0f m", simulation.Scene().Extent());
+    Readout("Scene radius", "%.0f m", simulation.Scene().Extent());
     Hint("Buildings, vehicles and trees are generated deterministically around ground "
          "zero. The scene reacts to the analytic blast field.");
 }
@@ -407,11 +431,13 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
             actions.applySimulationSettings = true;
         }
 
-        if (ImGui::SliderInt("Steps/frame", &settings.simulation.solverStepsPerFrame, 4, 64)) {
+        if (ImGui::SliderInt("Max steps/batch", &settings.simulation.solverStepsPerFrame, 4, 64)) {
         }
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             actions.applySimulationSettings = true;
         }
+        Hint("The playback time scale sets the solver speed; 1.0 = real time. "
+             "This only caps the work submitted per batch.");
 
         if (ImGui::Checkbox("Solver auto-scale", &settings.simulation.solverAutoScale)) {
             actions.applySimulationSettings = true;
@@ -419,7 +445,7 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
 
         if (settings.simulation.solverResolution >= 256) {
             Hint("Solver grids of 256³ and 512³ need several GB of VRAM and are not "
-                 "real-time; reduce steps/frame.");
+                 "real-time; lower the time scale or grid.");
         }
 
         const gfx::SolverStats& stats = renderer.Solver();
@@ -702,8 +728,14 @@ UiActions Draw(UiContext& context) {
         settings.paused = !settings.paused;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Detonate##top_detonate", ImVec2(panelWidth * 0.30f, 0))) {
-        actions.detonateNow = true;
+    const bool topRendering = !context.simulation.IsArmed();
+    if (ImGui::Button(topRendering ? "Rearm##top_detonate" : "Detonate##top_detonate",
+                      ImVec2(panelWidth * 0.30f, 0))) {
+        if (topRendering) {
+            actions.rearm = true;
+        } else {
+            actions.detonateNow = true;
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Frame##top_frame", ImVec2(panelWidth * 0.24f, 0))) {
@@ -713,7 +745,7 @@ UiActions Draw(UiContext& context) {
     ImGui::Separator();
 
     if (ImGui::CollapsingHeader("Detonation", ImGuiTreeNodeFlags_DefaultOpen)) {
-        DrawDetonation(settings, actions);
+        DrawDetonation(settings, context.simulation, actions);
     }
     if (ImGui::CollapsingHeader("Atmosphere")) {
         DrawAtmosphere(settings, actions);
@@ -758,11 +790,16 @@ UiActions Draw(UiContext& context) {
                      overlayFlags | ImGuiWindowFlags_NoBackground);
         ImGui::SetWindowFontScale(1.1f);
         ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
-        ImGui::TextUnformatted("CHARGE ARMED");
+        ImGui::TextUnformatted(context.simulation.IsFuseHeld() ? "CHARGE READY"
+                                                              : "CHARGE ARMED");
         ImGui::PopStyleColor();
         ImGui::SetWindowFontScale(2.4f);
         ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
-        ImGui::Text("DETONATION IN %.2f s", context.simulation.FuseRemaining());
+        if (context.simulation.IsFuseHeld()) {
+            ImGui::TextUnformatted("READY");
+        } else {
+            ImGui::Text("DETONATION IN %.2f s", context.simulation.FuseRemaining());
+        }
         ImGui::PopStyleColor();
         ImGui::SetWindowFontScale(1.0f);
         ImGui::End();

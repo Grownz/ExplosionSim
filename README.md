@@ -36,8 +36,8 @@ start-up at 0.4 m above the ground**.
   smoke cloud. It only grows; with a fixed voxel count the effective accuracy drops by
   the same factor, keeping the bake cost constant. Can be disabled in the Rendering
   panel for a fixed box.
-- **Procedural environment** – a deterministic town of buildings, vehicles and trees
-  around ground zero. The analytic blast field drives pressure-impulse damage, window
+- **Procedural environment** – a deterministic circular town of buildings, vehicles and
+  trees around ground zero. The analytic blast field drives pressure-impulse damage, window
   and facade charring, rigid-body motion for vehicles/trees and progressive building
   collapse into pre-fractured chunks; burning objects glow and emit embers. Buildings
   shield each other from the blast, the rubble uses true oriented-box contacts, and a
@@ -50,7 +50,8 @@ start-up at 0.4 m above the ground**.
   MUSCL reconstruction, CFL-adaptive time step) runs on the GPU at 64³–128³ and drives
   the volumetric field. Selectable under *Physics & Effects → Simulation model*.
 - **2 s fuse** – the charge is armed on start-up, a countdown is shown, then the
-  detonation is simulated in slow motion (time scale is adjustable).
+  detonation is simulated in adjustable slow motion (time scale; 1.0 = real time). The
+  high-fidelity solver follows the same playback scale.
 - **Headless capture** - reproducible PNG screenshots and a benchmark mode without a
   window, ideal for CI and documentation. Scene generation and rendering are deterministic;
   the multithreaded physics solver can vary the exact debris layout between runs.
@@ -106,7 +107,7 @@ The application opens a window, arms the 200 g charge and detonates after two se
 | Right / middle mouse drag | Pan camera |
 | Mouse wheel | Zoom |
 | Space | Pause / resume |
-| R | Rearm (restart with fuse) |
+| R | Rearm (hold the fuse; Detonate starts the next explosion) |
 | F | Frame the blast |
 | H | Hide / show the interface |
 | F12 | Save a PNG screenshot next to the executable |
@@ -131,7 +132,7 @@ terrain.
 --frames <count>      number of benchmark frames (default 120)
 --high-fidelity       use the GPU Euler solver for the volume
 --solver-resolution   solver grid resolution (64, 96 or 128)
---solver-steps        solver steps per frame (default 24)
+--solver-steps        max solver steps per batch (default 24)
 --solver-time <s>     solver time for headless captures
 --solver-step-count <n>  capture at an exact solver step count
 --solver-auto-scale   expand the Euler domain before the field hits the edge
@@ -165,7 +166,7 @@ Examples:
 | Height of burst | 0.4 m |
 | Fuse | 2.0 s |
 | Ambient conditions | 15 °C, 1013 hPa, 1 m/s wind |
-| Time scale | 0.06 (slow motion) |
+| Time scale | 0.06 (slow motion; 1.0 = real time) |
 | Loop | off |
 | Grid overlay | on |
 | Loop duration | 0.55 s of simulated time |
@@ -184,9 +185,11 @@ range.
 
 The high-fidelity mode is a genuine finite-volume Euler solution for the blast, with a
 sub-grid entrainment and vortex-ring closure for the mushroom cap that the coarse grid
-cannot resolve. It is deliberately slow-motion: 24 solver steps per frame at 128³ advance roughly
-0.3–0.5 ms of physical time per frame. Particle rendering is disabled in this mode
-because the volume is the physical solution. For a headless capture use e.g.
+cannot resolve. It follows the playback time scale: at 1.0 the solver advances one
+simulated second per real second. The CFL step adapts to the grid (up to 1 ms), so coarse
+auto-scaled grids can keep up; fine grids or large charges lower the frame rate. Particle
+rendering is disabled in this mode because the volume is the physical solution. For a
+headless capture use e.g.
 `--high-fidelity --time 0.005`.
 
 ![High-fidelity mushroom cloud](docs/screenshots/high_fidelity_35000.png)
@@ -199,7 +202,7 @@ High-fidelity settings (Physics & Effects panel):
 
 - Grid resolution: 64³ / 96³ / 128³ / 192³ / 256³ / 512³ (256³ and 512³ need several GB
   of VRAM and are not real-time)
-- Solver steps per frame: 4–64
+- Max solver steps per batch: 4–64 (the playback time scale sets the speed)
 - Domain: six times the analytic fireball radius (half extent 3×), cubic, with a
   reflecting ground and an absorbing sponge at the lateral/top boundaries
 - Uses the moist-air density and virtual temperature; wind drifts the rendered volume

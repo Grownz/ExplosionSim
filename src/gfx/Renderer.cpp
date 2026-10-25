@@ -810,6 +810,66 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
     }
 }
 
+bool Renderer::EnsureSolver(sim::Simulation& simulation) {
+    if (solverBlastSerial_ != simulation.BlastSerial()) {
+        if (solver_.Reset(MakeEulerConfig(simulation))) {
+            solverBlastSerial_ = simulation.BlastSerial();
+            solverCapWarned_ = false;
+            solverPrepared_ = false;
+        } else {
+            LogWarn("High-fidelity solver reset failed.");
+            return false;
+        }
+    }
+    return solver_.HasVolume();
+}
+
+double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
+    if (solverPaused_ || simulation.IsArmed()) {
+        return 0.0;
+    }
+    if (!EnsureSolver(simulation)) {
+        return 0.0;
+    }
+
+    MaybeExpandSolver(simulation);
+
+    // The playback time scale is the target: at 1.0 the solver advances one
+    // simulated second per real second. The solver's CFL step is smaller, so
+    // submit enough steps to cover the frame, with a safety cap.
+    const double target =
+        std::max(0.0, double(realDt) * simulation.Settings().timeScale);
+    if (target <= 0.0) {
+        return 0.0;
+    }
+
+    constexpr int kMaxStepsPerFrame = 8192;
+    const int batchMax =
+        std::clamp(simulation.Settings().solverStepsPerFrame * 8, 32, 512);
+    double advancedTotal = 0.0;
+    int submitted = 0;
+    while (advancedTotal + 1e-9 < target && submitted < kMaxStepsPerFrame) {
+        const float dt = solver_.Stats().dt;
+        int steps = 1;
+        if (dt > 0.0f) {
+            steps = int(std::ceil((target - advancedTotal) / double(dt)));
+            steps =
+                std::clamp(steps, 1, std::min(batchMax, kMaxStepsPerFrame - submitted));
+        }
+        solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius),
+                              float(simulation.Blast().State().cloudCenterY));
+        solver_.Step(steps);
+        const double advanced = solver_.ConsumeAdvance();
+        advancedTotal += advanced;
+        submitted += steps;
+        if (advanced <= 0.0) {
+            break;
+        }
+    }
+    solverPrepared_ = true;
+    return advancedTotal;
+}
+
 void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTime) {
     if (!solver_.Reset(MakeEulerConfig(simulation))) {
         LogError("High-fidelity solver could not be initialised.");
@@ -923,37 +983,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     ID3D11ShaderResourceView* solverVolume = nullptr;
 
     if (highFidelity) {
-        if (!simulation.IsArmed()) {
-            if (solverBlastSerial_ != simulation.BlastSerial()) {
-                if (solver_.Reset(MakeEulerConfig(simulation))) {
-                    solverBlastSerial_ = simulation.BlastSerial();
-                    solverCapWarned_ = false;
-                } else {
-                    LogWarn("High-fidelity solver reset failed.");
-                }
-                solverPrepared_ = false;
-            }
-
-            if (solver_.HasVolume()) {
-                if (!solverPrepared_ && !solverPaused_) {
-                    MaybeExpandSolver(simulation);
-                    // The playback time scale drives the number of solver steps:
-                    // 0.06 (the default) keeps the configured step budget, slower
-                    // settings take fewer steps, faster ones more (up to the cap).
-                    const double referenceScale = 0.06;
-                    const double ratio = std::clamp(
-                        simulation.Settings().timeScale / referenceScale, 0.05, 8.0);
-                    const int baseSteps =
-                        std::clamp(simulation.Settings().solverStepsPerFrame, 1, 96);
-                    const int steps =
-                        std::clamp(int(std::lround(double(baseSteps) * ratio)), 1, 96);
-                    solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius), float(simulation.Blast().State().cloudCenterY));
-                    solver_.Step(steps);
-                }
-                solverVolume = solver_.VolumeSRV();
-            }
+        // AdvanceSolver() has already stepped the solver for this frame. Here we
+        // only bind its volume; an armed/rearmed charge shows no solver volume.
+        if (!simulation.IsArmed() && EnsureSolver(simulation)) {
+            solverVolume = solver_.VolumeSRV();
         }
-        solverPrepared_ = false;
 
         activeVolumeValid_ = solverVolume != nullptr;
         activeVolumeBounds_ = solver_.Bounds();

@@ -66,6 +66,7 @@ private:
     void FrameCamera();
     void ApplySimulationSettings();
     void RestartSimulation();
+    void RearmSimulation();
     bool CaptureScreenshot(const std::wstring& path);
     std::wstring NextScreenshotPath() const;
 

@@ -646,6 +646,35 @@ void TestFuseAndDetonation() {
     simulation.Shutdown();
 }
 
+void TestRearmHoldsFuse() {
+    ex::core::ThreadPool pool(2);
+
+    ex::sim::SimulationSettings settings{};
+    settings.chargeMassKg = 0.2;
+    settings.heightOfBurstM = 0.4;
+    settings.fuseSeconds = 0.0; // detonates immediately on Reset
+    settings.volumeResolution = 32;
+    settings.particleBudget = 4000;
+
+    ex::sim::Simulation simulation;
+    CHECK(simulation.Initialize(settings, pool));
+    CHECK(!simulation.IsArmed());
+
+    simulation.Rearm();
+    CHECK(simulation.IsArmed());
+    CHECK(simulation.IsFuseHeld());
+
+    // A held fuse must not detonate, even after a long update.
+    simulation.Update(5.0f);
+    CHECK(simulation.IsArmed());
+    CHECK(simulation.IsFuseHeld());
+
+    simulation.DetonateNow();
+    CHECK(!simulation.IsArmed());
+    CHECK(!simulation.IsFuseHeld());
+    simulation.Shutdown();
+}
+
 } // namespace
 
 void TestFrustumCulling() {
@@ -1014,9 +1043,17 @@ void TestSceneExtentScalesWithCharge() {
     CHECK(destructionRadius > 600.0f);
     CHECK(!scene.Empty());
     CHECK(scene.Extent() > destructionRadius);
+    const float townRadius = scene.Extent();
+    float maxRadial = 0.0f;
     for (const ex::scene::SceneObject& object : scene.Objects()) {
         CHECK(object.distanceToBurst >= destructionRadius);
+        const float radial =
+            std::sqrt(object.position.x * object.position.x +
+                      object.position.z * object.position.z);
+        CHECK(radial <= townRadius + 0.01f);
+        maxRadial = std::max(maxRadial, radial);
     }
+    CHECK(maxRadial > townRadius * 0.5f);
 }
 
 // The interactive app generates the town on a worker thread. This covers the
@@ -1100,6 +1137,7 @@ int main() {
     RUN(TestAsyncSceneGeneration);
     RUN(TestSettingsRoundTrip);
     RUN(TestFuseAndDetonation);
+    RUN(TestRearmHoldsFuse);
 #undef RUN
 
     if (g_failures == 0) {

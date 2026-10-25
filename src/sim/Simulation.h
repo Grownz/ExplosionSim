@@ -66,6 +66,10 @@ public:
     // Restarts the detonation with the current settings.
     void Reset();
 
+    // Resets the simulation to the pre-detonation state but holds the fuse, so
+    // the next DetonateNow() starts the explosion immediately.
+    void Rearm();
+
     // Applies new settings. Physical changes restart the simulation.
     void ApplySettings(const SimulationSettings& settings);
 
@@ -78,12 +82,14 @@ public:
 
     void DetonateNow();
     bool IsArmed() const { return !detonated_; }
+    bool IsFuseHeld() const { return fuseHeld_; }
     double FuseRemaining() const { return fuseRemaining_; }
     uint64_t BlastSerial() const { return blastSerial_; }
 
     // Advances the model without the real-time clock. Used in high-fidelity
     // mode so the particles/camera follow the GPU solver's simulated time.
-    void AdvanceExternal(double dtSim);
+    // `realDt` is the wall-clock time of the frame (defaults to `dtSim`).
+    void AdvanceExternal(double dtSim, double realDt = -1.0);
 
     const SimulationSettings& Settings() const { return settings_; }
     double Time() const { return blast_.State().time; }
@@ -119,6 +125,7 @@ public:
 
 private:
     void Detonate();
+    void ResetInternal(bool holdFuse);
     void ScheduleVolumeBake(double dtReal);
     void UpdateScene(double dtSim);
     void StartSceneGeneration(const scene::SceneSettings& settings,
@@ -145,6 +152,7 @@ private:
     double observerDistance_ = 100.0;
     double fuseRemaining_ = 0.0;
     bool detonated_ = false;
+    bool fuseHeld_ = false;
     bool initialized_ = false;
     uint64_t blastSerial_ = 0;
 };

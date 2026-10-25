@@ -9,6 +9,7 @@ namespace ex::ui {
 
 struct UiActions {
     bool restart = false;
+    bool rearm = false;
     bool detonateNow = false;
     bool stepOnce = false;
     bool frameCamera = false;
