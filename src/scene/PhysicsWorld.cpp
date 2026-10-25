@@ -194,8 +194,8 @@ void EnsureJoltRuntime() {
 
 struct PhysicsWorld::Impl {
     static constexpr JPH::uint kMaxBodies = 65536;
-    static constexpr JPH::uint kMaxBodyPairs = 131072;
-    static constexpr JPH::uint kMaxContactConstraints = 32768;
+    static constexpr JPH::uint kMaxBodyPairs = 262144;
+    static constexpr JPH::uint kMaxContactConstraints = 65536;
 
     JPH::PhysicsSystem system;
     JPH::TempAllocatorImpl tempAllocator{32 * 1024 * 1024};
