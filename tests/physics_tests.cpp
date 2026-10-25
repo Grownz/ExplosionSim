@@ -3,6 +3,7 @@
 
 #include "core/ThreadPool.h"
 #include "app/Settings.h"
+#include "gfx/Frustum.h"
 #include "gfx/Shader.h"
 #include "scene/PhysicsWorld.h"
 #include "scene/SceneTypes.h"
@@ -624,6 +625,43 @@ void TestFuseAndDetonation() {
 
 } // namespace
 
+void TestFrustumCulling() {
+    // Regression: DirectX::BoundingFrustum needs a projection matrix. Using the
+    // combined view-projection culled most of the scene at some camera angles.
+    using namespace DirectX;
+    const XMVECTOR target = XMVectorSet(0.0f, 0.0f, 0.0f, 1.0f);
+    const float fov = XMConvertToRadians(50.0f);
+    const XMMATRIX projection = XMMatrixPerspectiveFovLH(fov, 16.0f / 9.0f, 0.1f, 5000.0f);
+
+    for (float azimuth : {0.0f, 45.0f, 90.0f, 135.0f, 180.0f, 225.0f, 270.0f, 315.0f}) {
+        const float yaw = XMConvertToRadians(azimuth);
+        const float pitch = XMConvertToRadians(25.0f);
+        const float distance = 100.0f;
+        const XMVECTOR eye = XMVectorSet(
+            XMVectorGetX(target) + distance * std::cos(pitch) * std::sin(yaw),
+            XMVectorGetY(target) + distance * std::sin(pitch),
+            XMVectorGetZ(target) + distance * std::cos(pitch) * std::cos(yaw), 1.0f);
+        const XMMATRIX view = XMMatrixLookAtLH(eye, target, XMVectorSet(0, 1, 0, 0));
+
+        XMFLOAT4X4 viewProj{};
+        XMStoreFloat4x4(&viewProj, view * projection);
+        ex::gfx::FrustumPlanes frustum;
+        frustum.FromViewProj(viewProj);
+
+        // The target and a small town around it must stay visible.
+        CHECK(frustum.ContainsSphere(XMFLOAT3(0.0f, 0.0f, 0.0f), 5.0f));
+        CHECK(frustum.ContainsSphere(XMFLOAT3(40.0f, 10.0f, 0.0f), 5.0f));
+        CHECK(frustum.ContainsSphere(XMFLOAT3(-40.0f, 10.0f, 0.0f), 5.0f));
+
+        // Behind the camera and far outside the view must be rejected.
+        const XMVECTOR behind = eye + XMVector3Normalize(eye - target) * 50.0f;
+        XMFLOAT3 behindPoint{};
+        XMStoreFloat3(&behindPoint, behind);
+        CHECK(!frustum.ContainsSphere(behindPoint, 5.0f));
+        CHECK(!frustum.ContainsSphere(XMFLOAT3(0.0f, 5000.0f, 0.0f), 5.0f));
+    }
+}
+
 int main() {
     TestChargeScaling();
     TestAtmosphere();
@@ -639,6 +677,7 @@ int main() {
     TestSceneGeneration();
     TestSceneDamage();
     TestSceneFire();
+    TestFrustumCulling();
     TestPhysicsWorld();
     TestSettingsRoundTrip();
     TestFuseAndDetonation();

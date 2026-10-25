@@ -1,6 +1,5 @@
 #pragma once
 
-#include <DirectXCollision.h>
 #include <DirectXMath.h>
 #include <d3d11.h>
 

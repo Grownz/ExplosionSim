@@ -1,6 +1,7 @@
 #include "gfx/SceneRenderer.h"
 
 #include "core/Log.h"
+#include "gfx/Frustum.h"
 #include "gfx/Shader.h"
 
 #include <algorithm>
@@ -450,10 +451,10 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
     }
 
     const auto& bodies = scene.Physics().Bodies();
-    const BoundingFrustum frustum(XMLoadFloat4x4(&view.viewProj));
+    FrustumPlanes frustum;
+    frustum.FromViewProj(view.viewProj);
     auto visible = [&frustum](const XMFLOAT3& center, float radius) {
-        const BoundingSphere sphere(center, radius);
-        return frustum.Contains(sphere) != DISJOINT;
+        return frustum.ContainsSphere(center, radius);
     };
 
     for (Mesh& mesh : meshes_) {
@@ -469,7 +470,9 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
                                     object.position.z);
         const float objectRadius =
             std::max({object.size.x, object.size.y, object.size.z}) * 0.75f + 1.0f;
-        if (!visible(objectCenter, objectRadius)) {
+        // Keep casters slightly outside the view so their shadows can still
+        // reach into the visible area.
+        if (!visible(objectCenter, objectRadius + 20.0f)) {
             continue;
         }
 

@@ -27,6 +27,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   counts.
 - `--distance-scale` now also applies to the reduced-order camera framing.
 
+### Fixed
+
+- Scene culling used `DirectX::BoundingFrustum` with the combined view-projection matrix,
+  but that type expects a pure projection matrix. Objects and rubble disappeared at most
+  camera angles. The six planes are now extracted directly from the view-projection
+  matrix (`src/gfx/Frustum.h`) and covered by a regression test.
+- Shadow casters just outside the camera frustum are kept so their shadows still reach
+  into the visible area.
+
 ## [0.3.0] - 2026-10-25
 
 ### Added
