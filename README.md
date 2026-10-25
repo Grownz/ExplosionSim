@@ -38,9 +38,11 @@ start-up at 0.4 m above the ground**.
   panel for a fixed box.
 - **Procedural environment** – a deterministic town of buildings, vehicles and trees
   around ground zero. The analytic blast field drives pressure-impulse damage, window
-  and facade charring, rigid-body motion for vehicles/trees and building collapse into
-  pre-fractured chunks; burning objects glow and emit embers. Seed, density and chunk
-  quality are configurable; `--no-scene` disables it.
+  and facade charring, rigid-body motion for vehicles/trees and progressive building
+  collapse into pre-fractured chunks; burning objects glow and emit embers. Buildings
+  shield each other from the blast, the rubble uses true oriented-box contacts, and a
+  directional shadow map lets the town cast shadows on the terrain. Seed, density and
+  chunk quality are configurable; `--no-scene` disables it.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
@@ -246,6 +248,8 @@ virtual temperature.
   scattering
 - Opaque procedural scene pass (instanced buildings, vehicles, trees and rubble) before
   the volumetric pass, so the depth buffer correctly occludes the fireball/smoke
+- Directional shadow map (2048², 3×3 PCF) rendered from the scene casters; both the
+  terrain and the scene sample it
 - Instanced billboard particles with soft depth fade
 - Procedural sky, terrain, scorch marks, blast ring and fireball ground lighting
 - HDR render target, 5-level bloom pyramid, ACES filmic tonemap

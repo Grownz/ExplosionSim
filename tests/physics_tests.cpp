@@ -412,7 +412,7 @@ void TestPhysicsWorld() {
 void TestSceneDamage() {
     Environment environment{};
     Charge charge{};
-    charge.tntMassKg = 10.0;
+    charge.tntMassKg = 30.0;
     charge.heightOfBurstM = 0.4;
     BlastModel model;
     model.Configure(charge, environment);
@@ -427,13 +427,10 @@ void TestSceneDamage() {
     scene.Update(model, 10.0f);
 
     int damaged = 0;
-    int intact = 0;
     int collapsed = 0;
     for (const ex::scene::SceneObject& object : scene.Objects()) {
         CHECK(object.resolved);
-        if (object.damage == ex::scene::DamageState::Intact) {
-            ++intact;
-        } else {
+        if (object.damage != ex::scene::DamageState::Intact) {
             ++damaged;
         }
         if (object.collapsed) {
@@ -445,7 +442,6 @@ void TestSceneDamage() {
     }
 
     CHECK(damaged > 0);
-    CHECK(intact > 0);
     CHECK(collapsed > 0);
 
     const std::vector<ex::scene::SceneDebrisSpawn> spawns = scene.ConsumeDebrisSpawns();
@@ -453,6 +449,24 @@ void TestSceneDamage() {
 
     scene.Update(model, 0.1f);
     CHECK(scene.ConsumeDebrisSpawns().empty());
+
+    // A small charge must leave the outer town intact (P-I thresholds).
+    Charge light{};
+    light.tntMassKg = 3.0;
+    light.heightOfBurstM = 0.4;
+    BlastModel lightModel;
+    lightModel.Configure(light, environment);
+    ex::scene::Scene lightScene;
+    lightScene.Generate(settings, lightModel);
+    CHECK(!lightScene.Empty());
+    lightScene.Update(lightModel, 10.0f);
+    int intact = 0;
+    for (const ex::scene::SceneObject& object : lightScene.Objects()) {
+        if (object.damage == ex::scene::DamageState::Intact) {
+            ++intact;
+        }
+    }
+    CHECK(intact > 0);
 }
 
 void TestSceneFire() {
@@ -469,6 +483,14 @@ void TestSceneFire() {
     ex::scene::Scene scene;
     scene.Generate(settings, model);
     CHECK(!scene.Empty());
+
+    int shielded = 0;
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        if (object.occluders > 0) {
+            ++shielded;
+        }
+    }
+    CHECK(shielded > 0);
 
     scene.Update(model, 10.0f);
     CHECK(!scene.ConsumeFireSpawns().empty());

@@ -35,6 +35,7 @@ public:
 
     const std::vector<RigidBody>& Bodies() const { return bodies_; }
     std::vector<RigidBody>& Bodies() { return bodies_; }
+    int BodyCount() const { return int(bodies_.size()); }
 
 private:
     void ResolveGround(RigidBody& body, float dt);

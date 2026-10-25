@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <queue>
 #include <utility>
 
 namespace ex::scene {
@@ -69,6 +70,51 @@ DamageState EvaluateDamage(float pressure, float impulse,
     return DamageState::Intact;
 }
 
+bool SegmentHitsAabb(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end,
+                     const DirectX::XMFLOAT3& lower, const DirectX::XMFLOAT3& upper) {
+    float tMin = 0.0f;
+    float tMax = 1.0f;
+    const float origin[3] = {start.x, start.y, start.z};
+    const float direction[3] = {end.x - start.x, end.y - start.y, end.z - start.z};
+    const float boxMin[3] = {lower.x, lower.y, lower.z};
+    const float boxMax[3] = {upper.x, upper.y, upper.z};
+
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(direction[axis]) < 1e-6f) {
+            if (origin[axis] < boxMin[axis] || origin[axis] > boxMax[axis]) {
+                return false;
+            }
+            continue;
+        }
+        float t1 = (boxMin[axis] - origin[axis]) / direction[axis];
+        float t2 = (boxMax[axis] - origin[axis]) / direction[axis];
+        if (t1 > t2) {
+            std::swap(t1, t2);
+        }
+        tMin = std::max(tMin, t1);
+        tMax = std::min(tMax, t2);
+        if (tMin > tMax) {
+            return false;
+        }
+    }
+    return tMax > 0.0f && tMin < 1.0f;
+}
+
+// Places the k-th copy of a block-sized object on a small sub-grid so that
+// density > 1 spreads the extra copies over the block instead of stacking them.
+void SlotOffset(int index, int slotsPerAxis, float slotSize, float block, float& outX,
+                float& outZ) {
+    if (slotsPerAxis <= 1) {
+        outX = 0.0f;
+        outZ = 0.0f;
+        return;
+    }
+    const int col = index % slotsPerAxis;
+    const int row = (index / slotsPerAxis) % slotsPerAxis;
+    outX = (float(col) + 0.5f) * slotSize - block * 0.5f;
+    outZ = (float(row) + 0.5f) * slotSize - block * 0.5f;
+}
+
 } // namespace
 
 void Scene::Clear() {
@@ -123,6 +169,14 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     const int cells = int(extent_ / pitch) + 1;
     const double burstHeight = charge.heightOfBurstM;
 
+    // Density > 1 packs several objects into every block; their footprint is
+    // shrunk accordingly so they still fit without overlapping heavily.
+    const int perBlock =
+        std::max(1, int(std::ceil(std::clamp(settings_.density, 0.0f, 4.0f))));
+    const int slotsPerAxis = int(std::ceil(std::sqrt(float(perBlock))));
+    const float slotSize = block / float(slotsPerAxis);
+    const float shrink = 1.0f / std::sqrt(float(perBlock));
+
     auto addObject = [&](SceneObjectType type, float x, float z, float yaw,
                          DirectX::XMFLOAT3 size, int variant) {
         SceneObject object;
@@ -157,7 +211,46 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                         chunk.color = DirectX::XMFLOAT4(
                             object.color.x * 0.82f, object.color.y * 0.80f,
                             object.color.z * 0.78f, 1.0f);
+                        chunk.gridY = iy;
                         object.chunks.push_back(chunk);
+                    }
+                }
+            }
+
+            // Structural support graph: connect each chunk to its six grid
+            // neighbours. The collapse pass breaks these joints and flood-fills
+            // the remaining support from the ground.
+            auto indexAt = [nx, ny, nz](int ix, int iy, int iz) {
+                return (ix * ny + iy) * nz + iz;
+            };
+            for (int ix = 0; ix < nx; ++ix) {
+                for (int iy = 0; iy < ny; ++iy) {
+                    for (int iz = 0; iz < nz; ++iz) {
+                        const int index = indexAt(ix, iy, iz);
+                        if (ix > 0) {
+                            object.chunks[index].neighbors.push_back(
+                                indexAt(ix - 1, iy, iz));
+                        }
+                        if (ix + 1 < nx) {
+                            object.chunks[index].neighbors.push_back(
+                                indexAt(ix + 1, iy, iz));
+                        }
+                        if (iy > 0) {
+                            object.chunks[index].neighbors.push_back(
+                                indexAt(ix, iy - 1, iz));
+                        }
+                        if (iy + 1 < ny) {
+                            object.chunks[index].neighbors.push_back(
+                                indexAt(ix, iy + 1, iz));
+                        }
+                        if (iz > 0) {
+                            object.chunks[index].neighbors.push_back(
+                                indexAt(ix, iy, iz - 1));
+                        }
+                        if (iz + 1 < nz) {
+                            object.chunks[index].neighbors.push_back(
+                                indexAt(ix, iy, iz + 1));
+                        }
                     }
                 }
             }
@@ -192,16 +285,23 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 continue; // occasional empty lot
             }
 
-            const float jitterX = rng.Range(-3.0f, 3.0f);
-            const float jitterZ = rng.Range(-3.0f, 3.0f);
-            const float width = rng.Range(6.0f, 12.0f);
-            const float depth = rng.Range(6.0f, 12.0f);
-            const float height = rng.Range(6.0f, 26.0f);
-            const float yaw = rng.Float01() < 0.5f ? 0.0f : 90.0f;
-            addObject(SceneObjectType::Building, cx + jitterX, cz + jitterZ, yaw,
-                      DirectX::XMFLOAT3(width, height, depth),
-                      int(rng.NextU32() % 4));
-            ++buildings;
+            // Density > 1 packs several smaller buildings into one block.
+            for (int slot = 0; slot < perBlock && buildings < buildingBudget; ++slot) {
+                float slotX = 0.0f;
+                float slotZ = 0.0f;
+                SlotOffset(slot, slotsPerAxis, slotSize, block, slotX, slotZ);
+                const float jitterX = rng.Range(-3.0f, 3.0f) * shrink;
+                const float jitterZ = rng.Range(-3.0f, 3.0f) * shrink;
+                const float width = rng.Range(6.0f, 12.0f) * shrink;
+                const float depth = rng.Range(6.0f, 12.0f) * shrink;
+                const float height = rng.Range(6.0f, 26.0f);
+                const float yaw = 0.0f;
+                addObject(SceneObjectType::Building, cx + slotX + jitterX,
+                          cz + slotZ + jitterZ, yaw,
+                          DirectX::XMFLOAT3(width, height, depth),
+                          int(rng.NextU32() % 4));
+                ++buildings;
+            }
         }
     }
 
@@ -220,11 +320,17 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 continue;
             }
             const float yaw = alongX ? 90.0f : 0.0f;
-            addObject(SceneObjectType::Vehicle, x, z, yaw,
-                      DirectX::XMFLOAT3(rng.Range(1.7f, 2.2f), rng.Range(1.3f, 2.4f),
-                                        rng.Range(3.8f, 6.5f)),
-                      int(rng.NextU32() % 3));
-            ++vehicles;
+            for (int slot = 0; slot < perBlock && vehicles < vehicleBudget; ++slot) {
+                const float spread = slot * 1.4f;
+                addObject(SceneObjectType::Vehicle,
+                          x + (alongX ? 0.0f : spread) - (alongX ? spread : 0.0f),
+                          z + (alongX ? spread : 0.0f) - (alongX ? 0.0f : spread),
+                          yaw,
+                          DirectX::XMFLOAT3(rng.Range(1.7f, 2.2f), rng.Range(1.3f, 2.4f),
+                                            rng.Range(3.8f, 6.5f)),
+                          int(rng.NextU32() % 3));
+                ++vehicles;
+            }
         }
     }
 
@@ -241,13 +347,61 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
             if (std::abs(x) > extent_ || std::abs(z) > extent_) {
                 continue;
             }
-            const float height = rng.Range(5.0f, 12.0f);
-            addObject(SceneObjectType::Tree, x, z, rng.Range(0.0f, 360.0f),
-                      DirectX::XMFLOAT3(rng.Range(2.0f, 4.5f), height,
-                                        rng.Range(0.25f, 0.45f)),
-                      int(rng.NextU32() % 3));
-            ++trees;
+            for (int slot = 0; slot < perBlock && trees < treeBudget; ++slot) {
+                float slotX = 0.0f;
+                float slotZ = 0.0f;
+                SlotOffset(slot, slotsPerAxis, slotSize, block, slotX, slotZ);
+                const float height = rng.Range(5.0f, 12.0f);
+                addObject(SceneObjectType::Tree, x + slotX * 0.5f, z + slotZ * 0.5f,
+                          rng.Range(0.0f, 360.0f),
+                          DirectX::XMFLOAT3(rng.Range(2.0f, 4.5f), height,
+                                            rng.Range(0.25f, 0.45f)),
+                          int(rng.NextU32() % 3));
+                ++trees;
+            }
         }
+    }
+
+    // Blast shielding: buildings attenuate the load for objects behind them.
+    struct BuildingAabb {
+        DirectX::XMFLOAT3 min;
+        DirectX::XMFLOAT3 max;
+        uint32_t id;
+    };
+    std::vector<BuildingAabb> buildingBoxes;
+    for (const SceneObject& object : objects_) {
+        if (object.type != SceneObjectType::Building) {
+            continue;
+        }
+        BuildingAabb box;
+        box.id = object.id;
+        box.min = DirectX::XMFLOAT3(object.position.x - object.size.x * 0.5f, 0.0f,
+                                    object.position.z - object.size.z * 0.5f);
+        box.max = DirectX::XMFLOAT3(object.position.x + object.size.x * 0.5f,
+                                    object.size.y,
+                                    object.position.z + object.size.z * 0.5f);
+        buildingBoxes.push_back(box);
+    }
+
+    const DirectX::XMFLOAT3 burstPoint(0.0f, float(burstHeight), 0.0f);
+    for (SceneObject& object : objects_) {
+        const DirectX::XMFLOAT3 target(object.position.x, object.size.y * 0.5f,
+                                       object.position.z);
+        int occluders = 0;
+        for (const BuildingAabb& box : buildingBoxes) {
+            if (box.id == object.id) {
+                continue;
+            }
+            if (SegmentHitsAabb(burstPoint, target, box.min, box.max)) {
+                ++occluders;
+            }
+        }
+        object.occluders = occluders;
+        const float factor =
+            std::clamp(std::pow(0.35f, float(occluders)), 0.05f, 1.0f);
+        object.peakOverpressurePa *= factor;
+        object.impulsePaS *= factor;
+        object.thermalFluenceJm2 *= factor;
     }
 
     hash_ = 1469598103934665603ull;
@@ -316,7 +470,7 @@ void Scene::Update(const sim::BlastModel&, float dtSim) {
             if ((object.damage == DamageState::Heavy ||
                  object.damage == DamageState::Destroyed) &&
                 !object.collapsed) {
-                FractureBuilding(object);
+                CollapseBuilding(object);
             }
         } else if ((object.damage == DamageState::Heavy ||
                     object.damage == DamageState::Destroyed) &&
@@ -387,20 +541,84 @@ void Scene::ActivateBody(SceneObject& object) {
     object.bodyIndex = physics_.AddBody(body);
 }
 
-void Scene::FractureBuilding(SceneObject& object) {
-    if (object.collapsed) {
+void Scene::CollapseBuilding(SceneObject& object) {
+    if (object.collapsed || object.chunks.empty()) {
         return;
     }
-    object.collapsed = true;
+
+    const int count = int(object.chunks.size());
+    const float peak = object.peakOverpressurePa;
+    const bool destroyed = object.damage == DamageState::Destroyed;
+    // Joints are weaker once the building is in the destroyed state.
+    const float jointStrength = destroyed ? 9000.0f : 26000.0f;
 
     const float radialLength = std::sqrt(object.position.x * object.position.x +
                                          object.position.z * object.position.z);
-    const float nx = radialLength > 1e-3f ? object.position.x / radialLength : 1.0f;
-    const float nz = radialLength > 1e-3f ? object.position.z / radialLength : 0.0f;
-    const float baseSpeed =
-        std::clamp(object.peakOverpressurePa / 8000.0f, 1.0f, 12.0f);
+    const float burstX = -object.position.x / std::max(radialLength, 1e-3f);
+    const float burstZ = -object.position.z / std::max(radialLength, 1e-3f);
 
-    for (SceneChunk& chunk : object.chunks) {
+    std::vector<float> load(count, 0.0f);
+    for (int i = 0; i < count; ++i) {
+        const SceneChunk& chunk = object.chunks[i];
+        const float heightFraction =
+            std::clamp(chunk.center.y / std::max(object.size.y, 0.1f), 0.0f, 1.0f);
+        const float dx = chunk.center.x - object.position.x;
+        const float dz = chunk.center.z - object.position.z;
+        const float horizontal = std::sqrt(dx * dx + dz * dz);
+        float facing = 0.5f;
+        if (horizontal > 1e-3f) {
+            facing = 0.5f + 0.5f * ((dx * burstX + dz * burstZ) / horizontal);
+        }
+        load[i] = peak * (0.65f + 0.35f * heightFraction) * (0.70f + 0.60f * facing);
+    }
+
+    auto jointBroken = [&](int a, int b) {
+        return 0.5f * (load[a] + load[b]) > jointStrength;
+    };
+
+    // Flood-fill the remaining support from the ground. Chunks that are no
+    // longer connected to a supported base chunk detach and fall.
+    std::vector<bool> supported(count, false);
+    std::queue<int> queue;
+    for (int i = 0; i < count; ++i) {
+        if (object.chunks[i].gridY == 0 && load[i] <= jointStrength * 1.15f) {
+            supported[i] = true;
+            queue.push(i);
+        }
+    }
+    while (!queue.empty()) {
+        const int current = queue.front();
+        queue.pop();
+        for (int neighbour : object.chunks[current].neighbors) {
+            if (supported[neighbour] || jointBroken(current, neighbour)) {
+                continue;
+            }
+            supported[neighbour] = true;
+            queue.push(neighbour);
+        }
+    }
+
+    int detached = 0;
+    for (int i = 0; i < count; ++i) {
+        if (!supported[i]) {
+            ++detached;
+        }
+    }
+    if (detached == 0) {
+        return; // heavy damage, but the structure is still supported
+    }
+
+    object.collapsed = true;
+    const float baseSpeed =
+        std::clamp(peak / 8000.0f, 1.0f, 12.0f) * (destroyed ? 1.0f : 0.6f);
+
+    for (int i = 0; i < count; ++i) {
+        if (supported[i]) {
+            continue;
+        }
+        SceneChunk& chunk = object.chunks[i];
+        chunk.detached = true;
+
         RigidBody body;
         body.position = chunk.center;
         body.halfExtents = chunk.half;
@@ -411,12 +629,13 @@ void Scene::FractureBuilding(SceneObject& object) {
         body.mass = std::clamp(volume * 350.0f, 80.0f, 15000.0f);
         body.invMass = 1.0f / body.mass;
         body.orientation = DirectX::XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
-        body.velocity = DirectX::XMFLOAT3(nx * baseSpeed * 0.8f, baseSpeed * 0.25f,
-                                          nz * baseSpeed * 0.8f);
+        body.velocity = DirectX::XMFLOAT3(burstX * baseSpeed * 0.8f,
+                                          baseSpeed * 0.25f,
+                                          burstZ * baseSpeed * 0.8f);
         body.angularVelocity = DirectX::XMFLOAT3(chunk.center.x * 0.08f,
                                                  chunk.center.z * 0.08f,
                                                  chunk.center.y * 0.05f);
-        body.restitution = 0.15f;
+        body.restitution = 0.12f;
         body.friction = 0.8f;
         chunk.bodyIndex = physics_.AddBody(body);
     }
@@ -445,6 +664,29 @@ std::vector<SceneFireSpawn> Scene::ConsumeFireSpawns() {
     std::vector<SceneFireSpawn> result = std::move(fireSpawns_);
     fireSpawns_.clear();
     return result;
+}
+
+SceneStats Scene::Stats() const {
+    SceneStats stats;
+    stats.chunks = 0;
+    for (const SceneObject& object : objects_) {
+        switch (object.type) {
+        case SceneObjectType::Building:
+            ++stats.buildings;
+            break;
+        case SceneObjectType::Vehicle:
+            ++stats.vehicles;
+            break;
+        case SceneObjectType::Tree:
+            ++stats.trees;
+            break;
+        default:
+            break;
+        }
+        stats.chunks += int(object.chunks.size());
+    }
+    stats.bodies = physics_.BodyCount();
+    return stats;
 }
 
 } // namespace ex::scene

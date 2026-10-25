@@ -288,14 +288,32 @@ The scene is not a structural finite-element model. It reuses the analytic blast
 Damage uses a pressure-impulse criterion per object type (window, masonry, steel and
 vegetation ranges; see `src/scene/Scene.cpp`). Heavy or destroyed buildings collapse into
 pre-fractured chunks; vehicles and trees become 6-DOF rigid bodies. The rigid-body solver
-uses an isotropic inertia approximation, an averaged ground contact point and
-bounding-sphere body-body proxies, so rubble piles are plausible rather than exact.
+uses an isotropic inertia approximation, an averaged ground contact point and true
+oriented-box contacts: a 15-axis saturating-axis test (three face axes per box plus nine
+edge-edge cross products) selects the minimum-overlap axis, and the incident box vertices
+inside the other box form a contact manifold of up to four points that is solved with
+sequential impulses and Coulomb friction.
+
+Collapse is progressive rather than all-or-nothing. Each building chunk knows its grid
+height and its six face neighbours; at the collapse step a load value per chunk is
+derived from the peak overpressure, height and blast-facing orientation, and joints break
+where the mean load of the two chunks exceeds a strength threshold (26 kPa heavy,
+9 kPa destroyed). A flood fill from the base chunks (`gridY == 0`) then finds the chunks
+that are still connected to the ground; only unsupported chunks detach as rigid bodies,
+so partially damaged buildings keep standing while their blast-facing side falls away.
+
+Blast shielding uses a line-of-sight test: the segment from ground zero to the object
+centre is intersected with every other building's axis-aligned bounding box, and each
+occluder scales the peak overpressure, impulse and thermal fluence by 0.35. This gives
+buildings in the lee of others a plausible reduction instead of the free-air field.
+
 Thermal ignition uses material thresholds; burning is visual (ember tint and particles),
 not a combustion simulation.
 
-Limitations: no blast shielding between objects, no soil/structure interaction, no
-progressive structural failure beyond the chunk joints, and the impulse thresholds are
-calibrated for visual plausibility rather than code compliance.
+Limitations: no soil/structure interaction, no load redistribution after chunks detach
+(the remaining structure is treated as static), shielding is a single-segment AABB test
+without diffraction, and the impulse thresholds are calibrated for visual plausibility
+rather than code compliance.
 
 ## 10. Limitations
 

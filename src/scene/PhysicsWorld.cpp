@@ -1,6 +1,7 @@
 #include "scene/PhysicsWorld.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 
 using namespace DirectX;
@@ -11,8 +12,134 @@ namespace {
 
 constexpr float kGravity = 9.80665f;
 
+float HalfAt(const XMFLOAT3& half, int axis) {
+    return axis == 0 ? half.x : (axis == 1 ? half.y : half.z);
+}
+
 float VectorLength(const XMFLOAT3& v) {
     return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+
+struct Obb {
+    XMVECTOR center;
+    XMVECTOR axes[3];
+    XMFLOAT3 half;
+    XMMATRIX rotation;
+};
+
+Obb MakeObb(const RigidBody& body) {
+    Obb obb;
+    obb.center = XMLoadFloat3(&body.position);
+    obb.rotation = XMMatrixRotationQuaternion(XMLoadFloat4(&body.orientation));
+    obb.axes[0] = obb.rotation.r[0];
+    obb.axes[1] = obb.rotation.r[1];
+    obb.axes[2] = obb.rotation.r[2];
+    obb.half = body.halfExtents;
+    return obb;
+}
+
+struct Manifold {
+    XMVECTOR normal = XMVectorZero();
+    XMVECTOR points[4];
+    int count = 0;
+    float penetration = 0.0f;
+};
+
+bool InsideObb(const XMVECTOR& point, const Obb& obb) {
+    const XMVECTOR local = point - obb.center;
+    for (int i = 0; i < 3; ++i) {
+        const float distance = XMVectorGetX(XMVector3Dot(local, obb.axes[i]));
+        if (std::abs(distance) > HalfAt(obb.half, i) + 0.01f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void AddPoint(Manifold& manifold, const XMVECTOR& point) {
+    if (manifold.count >= 4) {
+        return;
+    }
+    for (int i = 0; i < manifold.count; ++i) {
+        if (XMVectorGetX(XMVector3LengthSq(point - manifold.points[i])) < 1e-4f) {
+            return;
+        }
+    }
+    manifold.points[manifold.count++] = point;
+}
+
+// Separating-axis test. Returns false if the boxes are disjoint.
+bool TestAxis(const XMVECTOR& axis, const Obb& a, const Obb& b, float& minOverlap,
+              XMVECTOR& bestAxis) {
+    const float lengthSquared = XMVectorGetX(XMVector3LengthSq(axis));
+    if (lengthSquared < 1e-8f) {
+        return true;
+    }
+    const XMVECTOR normal = XMVectorScale(axis, 1.0f / std::sqrt(lengthSquared));
+
+    float radiusA = 0.0f;
+    float radiusB = 0.0f;
+    for (int i = 0; i < 3; ++i) {
+        radiusA += HalfAt(a.half, i) *
+                   std::abs(XMVectorGetX(XMVector3Dot(normal, a.axes[i])));
+        radiusB += HalfAt(b.half, i) *
+                   std::abs(XMVectorGetX(XMVector3Dot(normal, b.axes[i])));
+    }
+
+    const float distance =
+        std::abs(XMVectorGetX(XMVector3Dot(b.center - a.center, normal)));
+    const float overlap = radiusA + radiusB - distance;
+    if (overlap < 0.0f) {
+        return false;
+    }
+    if (overlap < minOverlap) {
+        minOverlap = overlap;
+        bestAxis = normal;
+    }
+    return true;
+}
+
+void BuildManifold(const Obb& a, const Obb& b, const XMVECTOR& normal, float penetration,
+                   Manifold& manifold) {
+    manifold.normal = normal;
+    manifold.penetration = penetration;
+    manifold.count = 0;
+
+    // Vertices of B inside A and vice versa. For face contacts this produces the
+    // four incident-face corners; for edge contacts it falls back below.
+    for (int i = 0; i < 8; ++i) {
+        const XMVECTOR local = XMVectorSet(((i & 1) ? 1.0f : -1.0f) * b.half.x,
+                                           ((i & 2) ? 1.0f : -1.0f) * b.half.y,
+                                           ((i & 4) ? 1.0f : -1.0f) * b.half.z, 1.0f);
+        const XMVECTOR world = XMVector3TransformCoord(local, b.rotation) + b.center;
+        if (InsideObb(world, a)) {
+            AddPoint(manifold, world);
+        }
+    }
+    for (int i = 0; i < 8; ++i) {
+        const XMVECTOR local = XMVectorSet(((i & 1) ? 1.0f : -1.0f) * a.half.x,
+                                           ((i & 2) ? 1.0f : -1.0f) * a.half.y,
+                                           ((i & 4) ? 1.0f : -1.0f) * a.half.z, 1.0f);
+        const XMVECTOR world = XMVector3TransformCoord(local, a.rotation) + a.center;
+        if (InsideObb(world, b)) {
+            AddPoint(manifold, world);
+        }
+    }
+
+    if (manifold.count == 0) {
+        // Edge-edge fallback: midpoint of the two support planes.
+        float supportA = 0.0f;
+        float supportB = 0.0f;
+        for (int i = 0; i < 3; ++i) {
+            supportA += HalfAt(a.half, i) *
+                        std::abs(XMVectorGetX(XMVector3Dot(normal, a.axes[i])));
+            supportB += HalfAt(b.half, i) *
+                        std::abs(XMVectorGetX(XMVector3Dot(normal, b.axes[i])));
+        }
+        const XMVECTOR pointA = a.center + normal * supportA;
+        const XMVECTOR pointB = b.center - normal * supportB;
+        AddPoint(manifold, (pointA + pointB) * 0.5f);
+    }
 }
 
 } // namespace
@@ -123,8 +250,6 @@ void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
         }
     }
 
-    // Collect the penetrating corners. Using their average as the contact
-    // point keeps a flat box stable while still allowing a tilted box to tip.
     float maxPenetration = 0.0f;
     XMVECTOR contactSum = XMVectorZero();
     int contactCount = 0;
@@ -163,9 +288,6 @@ void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
             velocity += normal * (impulse * body.invMass);
             omega += rn * (impulse * body.invInertia);
 
-            // Linear-only Coulomb friction; angular friction is replaced by the
-            // contact damping below, which is much more stable for a single
-            // averaged contact point.
             XMVECTOR tangential = pointVelocity - normal * normalVelocity;
             const float tangentialSpeed = XMVectorGetX(XMVector3Length(tangential));
             if (tangentialSpeed > 1e-4f) {
@@ -179,7 +301,6 @@ void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
         }
     }
 
-    // Contact damping removes the residual rocking of the averaged contact.
     omega = XMVectorScale(omega, 0.90f);
     velocity = XMVectorSet(XMVectorGetX(velocity) * 0.995f, XMVectorGetY(velocity),
                            XMVectorGetZ(velocity) * 0.995f, 0.0f);
@@ -198,54 +319,124 @@ void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
 }
 
 void PhysicsWorld::ResolvePair(RigidBody& a, RigidBody& b) {
-    const XMVECTOR positionA = XMLoadFloat3(&a.position);
-    const XMVECTOR positionB = XMLoadFloat3(&b.position);
-    const XMVECTOR delta = positionB - positionA;
+    const XMVECTOR delta = XMLoadFloat3(&b.position) - XMLoadFloat3(&a.position);
     const float distance = XMVectorGetX(XMVector3Length(delta));
-    const float radius = a.boundingRadius + b.boundingRadius;
-    if (distance >= radius || distance < 1e-4f) {
+    if (distance > a.boundingRadius + b.boundingRadius) {
         return;
     }
 
-    const XMVECTOR normal = XMVectorScale(delta, 1.0f / distance);
-    const float penetration = radius - distance;
+    const Obb obbA = MakeObb(a);
+    const Obb obbB = MakeObb(b);
+
+    float minOverlap = FLT_MAX;
+    XMVECTOR bestAxis = XMVectorZero();
+    if (!TestAxis(obbA.axes[0], obbA, obbB, minOverlap, bestAxis) ||
+        !TestAxis(obbA.axes[1], obbA, obbB, minOverlap, bestAxis) ||
+        !TestAxis(obbA.axes[2], obbA, obbB, minOverlap, bestAxis) ||
+        !TestAxis(obbB.axes[0], obbA, obbB, minOverlap, bestAxis) ||
+        !TestAxis(obbB.axes[1], obbA, obbB, minOverlap, bestAxis) ||
+        !TestAxis(obbB.axes[2], obbA, obbB, minOverlap, bestAxis)) {
+        return;
+    }
+
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            const XMVECTOR axis = XMVector3Cross(obbA.axes[i], obbB.axes[j]);
+            if (!TestAxis(axis, obbA, obbB, minOverlap, bestAxis)) {
+                return;
+            }
+        }
+    }
+
+    if (XMVectorGetX(XMVector3Dot(bestAxis, obbB.center - obbA.center)) < 0.0f) {
+        bestAxis = -bestAxis;
+    }
+
+    Manifold manifold;
+    BuildManifold(obbA, obbB, bestAxis, minOverlap, manifold);
+    if (manifold.count == 0) {
+        return;
+    }
+
     const float totalInv = a.invMass + b.invMass;
     if (totalInv <= 1e-6f) {
         return;
     }
 
-    const XMVECTOR correction = XMVectorScale(normal, penetration * 0.5f / totalInv);
-    XMStoreFloat3(&a.position, positionA - XMVectorScale(correction, a.invMass));
-    XMStoreFloat3(&b.position, positionB + XMVectorScale(correction, b.invMass));
+    const float restitution = std::min(a.restitution, b.restitution);
 
-    const XMVECTOR velocityA = XMLoadFloat3(&a.velocity);
-    const XMVECTOR velocityB = XMLoadFloat3(&b.velocity);
-    const XMVECTOR relative = velocityB - velocityA;
-    const float normalVelocity = XMVectorGetX(XMVector3Dot(relative, normal));
+    XMVECTOR velocityA = XMLoadFloat3(&a.velocity);
+    XMVECTOR omegaA = XMLoadFloat3(&a.angularVelocity);
+    XMVECTOR velocityB = XMLoadFloat3(&b.velocity);
+    XMVECTOR omegaB = XMLoadFloat3(&b.angularVelocity);
+    XMVECTOR positionA = XMLoadFloat3(&a.position);
+    XMVECTOR positionB = XMLoadFloat3(&b.position);
 
-    if (normalVelocity < 0.0f) {
-        const float restitution = std::min(a.restitution, b.restitution);
-        const float impulse = -(1.0f + restitution) * normalVelocity / totalInv;
-        const XMVECTOR impulseVector = normal * impulse;
-        XMStoreFloat3(&a.velocity, velocityA - XMVectorScale(impulseVector, a.invMass));
-        XMStoreFloat3(&b.velocity, velocityB + XMVectorScale(impulseVector, b.invMass));
+    for (int iteration = 0; iteration < 6; ++iteration) {
+        for (int point = 0; point < manifold.count; ++point) {
+            const XMVECTOR rA = manifold.points[point] - positionA;
+            const XMVECTOR rB = manifold.points[point] - positionB;
+            const XMVECTOR pointVelocityA = velocityA + XMVector3Cross(omegaA, rA);
+            const XMVECTOR pointVelocityB = velocityB + XMVector3Cross(omegaB, rB);
+            const XMVECTOR relative = pointVelocityB - pointVelocityA;
+            const float normalVelocity =
+                XMVectorGetX(XMVector3Dot(relative, bestAxis));
+            if (normalVelocity >= 0.0f) {
+                continue;
+            }
 
-        XMVECTOR tangential = relative - normal * normalVelocity;
-        const float tangentialSpeed = XMVectorGetX(XMVector3Length(tangential));
-        if (tangentialSpeed > 1e-4f) {
-            const XMVECTOR t = XMVectorScale(tangential, 1.0f / tangentialSpeed);
-            float frictionImpulse = -tangentialSpeed / totalInv;
-            const float maxFriction = std::max(a.friction, b.friction) * impulse;
-            frictionImpulse =
-                std::clamp(frictionImpulse, -maxFriction, maxFriction);
-            XMStoreFloat3(&a.velocity,
-                          XMLoadFloat3(&a.velocity) -
-                              XMVectorScale(t, frictionImpulse * a.invMass));
-            XMStoreFloat3(&b.velocity,
-                          XMLoadFloat3(&b.velocity) +
-                              XMVectorScale(t, frictionImpulse * b.invMass));
+            const XMVECTOR rnA = XMVector3Cross(rA, bestAxis);
+            const XMVECTOR rnB = XMVector3Cross(rB, bestAxis);
+            const float denominator =
+                a.invMass + b.invMass +
+                a.invInertia * XMVectorGetX(XMVector3Dot(rnA, rnA)) +
+                b.invInertia * XMVectorGetX(XMVector3Dot(rnB, rnB));
+            const float impulse =
+                -(1.0f + restitution) * normalVelocity / std::max(denominator, 1e-6f);
+            if (impulse <= 0.0f) {
+                continue;
+            }
+
+            const XMVECTOR normalImpulse = bestAxis * impulse;
+            velocityA -= normalImpulse * a.invMass;
+            omegaA -= rnA * (impulse * a.invInertia);
+            velocityB += normalImpulse * b.invMass;
+            omegaB += rnB * (impulse * b.invInertia);
+
+            XMVECTOR tangential = relative - bestAxis * normalVelocity;
+            const float tangentialSpeed = XMVectorGetX(XMVector3Length(tangential));
+            if (tangentialSpeed > 1e-4f) {
+                const XMVECTOR t = XMVectorScale(tangential, 1.0f / tangentialSpeed);
+                const XMVECTOR rtA = XMVector3Cross(rA, t);
+                const XMVECTOR rtB = XMVector3Cross(rB, t);
+                const float denominatorT =
+                    a.invMass + b.invMass +
+                    a.invInertia * XMVectorGetX(XMVector3Dot(rtA, rtA)) +
+                    b.invInertia * XMVectorGetX(XMVector3Dot(rtB, rtB));
+                float frictionImpulse =
+                    -tangentialSpeed / std::max(denominatorT, 1e-6f);
+                const float maxFriction =
+                    std::max(a.friction, b.friction) * impulse;
+                frictionImpulse =
+                    std::clamp(frictionImpulse, -maxFriction, maxFriction);
+                velocityA -= t * (frictionImpulse * a.invMass);
+                omegaA -= rtA * (frictionImpulse * a.invInertia);
+                velocityB += t * (frictionImpulse * b.invMass);
+                omegaB += rtB * (frictionImpulse * b.invInertia);
+            }
         }
     }
+
+    const XMVECTOR correction = bestAxis * (minOverlap * 0.4f / totalInv);
+    positionA -= correction * a.invMass;
+    positionB += correction * b.invMass;
+
+    XMStoreFloat3(&a.velocity, velocityA);
+    XMStoreFloat3(&a.angularVelocity, omegaA);
+    XMStoreFloat3(&b.velocity, velocityB);
+    XMStoreFloat3(&b.angularVelocity, omegaB);
+    XMStoreFloat3(&a.position, positionA);
+    XMStoreFloat3(&b.position, positionB);
 
     a.sleeping = false;
     a.sleepTimer = 0.0f;

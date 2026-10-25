@@ -46,12 +46,24 @@ struct SceneChunk {
     DirectX::XMFLOAT3 half{};
     DirectX::XMFLOAT4 color{};
     int bodyIndex = -1;
+    int gridY = 0;
+    bool detached = false;
+    std::vector<int> neighbors;
 };
 
 struct SceneFireSpawn {
     DirectX::XMFLOAT3 position{};
     int count = 0;
     float scale = 0.5f;
+};
+
+// Generation summary, mainly used for logging and benchmarks.
+struct SceneStats {
+    int buildings = 0;
+    int vehicles = 0;
+    int trees = 0;
+    int chunks = 0;
+    int bodies = 0;
 };
 
 // One procedurally placed object. The blast fields are evaluated once at
@@ -79,6 +91,7 @@ struct SceneObject {
     float burnTimer = 0.0f;
     int bodyIndex = -1;
     bool collapsed = false;
+    int occluders = 0;
     std::vector<SceneChunk> chunks;
 };
 
@@ -95,6 +108,7 @@ public:
     uint64_t GenerationHash() const { return hash_; }
     float Extent() const { return extent_; }
     bool Empty() const { return objects_.empty(); }
+    SceneStats Stats() const;
 
     // Damage events accumulated since the last call (drained by Simulation).
     std::vector<SceneDebrisSpawn> ConsumeDebrisSpawns();
@@ -104,7 +118,7 @@ public:
 
 private:
     void ActivateBody(SceneObject& object);
-    void FractureBuilding(SceneObject& object);
+    void CollapseBuilding(SceneObject& object);
     void StepPhysics(float dtSim);
 
     SceneSettings settings_{};

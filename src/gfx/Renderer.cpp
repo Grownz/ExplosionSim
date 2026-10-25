@@ -131,6 +131,13 @@ bool Renderer::Initialize(GfxDevice& device) {
         return false;
     }
 
+    cbDesc.ByteWidth = sizeof(XMFLOAT4X4);
+    if (FAILED(device_->Device()->CreateBuffer(&cbDesc, nullptr,
+                                               &shadowConstantBuffer_))) {
+        LogError("Failed to create shadow constant buffer.");
+        return false;
+    }
+
     if (!CreateStates() || !CreatePipeline() || !CreateNoiseTexture() ||
         !EnsureTargets(device_->Width(), device_->Height())) {
         return false;
@@ -149,6 +156,7 @@ bool Renderer::Initialize(GfxDevice& device) {
 void Renderer::Shutdown() {
     sceneRenderer_.Shutdown();
     solver_.Shutdown();
+    shadowConstantBuffer_.Reset();
     volumeSRV_.Reset();
     volumeTexture_.Reset();
     particleSRVAdditive_.Reset();
@@ -1013,17 +1021,75 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     context->PSSetShader(skyPS_.Get(), nullptr, 0);
     context->Draw(3, 0);
 
+    // --- Directional light matrix ------------------------------------------
+    // Computed unconditionally so the ground always has a valid light matrix,
+    // even when the procedural scene is disabled.
+    {
+        const float extent =
+            std::max(simulation.Settings().scene.enabled ? simulation.Scene().Extent()
+                                                         : 0.0f,
+                     60.0f);
+        const XMVECTOR sunDirection =
+            XMVector3Normalize(XMVectorSet(frameConstants_.sunDirection.x,
+                                           frameConstants_.sunDirection.y,
+                                           frameConstants_.sunDirection.z, 0.0f));
+        const XMVECTOR lightCenter = XMVectorSet(0.0f, extent * 0.30f, 0.0f, 1.0f);
+        // sunDirection points towards the sun, so the shadow camera sits on that
+        // side and looks back at the scene.
+        const XMVECTOR lightEye = lightCenter + sunDirection * (extent * 2.0f);
+        const XMVECTOR lightUp = std::abs(XMVectorGetY(sunDirection)) > 0.95f
+                                     ? XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f)
+                                     : XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+        const XMMATRIX lightView = XMMatrixLookAtLH(lightEye, lightCenter, lightUp);
+        const XMMATRIX lightProjection = XMMatrixOrthographicLH(
+            extent * 2.2f, extent * 2.2f, 1.0f, extent * 4.0f);
+
+        lightViewProj_ = XMFLOAT4X4{};
+        XMStoreFloat4x4(&lightViewProj_, lightView * lightProjection);
+
+        D3D11_MAPPED_SUBRESOURCE shadowMapped{};
+        if (SUCCEEDED(context->Map(shadowConstantBuffer_.Get(), 0,
+                                   D3D11_MAP_WRITE_DISCARD, 0, &shadowMapped))) {
+            std::memcpy(shadowMapped.pData, &lightViewProj_, sizeof(lightViewProj_));
+            context->Unmap(shadowConstantBuffer_.Get(), 0);
+        }
+    }
+    ID3D11Buffer* shadowBuffer = shadowConstantBuffer_.Get();
+    context->VSSetConstantBuffers(2, 1, &shadowBuffer);
+    context->PSSetConstantBuffers(2, 1, &shadowBuffer);
+
+    // --- Shadow map ---------------------------------------------------------
+    XMFLOAT4X4 viewProj{};
+    XMStoreFloat4x4(&viewProj, camera.ViewProjectionMatrix());
+    sceneRenderer_.RenderShadow(context, simulation.Scene(), viewProj);
+
     // --- Ground ------------------------------------------------------------
     if (settings.enableGround) {
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthWrite_.Get(), 0);
+        context->IASetInputLayout(nullptr);
+        SetViewport(hdr_.width, hdr_.height);
+        context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
         context->PSSetShader(groundPS_.Get(), nullptr, 0);
+
+        ID3D11ShaderResourceView* groundShadow = sceneRenderer_.ShadowSRV();
+        context->PSSetShaderResources(2, 1, &groundShadow);
+        ID3D11SamplerState* groundShadowSampler = sceneRenderer_.ShadowSampler();
+        context->PSSetSamplers(2, 1, &groundShadowSampler);
+
         context->Draw(3, 0);
+
+        ID3D11ShaderResourceView* nullShadow = nullptr;
+        context->PSSetShaderResources(2, 1, &nullShadow);
+        ID3D11SamplerState* nullSampler = nullptr;
+        context->PSSetSamplers(2, 1, &nullSampler);
+        context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());
     }
 
     // --- Procedural scene ---------------------------------------------------
     if (simulation.Settings().scene.enabled && !simulation.Scene().Empty()) {
-        sceneRenderer_.Render(context, simulation.Scene(), hdrRTV, device_->DepthDSV());
+        sceneRenderer_.RenderScene(context, simulation.Scene(), hdrRTV,
+                                   device_->DepthDSV(), hdr_.width, hdr_.height);
     }
 
     // Snapshot the depth buffer so subsequent passes can sample it without a

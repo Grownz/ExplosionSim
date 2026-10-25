@@ -4,11 +4,19 @@ struct SceneInstance
 {
     float4x4 Transform;
     float4 Color;
-    float4 Params; // x = damage, y = sway amplitude, z = phase, w = type (0 building, 1 vehicle, 2 tree)
+    float4 Params; // x = damage, y = sway amplitude, z = phase, w = type (0 building, 1 vehicle, 2 tree, 3 rubble)
     float4 State;  // x = burning
 };
 
 StructuredBuffer<SceneInstance> Instances : register(t0);
+
+cbuffer ShadowConstants : register(b2)
+{
+    float4x4 LightViewProj;
+};
+
+Texture2D<float> ShadowMap : register(t2);
+SamplerComparisonState ShadowSampler : register(s2);
 
 struct VSInput
 {
@@ -27,22 +35,22 @@ struct VSOutput
     float4 State : TEXCOORD4;
 };
 
-VSOutput VSScene(VSInput input, uint instanceID : SV_InstanceID)
+float3 ApplySway(float3 local, SceneInstance instance)
 {
-    SceneInstance instance = Instances[instanceID];
-
-    float3 local = input.Position;
-
-    // Vegetation sway: displace towards the top of the mesh. The instance
-    // transform then scales the result to the tree height.
     if (instance.Params.w > 1.5 && instance.Params.y > 0.0)
     {
         float sway = sin(Misc3.x * 1.6 + instance.Params.z);
-        local.x += sway * instance.Params.y * input.Position.y;
-        local.z += cos(Misc3.x * 1.3 + instance.Params.z) * instance.Params.y * input.Position.y;
+        local.x += sway * instance.Params.y * local.y;
+        local.z += cos(Misc3.x * 1.3 + instance.Params.z) * instance.Params.y * local.y;
     }
+    return local;
+}
 
-    float4 world = mul(instance.Transform, float4(local, 1.0));
+VSOutput VSScene(VSInput input, uint instanceID : SV_InstanceID)
+{
+    SceneInstance instance = Instances[instanceID];
+    const float3 local = ApplySway(input.Position, instance);
+    const float4 world = mul(instance.Transform, float4(local, 1.0));
 
     VSOutput output;
     output.Position = mul(ViewProj, world);
@@ -52,6 +60,36 @@ VSOutput VSScene(VSInput input, uint instanceID : SV_InstanceID)
     output.Params = instance.Params;
     output.State = instance.State;
     return output;
+}
+
+// Depth-only pass used for the directional shadow map.
+float4 VSShadow(VSInput input, uint instanceID : SV_InstanceID) : SV_Position
+{
+    SceneInstance instance = Instances[instanceID];
+    const float3 local = ApplySway(input.Position, instance);
+    const float4 world = mul(instance.Transform, float4(local, 1.0));
+    return mul(LightViewProj, world);
+}
+
+float SampleShadow(float3 worldPosition)
+{
+    const float3 lightPosition = mul(LightViewProj, float4(worldPosition, 1.0)).xyz;
+    const float2 uv = float2(0.5 + lightPosition.x * 0.5, 0.5 - lightPosition.y * 0.5);
+    const float depth = lightPosition.z - 0.0015;
+    const float texel = 1.0 / 2048.0;
+
+    float shadow = 0.0;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            shadow += ShadowMap.SampleCmpLevelZero(
+                ShadowSampler, uv + float2(x, y) * texel, depth);
+        }
+    }
+    return shadow / 9.0;
 }
 
 float4 PSScene(VSOutput input) : SV_Target
@@ -81,6 +119,8 @@ float4 PSScene(VSOutput input) : SV_Target
             baseColor *= 0.62;
         }
     }
+
+    sunAmount *= SampleShadow(input.WorldPosition);
 
     // Blast damage: darken and char.
     float damage = saturate(input.Params.x);

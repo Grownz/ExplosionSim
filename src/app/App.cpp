@@ -303,7 +303,8 @@ void App::FrameCamera() {
                   sceneExtent * 0.8f, 1.2f});
     const float centerY = burstHeight + fireball * 0.6f;
 
-    camera_.SetTarget(DirectX::XMFLOAT3(0.0f, centerY, 0.0f), radius * 1.9f);
+    camera_.SetTarget(DirectX::XMFLOAT3(0.0f, centerY, 0.0f),
+                      radius * 1.9f * std::max(0.1f, options_.distanceScale));
     if (options_.headless) {
         camera_.SetOrientation(options_.azimuth, options_.elevation);
     }
@@ -547,6 +548,10 @@ int App::RunHeadless() {
         LogInfo("Particles: %d, volume bake %.2f ms at %d^3, workers %d",
                 simulation_.Particles().AliveCount(), simulation_.Volume().LastBakeMilliseconds(),
                 simulation_.Volume().Resolution(), int(pool_->WorkerCount()));
+        const scene::SceneStats sceneStats = simulation_.Scene().Stats();
+        LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %d rigid bodies",
+                sceneStats.buildings, sceneStats.vehicles, sceneStats.trees,
+                sceneStats.chunks, sceneStats.bodies);
     } else {
         if (options_.screenshotPath.empty()) {
             LogError("Headless mode requires --screenshot <path> or --benchmark.");

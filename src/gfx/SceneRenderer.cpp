@@ -122,8 +122,9 @@ bool SceneRenderer::Initialize(ID3D11Device* device) {
 
     std::string errors;
     auto vertexBlob = CompileShaderFile(path, "VSScene", "vs_5_0", errors);
+    auto shadowBlob = CompileShaderFile(path, "VSShadow", "vs_5_0", errors);
     auto pixelBlob = CompileShaderFile(path, "PSScene", "ps_5_0", errors);
-    if (!vertexBlob || !pixelBlob) {
+    if (!vertexBlob || !shadowBlob || !pixelBlob) {
         LogError("Scene shaders failed to compile.");
         return false;
     }
@@ -131,6 +132,9 @@ bool SceneRenderer::Initialize(ID3D11Device* device) {
     if (FAILED(device->CreateVertexShader(vertexBlob->GetBufferPointer(),
                                           vertexBlob->GetBufferSize(), nullptr,
                                           &vertexShader_)) ||
+        FAILED(device->CreateVertexShader(shadowBlob->GetBufferPointer(),
+                                          shadowBlob->GetBufferSize(), nullptr,
+                                          &shadowVertexShader_)) ||
         FAILED(device->CreatePixelShader(pixelBlob->GetBufferPointer(),
                                          pixelBlob->GetBufferSize(), nullptr,
                                          &pixelShader_))) {
@@ -177,17 +181,72 @@ bool SceneRenderer::Initialize(ID3D11Device* device) {
     }
 
     BuildMeshes();
+    if (!CreateShadowResources(device)) {
+        LogError("Scene shadow resources could not be created.");
+        return false;
+    }
     return true;
 }
 
+bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
+    D3D11_TEXTURE2D_DESC textureDesc{};
+    textureDesc.Width = 2048;
+    textureDesc.Height = 2048;
+    textureDesc.MipLevels = 1;
+    textureDesc.ArraySize = 1;
+    textureDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+    textureDesc.SampleDesc.Count = 1;
+    textureDesc.Usage = D3D11_USAGE_DEFAULT;
+    textureDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+    if (FAILED(device->CreateTexture2D(&textureDesc, nullptr, &shadowTexture_))) {
+        return false;
+    }
+
+    D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+    dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+    dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    if (FAILED(device->CreateDepthStencilView(shadowTexture_.Get(), &dsvDesc,
+                                              &shadowDSV_))) {
+        return false;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels = 1;
+    if (FAILED(device->CreateShaderResourceView(shadowTexture_.Get(), &srvDesc,
+                                                &shadowSRV_))) {
+        return false;
+    }
+
+    D3D11_SAMPLER_DESC samplerDesc{};
+    samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+    samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+    samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
+    samplerDesc.BorderColor[0] = 1.0f;
+    samplerDesc.BorderColor[1] = 1.0f;
+    samplerDesc.BorderColor[2] = 1.0f;
+    samplerDesc.BorderColor[3] = 1.0f;
+    samplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+    samplerDesc.MaxLOD = 0.0f;
+    return SUCCEEDED(device->CreateSamplerState(&samplerDesc, &shadowSampler_));
+}
+
 void SceneRenderer::Shutdown() {
+    shadowSampler_.Reset();
+    shadowSRV_.Reset();
+    shadowDSV_.Reset();
+    shadowTexture_.Reset();
     meshes_.clear();
     blendState_.Reset();
     rasterizer_.Reset();
     depthState_.Reset();
     inputLayout_.Reset();
     pixelShader_.Reset();
+    shadowVertexShader_.Reset();
     vertexShader_.Reset();
+    device_ = nullptr;
 }
 
 bool SceneRenderer::CreateMesh(const std::vector<Vertex>& vertices,
@@ -379,33 +438,39 @@ void SceneRenderer::BuildMeshes() {
     }
 }
 
-void SceneRenderer::Render(ID3D11DeviceContext* context, const scene::Scene& scene,
-                           ID3D11RenderTargetView* hdrRTV,
-                           ID3D11DepthStencilView* depthDSV) {
-    if (!device_ || !context || !hdrRTV || !depthDSV) {
+void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
+                                 const scene::Scene& scene,
+                                 const XMFLOAT4X4& viewProj) {
+    if (!device_ || !context) {
         return;
     }
+    // Always clear so the ground samples a fully lit map when the scene is off.
+    context->ClearDepthStencilView(shadowDSV_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
     if (!scene.Settings().enabled || scene.Empty()) {
         return;
     }
 
-    context->OMSetRenderTargets(1, &hdrRTV, depthDSV);
-    context->OMSetDepthStencilState(depthState_.Get(), 0);
-    context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
-    context->RSSetState(rasterizer_.Get());
-    context->IASetInputLayout(inputLayout_.Get());
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    context->VSSetShader(vertexShader_.Get(), nullptr, 0);
-    context->PSSetShader(pixelShader_.Get(), nullptr, 0);
+    const auto& bodies = scene.Physics().Bodies();
+    const BoundingFrustum frustum(XMLoadFloat4x4(&viewProj));
+    auto visible = [&frustum](const XMFLOAT3& center, float radius) {
+        const BoundingSphere sphere(center, radius);
+        return frustum.Contains(sphere) != DISJOINT;
+    };
 
     for (Mesh& mesh : meshes_) {
         mesh.instances.clear();
     }
 
-    const auto& bodies = scene.Physics().Bodies();
-
     for (const scene::SceneObject& object : scene.Objects()) {
         if (object.collapsed) {
+            continue;
+        }
+
+        const XMFLOAT3 objectCenter(object.position.x, object.size.y * 0.5f,
+                                    object.position.z);
+        const float objectRadius =
+            std::max({object.size.x, object.size.y, object.size.z}) * 0.75f + 1.0f;
+        if (!visible(objectCenter, objectRadius)) {
             continue;
         }
 
@@ -463,22 +528,40 @@ void SceneRenderer::Render(ID3D11DeviceContext* context, const scene::Scene& sce
         meshes_[meshIndex].instances.push_back(instance);
     }
 
-    // Building chunks: unit boxes driven by the rigid-body transforms.
+    // Building chunks: unit boxes driven by the rigid-body transforms, plus the
+    // chunks that are still supported by the structural graph.
     for (const scene::SceneObject& object : scene.Objects()) {
         if (!object.collapsed) {
             continue;
         }
         for (const scene::SceneChunk& chunk : object.chunks) {
-            if (chunk.bodyIndex < 0 || chunk.bodyIndex >= int(bodies.size())) {
+            XMFLOAT3 chunkCenter = chunk.center;
+            if (chunk.bodyIndex >= 0 && chunk.bodyIndex < int(bodies.size())) {
+                chunkCenter = bodies[chunk.bodyIndex].position;
+            }
+            const float chunkRadius =
+                std::sqrt(chunk.half.x * chunk.half.x + chunk.half.y * chunk.half.y +
+                          chunk.half.z * chunk.half.z) *
+                1.3f;
+            if (!visible(chunkCenter, chunkRadius)) {
                 continue;
             }
-            const scene::RigidBody& body = bodies[chunk.bodyIndex];
+
             Instance instance{};
-            const XMMATRIX world =
-                XMMatrixScaling(chunk.half.x * 2.0f, chunk.half.y * 2.0f,
-                                chunk.half.z * 2.0f) *
-                XMMatrixRotationQuaternion(XMLoadFloat4(&body.orientation)) *
-                XMMatrixTranslation(body.position.x, body.position.y, body.position.z);
+            XMMATRIX world;
+            if (chunk.bodyIndex >= 0 && chunk.bodyIndex < int(bodies.size())) {
+                const scene::RigidBody& body = bodies[chunk.bodyIndex];
+                world = XMMatrixScaling(chunk.half.x * 2.0f, chunk.half.y * 2.0f,
+                                        chunk.half.z * 2.0f) *
+                        XMMatrixRotationQuaternion(XMLoadFloat4(&body.orientation)) *
+                        XMMatrixTranslation(body.position.x, body.position.y,
+                                            body.position.z);
+            } else {
+                world = XMMatrixScaling(chunk.half.x * 2.0f, chunk.half.y * 2.0f,
+                                        chunk.half.z * 2.0f) *
+                        XMMatrixTranslation(chunk.center.x, chunk.center.y,
+                                            chunk.center.z);
+            }
             XMStoreFloat4x4(&instance.transform, world);
             instance.color = chunk.color;
             instance.params = XMFLOAT4(1.0f, 0.0f, 0.0f, 3.0f);
@@ -487,6 +570,7 @@ void SceneRenderer::Render(ID3D11DeviceContext* context, const scene::Scene& sce
         }
     }
 
+    // Upload all instance buffers once; both the shadow and the main pass use them.
     for (Mesh& mesh : meshes_) {
         if (mesh.instances.empty() || !mesh.vertexBuffer || !mesh.indexBuffer) {
             continue;
@@ -494,7 +578,6 @@ void SceneRenderer::Render(ID3D11DeviceContext* context, const scene::Scene& sce
         if (!EnsureInstanceCapacity(mesh, UINT(mesh.instances.size()))) {
             continue;
         }
-
         D3D11_MAPPED_SUBRESOURCE mapped{};
         if (FAILED(context->Map(mesh.instanceBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0,
                                 &mapped))) {
@@ -503,22 +586,91 @@ void SceneRenderer::Render(ID3D11DeviceContext* context, const scene::Scene& sce
         std::memcpy(mapped.pData, mesh.instances.data(),
                     mesh.instances.size() * sizeof(Instance));
         context->Unmap(mesh.instanceBuffer.Get(), 0);
+    }
 
+    // --- Shadow pass -------------------------------------------------------
+    context->OMSetRenderTargets(0, nullptr, shadowDSV_.Get());
+    context->ClearDepthStencilView(shadowDSV_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    context->OMSetDepthStencilState(depthState_.Get(), 0);
+    context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
+    context->RSSetState(rasterizer_.Get());
+    context->IASetInputLayout(inputLayout_.Get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
+    context->PSSetShader(nullptr, nullptr, 0);
+
+    D3D11_VIEWPORT shadowViewport{0.0f, 0.0f, 2048.0f, 2048.0f, 0.0f, 1.0f};
+    context->RSSetViewports(1, &shadowViewport);
+
+    for (Mesh& mesh : meshes_) {
+        if (mesh.instances.empty() || !mesh.instanceBuffer) {
+            continue;
+        }
         ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
         UINT stride = sizeof(Vertex);
         UINT offset = 0;
         context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
         context->IASetIndexBuffer(mesh.indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-
         ID3D11ShaderResourceView* srv = mesh.instanceSRV.Get();
         context->VSSetShaderResources(0, 1, &srv);
         context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()), 0, 0,
                                       0);
-
-        ID3D11ShaderResourceView* nullSRV = nullptr;
-        context->VSSetShaderResources(0, 1, &nullSRV);
     }
 
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    context->VSSetShaderResources(0, 1, &nullSrv);
+
+}
+
+void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene& scene,
+                                ID3D11RenderTargetView* hdrRTV,
+                                ID3D11DepthStencilView* depthDSV, int width,
+                                int height) {
+    if (!device_ || !context || !hdrRTV || !depthDSV) {
+        return;
+    }
+    if (!scene.Settings().enabled || scene.Empty()) {
+        return;
+    }
+
+    context->OMSetRenderTargets(1, &hdrRTV, depthDSV);
+    context->OMSetDepthStencilState(depthState_.Get(), 0);
+    context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
+    context->RSSetState(rasterizer_.Get());
+    context->IASetInputLayout(inputLayout_.Get());
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->VSSetShader(vertexShader_.Get(), nullptr, 0);
+    context->PSSetShader(pixelShader_.Get(), nullptr, 0);
+
+    D3D11_VIEWPORT viewport{0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f};
+    context->RSSetViewports(1, &viewport);
+
+    ID3D11ShaderResourceView* shadowView = shadowSRV_.Get();
+    context->PSSetShaderResources(2, 1, &shadowView);
+    ID3D11SamplerState* shadowSampler = shadowSampler_.Get();
+    context->PSSetSamplers(2, 1, &shadowSampler);
+
+    for (Mesh& mesh : meshes_) {
+        if (mesh.instances.empty() || !mesh.instanceBuffer) {
+            continue;
+        }
+        ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
+        UINT stride = sizeof(Vertex);
+        UINT offset = 0;
+        context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
+        context->IASetIndexBuffer(mesh.indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+        ID3D11ShaderResourceView* srv = mesh.instanceSRV.Get();
+        context->VSSetShaderResources(0, 1, &srv);
+        context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()), 0, 0,
+                                      0);
+    }
+
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    ID3D11ShaderResourceView* nullShadow = nullptr;
+    context->PSSetShaderResources(2, 1, &nullShadow);
+    ID3D11SamplerState* nullSampler = nullptr;
+    context->PSSetSamplers(2, 1, &nullSampler);
+    context->VSSetShaderResources(0, 1, &nullSrv);
     context->IASetInputLayout(nullptr);
 }
 

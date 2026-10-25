@@ -64,6 +64,12 @@ void Simulation::Reset() {
 
     blast_.Configure(charge, environment);
     scene_.Generate(settings_.scene, blast_);
+    if (settings_.scene.enabled && !scene_.Empty()) {
+        const scene::SceneStats stats = scene_.Stats();
+        LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %.0f m extent",
+                stats.buildings, stats.vehicles, stats.trees, stats.chunks,
+                scene_.Extent());
+    }
     particles_.Reset();
     volume_.SetAutoScale(settings_.autoScaleVolume);
     volume_.SetResolution(settings_.volumeResolution);

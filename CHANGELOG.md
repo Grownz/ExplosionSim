@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- True oriented-box contacts in the rigid-body world: a 15-axis saturating-axis test with
+  a four-point contact manifold, sequential impulses and Coulomb friction replace the
+  bounding-sphere proxies, so collapsed chunks stack and slide instead of interpenetrating.
+- Progressive building collapse: chunks form a six-neighbour support graph with per-joint
+  strength, and a flood fill from the ground detaches only the unsupported part of a
+  building instead of collapsing the whole object at once.
+- Blast shielding: buildings attenuate the pressure, impulse and thermal load of objects
+  behind them (segment/AABB line-of-sight test, 0.35 per occluder).
+- Directional shadow map for the procedural scene (2048x2048, 3x3 PCF). The scene pass is
+  split into a depth-only shadow pass and a main pass, and the ground samples the same
+  map, so buildings cast long shadows across the terrain.
+- Camera-frustum culling for intact objects and detached chunks.
+- Density scaling beyond the object budget: `scene.density` also packs `ceil(density)`
+  smaller objects into each city block.
+- Scene generation and benchmark logs report building/vehicle/tree, chunk and rigid-body
+  counts.
+- `--distance-scale` now also applies to the reduced-order camera framing.
+
 ## [0.3.0] - 2026-10-25
 
 ### Added

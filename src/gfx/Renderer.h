@@ -159,8 +159,10 @@ private:
 
     ComPtr<ID3D11Buffer> frameConstantBuffer_;
     ComPtr<ID3D11Buffer> bloomConstantBuffer_;
+    ComPtr<ID3D11Buffer> shadowConstantBuffer_;
     FrameConstants frameConstants_{};
     BloomConstants bloomConstants_{};
+    DirectX::XMFLOAT4X4 lightViewProj_{};
 
     ComPtr<ID3D11Buffer> particleBufferAdditive_;
     ComPtr<ID3D11ShaderResourceView> particleSRVAdditive_;

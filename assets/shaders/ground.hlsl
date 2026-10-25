@@ -1,9 +1,42 @@
 #include "common.hlsli"
 
 Texture2D<float> SceneDepth : register(t1);
+Texture2D<float> ShadowMap : register(t2);
+SamplerComparisonState ShadowSampler : register(s2);
+
+cbuffer ShadowConstants : register(b2)
+{
+    float4x4 LightViewProj;
+};
 
 // Renders the infinite ground plane as a fullscreen ray/plane intersection and
 // writes the correct hardware depth.
+
+// 3x3 PCF against the directional shadow map, matching scene.hlsl.
+float SampleGroundShadow(float3 worldPosition)
+{
+    const float4 lightPosition = mul(LightViewProj, float4(worldPosition, 1.0));
+    const float2 uv = float2(0.5 + lightPosition.x * 0.5, 0.5 - lightPosition.y * 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0))
+    {
+        return 1.0;
+    }
+    const float depth = lightPosition.z - 0.0015;
+    const float texel = 1.0 / 2048.0;
+
+    float shadow = 0.0;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            shadow += ShadowMap.SampleCmpLevelZero(
+                ShadowSampler, uv + float2(x, y) * texel, depth);
+        }
+    }
+    return shadow / 9.0;
+}
 
 float TerrainHeight(float2 p)
 {
@@ -77,6 +110,7 @@ GroundOutput PSGround(VSOut input)
     // --- Lighting -----------------------------------------------------------
     float3 normal = float3(0.0, 1.0, 0.0);
     float sunAmount = saturate(dot(normal, SunDirection.xyz));
+    sunAmount *= SampleGroundShadow(world);
     float3 lighting = SunColor.rgb * sunAmount * 0.35 + float3(0.16, 0.17, 0.20);
     float3 color = earth * lighting;
 
