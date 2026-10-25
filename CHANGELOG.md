@@ -4,57 +4,63 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-10-25
 
 ### Added
 
-- Progressive building collapse: chunks form a six-neighbour support graph with per-edge
-  joints and staggered failure times. Every failure re-runs the support flood fill, so
-  chunks detach in waves instead of all at once; strongly loaded joints fail immediately,
-  the rest within a few tenths of a second.
+- Procedural environment: a deterministic town of buildings, vehicles and trees around
+  ground zero, generated from a seed with configurable density and per-type toggles. The
+  analytic blast field drives pressure-impulse damage, window/facade charring, 6-DOF
+  rigid-body motion for vehicles and trees, progressive building collapse into
+  pre-fractured chunks, and burning embers/fire particles.
+- Instanced scene renderer with shader-generated building windows, low-poly vehicles and
+  trees, distance haze and a depth-writing opaque pass that correctly occludes the
+  volumetric fireball and smoke.
+- Scene settings (`sceneEnabled`, `sceneSeed`, `sceneDensity`, per-type toggles,
+  `sceneQuality`, `sceneVoronoiChunks`), UI panel and `--scene-seed` / `--scene-density` /
+  `--no-scene`.
+- Progressive building collapse: per-edge joints with staggered failure times and a
+  support flood fill (six grid neighbours or shared Voronoi faces), so chunks detach in
+  waves; strongly loaded joints fail immediately, the rest within a few tenths of a second.
 - Static structure colliders: chunks that are still standing become static boxes, so
   falling debris piles up against them. Detached chunks reuse the same body and are
-  switched to dynamic, and a contact impulse above 500 N s damages the struck chunk's
-  joints, which can start a local cascade.
-- Optional Voronoi rubble (roadmap 2.3 phase B, *Environment > Voronoi chunks*,
-  `scene.voronoiChunks`, now the default): each building is split into convex cells
-  clipped to its box. The cells keep flat-shaded hulls for rendering and a
-  principal-component fitted OBB as the collision proxy, and shared faces become the
-  joints of the existing support graph. Hulls are drawn with one non-instanced draw call
-  per building through a per-vertex chunk id.
-- Finer, irregular chunking: the default grid is now 2x3x2, `scene.quality = 1` uses
-  3x4x3 and `quality = 2` 3x5x3, the split planes jitter by +-28 % per axis with a
-  minimum chunk width of 0.28 cell, and the chunk mesh is a chamfered box (bevel 0.10 of
-  the half extent). Rubble loses most of its right angles while the physics body stays an
-  OBB.
-- Building chunks keep the facade of the part they broke off from: every chunk instance
-  carries a texture origin and scale that maps its mesh-local position back to the
-  original building space, and blast damage is drawn as a procedural char and crack
-  overlay on top of the intact facade instead of a flat recolour.
-- High-fidelity mode follows the playback time-scale slider: the configured
-  `solverStepsPerFrame` is the budget at the default 0.06 and is scaled by
-  `timeScale / 0.06` (clamped to 1..96 steps), so slower playback resolves the same
-  simulated interval with fewer, faster steps and faster playback with more.
-- Blast shielding with nine rays per receiver: each ray accumulates the optical depth of
-  every building it crosses (`exp(-depth / 3 m)`), a diffraction floor keeps shadowed
-  receivers from going to zero, and an optional `sceneGroundReflection` setting adds a
-  height-dependent surface reflection.
+  switched to dynamic, and contact impulses damage the struck chunk's joints, which can
+  start a local cascade.
+- Voronoi rubble (default): each building is split into convex cells clipped to its box.
+  The cells keep flat-shaded hulls for rendering and a principal-component fitted OBB as
+  the collision proxy; shared faces become the joints of the support graph. Hulls are
+  drawn with one non-instanced draw call per building through a per-vertex chunk id.
+- Jittered grid fallback: 2x3x2 at `scene.quality = 0`, 3x4x3 at `quality = 1` (the
+  default) and 3x5x3 at `quality = 2`; split planes jitter by +-28 % per axis with a
+  0.28-cell minimum, and the chunk mesh is a chamfered box (bevel 0.10 of the half
+  extent).
+- Building chunks keep the facade of the part they broke off from: every chunk carries a
+  texture origin and scale that maps its mesh-local position back to the original building
+  space; blast damage is a procedural char and crack overlay on the intact facade.
+- Blast shielding with a 3x3x2 sample grid per receiver: each ray accumulates the optical
+  depth of every building it crosses (`exp(-depth / 3 m)`), a diffraction floor keeps
+  shadowed receivers from going to zero, and an optional `sceneGroundReflection` setting
+  adds a height-dependent surface reflection.
 - Cascaded directional shadows: three cascades (2048/1024/1024) with practical splits,
-  slope-scaled normal offset and 5x5 PCF. The far cascade draws only the large silhouettes,
-  trees switch to a single-cone mesh beyond 80 m, and the ground samples the same cascades.
-- Shadow cascade blending and a cached static-caster map: the last 10 % of each cascade
-  fades into the next (with the next light frustum extended backwards to cover the blend
-  band), and intact buildings render once into a camera-independent world-space 4096^2
-  shadow map that is only invalidated by scene, sun or collapse changes. The dynamic
-  cascades now contain only debris, vehicles and trees; the shader combines both maps
-  with a minimum so building shadows remain at every distance.
-- Camera-frustum culling for intact objects and detached chunks, a distance-based fade
-  of the procedural facade and sub-pixel culling of distant rubble chunks.
+  5x5 PCF and 10 % blending into the next cascade (the next light frustum is extended
+  backwards to cover the blend band). Intact buildings render once into a
+  camera-independent world-space 4096^2 static map that is only invalidated by scene, sun
+  or collapse changes; rubble, vehicles and trees are drawn into all dynamic cascades with
+  a caster margin of `max(200 m, 2 * scene extent)`, so chunk shadows match the cached
+  building shadows at every distance.
+- Camera-frustum culling for intact objects and detached chunks, a distance-based fade of
+  the procedural facade, sub-pixel culling of distant rubble, and a single-cone tree mesh
+  beyond 80 m.
 - Density scaling beyond the object budget: `scene.density` also packs `ceil(density)`
   smaller objects into each city block.
 - Scene generation and benchmark logs report building/vehicle/tree, chunk and rigid-body
   counts, plus the number of awake bodies.
 - `--distance-scale` now also applies to the reduced-order camera framing.
+- High-fidelity mode follows the playback time-scale slider: the configured
+  `solverStepsPerFrame` is the budget at the default 0.06 and is scaled by
+  `timeScale / 0.06` (clamped to 1..96 steps).
+- Scene tests: generation determinism, damage/collapse/fire behaviour, rigid-body
+  settling, and Voronoi hull containment/adjacency/determinism.
 
 ### Changed
 
@@ -64,16 +70,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and a multithreaded solver. The `PhysicsWorld` interface is unchanged, body state is
   mirrored for the renderer and tests, contact impulses are estimated with
   `EstimateCollisionResponse`, and the left-handed scene is mirrored on Z at the boundary.
-  At density 3 the 1920x1080 benchmark dropped from 8.0 to 5.75 ms/frame (Voronoi) and
-  from 8.7 to 4.16 ms/frame (grid). Jolt is fetched
-  by CMake at configure time, so the first configure needs network access. Physics is no
-  longer bit-exact across runs because Jolt uses a multithreaded job system.
+  At density 3 the initial integration reduced the 1920x1080 frame time from ~8.0/8.7 ms
+  to ~5.8/4.2 ms (Voronoi/grid). Jolt is fetched by CMake at configure time, so the first
+  configure needs network access; physics is no longer bit-exact across runs because Jolt
+  uses a multithreaded job system.
 - Voronoi chunks are now the default rubble representation; the jittered grid remains
   available through *Environment > Voronoi chunks*.
-- Grid and Voronoi chunks cast dynamic shadows into the cascades. A caster margin of
-  `max(200 m, 2 * scene extent)` keeps rubble in the shadow pass even when it is far
-  outside the camera frustum, and the dynamic casters are drawn in every cascade, so
-  chunk shadows match the cached building shadows at all distances.
+- The orbit camera cannot be moved below the ground plane: the target height is clamped
+  to the ground and the pitch is limited to the angle that keeps a 0.4 m clearance.
+- The README hero image was refreshed with a new mushroom-cloud capture.
 
 ### Fixed
 
@@ -81,15 +86,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   mirrored Z, so every body (including detached chunks) was mirrored across the Z axis.
   Buildings whose chunks detached therefore appeared to vanish from their location. The
   creation now uses the same mirror conversion; a round-trip test covers it.
-- The orbit camera could be dragged below the ground plane (negative pitch, low target or
-  a large zoom-out). The desired target height is clamped to the ground and the pitch is
-  limited to the angle at which the orbit position would reach a 0.4 m clearance, both for
-  the smoothed and the snapped state, so the view never dips under the terrain.
-- `ParticleSystem::Reset` stored the absolute range start in the per-species cursor,
-  but `AcquireSlot` treats the cursor as an offset inside the range. Every detonation
-  therefore indexed past the species range and corrupted the heap, which showed up as
-  intermittent crashes of the test suite and the application. The cursor is now reset to
-  zero.
+- `ParticleSystem::Reset` stored the absolute range start in the per-species cursor, but
+  `AcquireSlot` treats the cursor as an offset inside the range. Every detonation indexed
+  past the species range and corrupted the heap, which showed up as intermittent crashes
+  of the test suite and the application. The cursor is now reset to zero.
 - Scene culling used `DirectX::BoundingFrustum` with the combined view-projection matrix,
   but that type expects a pure projection matrix. Objects and rubble disappeared at most
   camera angles. The six planes are now extracted directly from the view-projection
@@ -101,18 +101,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- Procedural environment: a deterministic town of buildings, vehicles and trees around
-  ground zero, generated from a seed with configurable density and per-type toggles.
-  The analytic blast field drives pressure-impulse damage, window/facade charring,
-  6-DOF rigid-body motion for vehicles and trees, building collapse into pre-fractured
-  chunks, and burning embers/fire particles.
-- Instanced scene renderer with shader-generated building windows, low-poly vehicles and
-  trees, distance haze and a depth-writing opaque pass that correctly occludes the
-  volumetric fireball and smoke.
-- Scene settings (`sceneEnabled`, `sceneSeed`, `sceneDensity`, per-type toggles,
-  `sceneQuality`), UI panel and `--scene-seed` / `--scene-density` / `--no-scene`.
-- Scene tests: generation determinism, damage/collapse/fire behaviour and rigid-body
-  settling.
 - Absorbing sponge over the outer 6 % of the lateral and top solver boundaries. It
   relaxes the state towards ambient so outgoing acoustic waves do not reflect back into
   the plume; the ground remains a reflecting wall.
@@ -243,6 +231,7 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
+[0.4.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.1.0
