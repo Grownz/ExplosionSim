@@ -4,7 +4,27 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-10-26
+
+This release is the high-fidelity and procedural-scene update. It turns the GPU solver
+into a mushroom-cap model with charge-scaled domains and direct time-scale playback,
+extends the charge range to 100,000 t, makes the town a charge-scaled disc, adds the
+responsive loading bar, the four-row FPS data box and the two-step Detonate/Rearm flow,
+and fixes the large-charge Voronoi crash and the lateral auto-scale edge detection.
+
+### Highlights
+
+- **High-fidelity mushroom cap** - sub-grid drag and toroidal vortex closure, measured
+  auto-scale, low-soot smoke rendering and a cloud-framing camera.
+- **Charge range and solver cube** - a double-precision slider to 100,000 t with t/kt
+  presets, and an HF domain that scales with the charge instead of a 30 m cap.
+- **Large-charge stability** - fixed the Voronoi cap-sort crash, scaled the town with the
+  destruction radius and arranged it as a disc.
+- **Responsive interface** - worker-thread scene generation with a green loading strip, a
+  rounded FPS data box, and the Detonate/Rearm flow.
+- **Real-time HF playback** - the solver follows the playback time scale directly
+  (1.0 = real time), with a 1 ms CFL cap so coarse grids can keep up; the auto-scale now
+  catches the lateral smoke/fireball edge.
 
 ### Added
 
@@ -287,6 +307,7 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
+[0.5.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.2.0
