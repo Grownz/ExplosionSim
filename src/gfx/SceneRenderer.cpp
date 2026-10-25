@@ -1145,7 +1145,9 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
                 std::sqrt(chunk.half.x * chunk.half.x + chunk.half.y * chunk.half.y +
                           chunk.half.z * chunk.half.z) *
                 1.3f;
-            if (!visible(chunkCenter, chunkRadius)) {
+            // Keep casters slightly outside the view so their shadows can
+            // still reach the visible area.
+            if (!visible(chunkCenter, chunkRadius + 20.0f)) {
                 continue;
             }
             // Level of detail: drop chunks that cover less than a pixel.

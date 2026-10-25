@@ -189,9 +189,9 @@ chunks along jittered planes (2x3x2 by default, 3x4x3 at `scene.quality = 1` and
 `quality = 2`), so no two neighbours share the same dimensions. The split planes move by
 up to +-28 % of a cell but never closer than 0.28 cell to their neighbour, which keeps
 every chunk usable as an OBB while removing most of the grid's right angles. With
-`scene.voronoiChunks` the building is instead split into convex Voronoi cells clipped to
-its box; each cell keeps a flat-shaded hull for rendering, a PCA-fitted OBB as the
-collision proxy, and its shared faces define the support joints. Vehicles and trees
+`scene.voronoiChunks` (the default) the building is instead split into convex Voronoi
+cells clipped to its box; each cell keeps a flat-shaded hull for rendering, a PCA-fitted
+OBB as the collision proxy, and its shared faces define the support joints. Vehicles and trees
 become 6-DOF rigid bodies, and burning objects emit fire particles.
 
 Collapse is progressive. Each chunk edge carries a joint; the blast load sets a failure
@@ -223,15 +223,15 @@ meshes (box buildings with shader-generated windows, low-poly vehicles and trees
 use a chamfered box mesh and carry a per-instance texture origin and scale; the shader
 maps the mesh-local position back into the original building space, so each fragment
 keeps the facade it broke off from. Blast damage is a procedural char and crack overlay
-on that facade rather than a flat recolour. With `scene.voronoiChunks` the rubble is a
-convex hull instead: all hulls live in one vertex/index buffer, each vertex names its
-chunk, and a per-chunk structured buffer supplies the rigid transform, so a whole
-building is one draw call. The renderer is
+on that facade rather than a flat recolour. With `scene.voronoiChunks` (the default) the
+rubble is a convex hull instead: all hulls live in one vertex/index buffer, each vertex
+names its chunk, and a per-chunk structured buffer supplies the rigid transform, so a
+whole building is one draw call. The renderer is
 split into a depth-only shadow pass and a main pass that runs after the ground. Intact
 buildings render once into a camera-independent world-space shadow map (4096^2) that is
 only invalidated by scene, sun or collapse changes; the dynamic cascades
-(2048/1024/1024) contain debris, vehicles and trees and use 5x5 PCF. The last 10 % of
-each cascade blends into the next one, and the next cascade's light frustum is extended
+(2048/1024/1024) contain the rubble hulls, vehicles and trees and use 5x5 PCF, so the
+debris casts dynamic shadows onto the ground, the intact buildings and other rubble. The last 10 % ofeach cascade blends into the next one, and the next cascade's light frustum is extended
 backwards to cover the blend band. Trees switch to a single-cone mesh
 beyond 80 m and the procedural facade fades beyond 150 m. A distance haze matches the
 ground and sky. Determinism is preserved by a seeded RNG, fixed physics substeps and a

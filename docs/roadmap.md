@@ -71,18 +71,19 @@ findings below describe the previous solver and are kept for history.
   above 500 N s are converted to pressure and damage the struck chunk's joints.
 - **2.3 Jittered chunks - done.** Split planes are offset by up to +-28 % per axis, so no
   two neighbours share dimensions; topology and OBB physics are unchanged.
-- **2.3 phase B (Voronoi) - done as an option.** Convex cells clipped to the building box,
-  flat-shaded hulls, principal-component fitted OBB proxies and face-based joints. Enabled
-  via *Environment > Voronoi chunks* (`scene.voronoiChunks`, default off) because it costs
-  generation time, memory and one draw call per building. Measured at density 1
-  (1920x1080, 20 t): 4.48 ms/frame versus 4.28 ms for the grid.
+- **2.3 phase B (Voronoi) - default.** Convex cells clipped to the building box,
+  flat-shaded hulls, principal-component fitted OBB proxies and face-based joints. The
+  jittered grid remains available through *Environment > Voronoi chunks*
+  (`scene.voronoiChunks`). Measured at density 1 (1920x1080, 20 t): 4.48 ms/frame versus
+  4.28 ms for the grid.
 - **3 Blast shielding - done.** Nine rays per receiver, thickness-based optical depth,
   diffraction floor and an optional ground-reflection setting (default off).
 - **4 Shadows and LOD - done.** Three cascades (2048/1024/1024) with practical splits,
   slope-scaled normal offset, 5x5 PCF, 10 % blending into the next cascade and a
   backwards-extended light frustum for the blend band. Intact buildings are cached in a
   camera-independent world-space 4096^2 shadow map (re-rendered on scene, sun or collapse
-  changes); the dynamic cascades only contain debris, vehicles and trees. Far-cascade
+  changes); the dynamic cascades only contain debris, vehicles and trees, so the rubble
+  casts dynamic shadows on the ground, the intact buildings and other debris. Far-cascade
   caster LOD, a single-cone tree mesh beyond 80 m and the facade fade.
 
 Measured at density 1 with a 20 t charge and seed 1337: 3553 bodies (864 static),
@@ -266,11 +267,11 @@ to the building box, one convex hull per cell. Physics via GJK/EPA (or an OBB
 approximation), rendering via one vertex/index buffer per building with per-chunk index
 ranges (loses instancing, costs memory). Only worth it if close-up rubble is a goal.
 
-**Status:** Phase A is the default. Phase B is implemented behind *Environment > Voronoi
-chunks* (`scene.voronoiChunks`): cells are clipped against each other's bisector planes,
-the collision proxy is a PCA-fitted OBB (no GJK/EPA), and the hulls are drawn with one
-non-instanced draw call per building, with the chunk id stored per vertex. The support
-graph uses shared Voronoi faces instead of the six grid neighbours.
+**Status:** Phase B is the default. Phase A remains available by disabling *Environment >
+Voronoi chunks* (`scene.voronoiChunks`). Phase B clips cells against each other's
+bisector planes, uses a PCA-fitted OBB (no GJK/EPA) as the collision proxy, and draws the
+hulls with one non-instanced draw call per building, with the chunk id stored per vertex.
+The support graph uses shared Voronoi faces instead of the six grid neighbours.
 
 **Acceptance (A):** no two adjacent chunks share identical dimensions; the support graph
 keeps six neighbours; render cost unchanged.

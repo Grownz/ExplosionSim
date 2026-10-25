@@ -335,13 +335,12 @@ void DrawEnvironment(app::AppSettings& settings, const sim::Simulation& simulati
         actions.applySimulationSettings = true;
     }
 
-    if (ImGui::Checkbox("Voronoi chunks (experimental)", &scene.voronoiChunks)) {
+    if (ImGui::Checkbox("Voronoi chunks", &scene.voronoiChunks)) {
         actions.applySimulationSettings = true;
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Convex Voronoi cells clipped to the building box instead of "
-                          "the jittered grid. More irregular rubble with a fitted-box "
-                          "collision proxy; costs generation time, memory and draw calls.");
+        ImGui::SetTooltip("Convex Voronoi cells clipped to the building box (default). "
+                          "Disable to use the cheaper jittered grid instead.");
     }
 
     if (ImGui::Button("Regenerate scene")) {

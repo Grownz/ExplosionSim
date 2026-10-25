@@ -42,8 +42,8 @@ start-up at 0.4 m above the ground**.
   collapse into pre-fractured chunks; burning objects glow and emit embers. Buildings
   shield each other from the blast, the rubble uses true oriented-box contacts, and a
   directional shadow map lets the town cast shadows on the terrain. Seed, density and
-  chunk quality are configurable; *Environment > Voronoi chunks* switches from the
-  jittered grid to convex Voronoi cells (default off); `--no-scene` disables the scene.
+  chunk quality are configurable; *Environment > Voronoi chunks* switches between
+  convex Voronoi cells (default) and the jittered grid; `--no-scene` disables the scene.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,

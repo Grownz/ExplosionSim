@@ -430,7 +430,7 @@ void TestPhysicsWorld() {
 void TestSceneDamage() {
     Environment environment{};
     Charge charge{};
-    charge.tntMassKg = 30.0;
+    charge.tntMassKg = 100.0;
     charge.heightOfBurstM = 0.4;
     BlastModel model;
     model.Configure(charge, environment);

@@ -36,9 +36,9 @@ struct SceneSettings {
     // 0 = free-air blast field, 1 = perfectly reflecting ground.
     float groundReflection = 0.0f;
     // Phase B chunk geometry: Voronoi cells clipped to the building box instead
-    // of the jittered grid. Off by default because it costs memory and draw
-    // calls; the grid remains the fast path.
-    bool voronoiChunks = false;
+    // of the jittered grid. This is the default; the grid remains available as
+    // the cheaper fallback.
+    bool voronoiChunks = true;
 };
 
 struct SceneDebrisSpawn {

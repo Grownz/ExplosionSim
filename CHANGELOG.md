@@ -17,7 +17,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   switched to dynamic, and a contact impulse above 500 N s damages the struck chunk's
   joints, which can start a local cascade.
 - Optional Voronoi rubble (roadmap 2.3 phase B, *Environment > Voronoi chunks*,
-  `scene.voronoiChunks`, default off): each building is split into convex cells
+  `scene.voronoiChunks`, now the default): each building is split into convex cells
   clipped to its box. The cells keep flat-shaded hulls for rendering and a
   principal-component fitted OBB as the collision proxy, and shared faces become the
   joints of the existing support graph. Hulls are drawn with one non-instanced draw call
@@ -68,6 +68,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   from 8.7 to 4.16 ms/frame (grid). Jolt is fetched
   by CMake at configure time, so the first configure needs network access. Physics is no
   longer bit-exact across runs because Jolt uses a multithreaded job system.
+- Voronoi chunks are now the default rubble representation; the jittered grid remains
+  available through *Environment > Voronoi chunks*.
+- Grid and Voronoi chunks cast dynamic shadows into the cascades. A 20 m caster margin
+  keeps rubble just outside the camera frustum in the shadow pass, so its shadows still
+  reach the visible area.
 
 ### Fixed
 
