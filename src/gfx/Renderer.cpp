@@ -732,7 +732,9 @@ EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
     config.resolution = std::clamp(simulation.Settings().solverResolution, 32, 512);
 
     const double fireball = std::max(blast.FireballMaxRadiusM(), 0.1);
-    config.domainHalfExtent = std::clamp(3.0 * fireball, 1.0, 30.0);
+    // Scale the cube with the charge: the old 30 m cap made large charges use
+    // a tiny high-fidelity domain.
+    config.domainHalfExtent = std::clamp(3.0 * fireball, 1.0, 2000.0);
     config.chargeMassKg = std::max(charge.tntMassKg, 1e-6);
     config.chargeEnergyJ = charge.EnergyJ();
     config.heightOfBurstM =

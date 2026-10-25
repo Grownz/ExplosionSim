@@ -150,7 +150,8 @@ conservative 4000 m/s is assumed until the first reduction result is available.
 
 ### Domain and boundaries
 
-The domain is a cube of side `2 * 3 * R_fireball` with the ground at `y = 0`. The ground
+The domain is a cube of half extent `3 * R_fireball` (1 m to 2 km) with the ground at
+`y = 0`. The ground
 is a reflecting wall implemented by mirroring the ghost cell and reversing the vertical
 momentum. The lateral and top boundaries use zero-gradient ghost cells plus an absorbing
 sponge over the outer 6 % of the domain, which relaxes the state towards ambient so

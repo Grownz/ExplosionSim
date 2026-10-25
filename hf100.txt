@@ -1,0 +1,16 @@
+[info] Direct3D 11 device ready: NVIDIA GeForce RTX 3090 (feature level 11.1)
+[warn] Shader warnings (I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\ground.hlsl):
+I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\ground.hlsl(92,9): warning X4000: use of potentially uninitialized variable (SampleGroundDynamic)
+I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\ground.hlsl(94,5): warning X4000: use of potentially uninitialized variable (SampleGroundDynamic)
+
+[warn] Shader warnings (I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\scene.hlsl):
+I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\scene.hlsl(204,9): warning X4000: use of potentially uninitialized variable (SampleShadowDynamic)
+I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\scene.hlsl(206,5): warning X4000: use of potentially uninitialized variable (SampleShadowDynamic)
+
+[info] Scene: 314 buildings, 166 vehicles, 231 trees, 8186 chunks, 160 m extent
+[info] Simulation ready: 1e+05 kg TNT, 0.40 m burst height, 15 workers
+[info] High-fidelity domain expanded: half 77.63 m, top 155.26 m, voxel 2426.0 mm, accuracy x1.30
+[info] High-fidelity: t=0.2008 s (analytic 0.2008 s), 4016 steps, 64^3, dt=50.00 us, maxSpeed=496 m/s
+[info] First frame: t=0.201s fireball=19.89m (3328 K) shock=139.0m volume=1 particles=0+0 highFidelity=1
+[info] Saved screenshot: hf_100t.png (800x450)
+[info] Simulation time 0.201 s, 0 particles

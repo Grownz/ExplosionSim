@@ -171,7 +171,8 @@ Examples:
 | Loop duration | 0.55 s of simulated time |
 
 The charge, height of burst, atmosphere and fuse can be changed in the control panel.
-Presets from 20 g to 1 t are included; the model remains continuous over a much wider
+Presets from 20 g to 10,000 t are included; the charge slider goes up to 100,000 t and
+shows whole kilograms from 100 kg upward. The model remains continuous over the full
 range.
 
 ## Simulation models

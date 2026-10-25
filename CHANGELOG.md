@@ -14,6 +14,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   drag and toroidal vortex-ring force around the analytic cloud radius spin the plume
   into a cap; the render uses a separate low soot threshold for the diluted smoke, and
   the camera frames the analytic cloud rather than the solver domain.
+- Charge mass selection extended to 100,000 t. The slider uses double precision, shows
+  whole kilograms from 100 kg upward, and adds 10 t / 100 t / 1000 t / 10,000 t buttons.
+- The high-fidelity domain cube scales with the charge (`3 * R_fireball`, up to a 2 km
+  half extent) instead of being capped at 30 m; the reduced-order volume box already
+  follows the fireball and cloud.
 
 ### Fixed
 

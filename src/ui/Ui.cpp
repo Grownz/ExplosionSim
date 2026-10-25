@@ -157,10 +157,12 @@ void DrawDetonation(app::AppSettings& settings, UiActions& actions) {
     SectionHeader("DETONATION");
 
     double massKg = settings.simulation.chargeMassKg;
-    float kilograms = float(massKg);
-    if (ImGui::SliderFloat("Charge", &kilograms, 0.01f, 20000.0f, "%.3f kg TNT",
-                           ImGuiSliderFlags_Logarithmic)) {
-        settings.simulation.chargeMassKg = std::clamp(double(kilograms), 0.01, 1.0e9);
+    const double minMass = 0.01;
+    const double maxMass = 1.0e8; // 100 000 t
+    const char* massFormat = massKg < 100.0 ? "%.3f kg TNT" : "%.0f kg TNT";
+    if (ImGui::SliderScalar("Charge", ImGuiDataType_Double, &massKg, &minMass,
+                            &maxMass, massFormat, ImGuiSliderFlags_Logarithmic)) {
+        settings.simulation.chargeMassKg = std::clamp(massKg, 0.01, 1.0e8);
     }
     if (ImGui::IsItemDeactivatedAfterEdit()) {
         actions.applySimulationSettings = true;
@@ -168,12 +170,27 @@ void DrawDetonation(app::AppSettings& settings, UiActions& actions) {
 
     const char* presetLabels[] = {"20 g", "200 g", "1 kg", "50 kg", "1 t"};
     const double presetValues[] = {0.02, 0.2, 1.0, 50.0, 1000.0};
+    const float presetWidth = ImGui::GetContentRegionAvail().x / 5.0f - 2.0f;
     for (int i = 0; i < 5; ++i) {
         if (i > 0) {
             ImGui::SameLine();
         }
-        if (ImGui::Button(presetLabels[i], ImVec2(ImGui::GetContentRegionAvail().x / 5.0f - 2.0f, 0))) {
+        if (ImGui::Button(presetLabels[i], ImVec2(presetWidth, 0))) {
             settings.simulation.chargeMassKg = presetValues[i];
+            actions.applySimulationSettings = true;
+            actions.restart = true;
+        }
+    }
+
+    const char* largeLabels[] = {"10 t", "100 t", "1000 t", "10000 t"};
+    const double largeValues[] = {1.0e4, 1.0e5, 1.0e6, 1.0e7};
+    const float largeWidth = ImGui::GetContentRegionAvail().x / 4.0f - 2.0f;
+    for (int i = 0; i < 4; ++i) {
+        if (i > 0) {
+            ImGui::SameLine();
+        }
+        if (ImGui::Button(largeLabels[i], ImVec2(largeWidth, 0))) {
+            settings.simulation.chargeMassKg = largeValues[i];
             actions.applySimulationSettings = true;
             actions.restart = true;
         }

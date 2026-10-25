@@ -1,0 +1,13 @@
+[info] Direct3D 11 device ready: NVIDIA GeForce RTX 3090 (feature level 11.1)
+[warn] Shader warnings (I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\ground.hlsl):
+I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\ground.hlsl(92,9): warning X4000: use of potentially uninitialized variable (SampleGroundDynamic)
+I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\ground.hlsl(94,5): warning X4000: use of potentially uninitialized variable (SampleGroundDynamic)
+
+[warn] Shader warnings (I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\scene.hlsl):
+I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\scene.hlsl(204,9): warning X4000: use of potentially uninitialized variable (SampleShadowDynamic)
+I:\AI-coding\Explosion_Sim\build\Release\assets\shaders\scene.hlsl(206,5): warning X4000: use of potentially uninitialized variable (SampleShadowDynamic)
+
+[info] Simulation ready: 1e+08 kg TNT, 0.40 m burst height, 15 workers
+[info] First frame: t=2.000s fireball=315.48m (2161 K) shock=1387.1m volume=1 particles=1700+3242 highFidelity=0
+[info] Saved screenshot: big_100kt.png (900x500)
+[info] Simulation time 2.000 s, 4942 particles
