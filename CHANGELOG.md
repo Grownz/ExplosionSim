@@ -11,14 +11,23 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - True oriented-box contacts in the rigid-body world: a 15-axis saturating-axis test with
   a four-point contact manifold, sequential impulses and Coulomb friction replace the
   bounding-sphere proxies, so collapsed chunks stack and slide instead of interpenetrating.
-- Progressive building collapse: chunks form a six-neighbour support graph with per-joint
-  strength, and a flood fill from the ground detaches only the unsupported part of a
-  building instead of collapsing the whole object at once.
-- Blast shielding: buildings attenuate the pressure, impulse and thermal load of objects
-  behind them (segment/AABB line-of-sight test, 0.35 per occluder).
-- Directional shadow map for the procedural scene (2048x2048, 3x3 PCF). The scene pass is
-  split into a depth-only shadow pass and a main pass, and the ground samples the same
-  map, so buildings cast long shadows across the terrain.
+- Progressive building collapse: chunks form a six-neighbour support graph with per-edge
+  joints and staggered failure times. Every failure re-runs the support flood fill, so
+  chunks detach in waves instead of all at once; strongly loaded joints fail immediately,
+  the rest within a few tenths of a second.
+- Static structure colliders: chunks that are still standing become static boxes, so
+  falling debris piles up against them. Detached chunks reuse the same body and are
+  switched to dynamic, and a contact impulse above 500 N s damages the struck chunk's
+  joints, which can start a local cascade.
+- Jittered chunk split planes (+-16 % per axis) give non-uniform rubble without changing
+  the grid topology or the OBB physics.
+- Blast shielding with nine rays per receiver: each ray accumulates the optical depth of
+  every building it crosses (`exp(-depth / 3 m)`), a diffraction floor keeps shadowed
+  receivers from going to zero, and an optional `sceneGroundReflection` setting adds a
+  height-dependent surface reflection.
+- Cascaded directional shadows: three cascades (2048/1024/1024) with practical splits,
+  slope-scaled normal offset and 5x5 PCF. The far cascade draws only the large silhouettes,
+  trees switch to a single-cone mesh beyond 80 m, and the ground samples the same cascades.
 - Camera-frustum culling for intact objects and detached chunks, a distance-based fade
   of the procedural facade and sub-pixel culling of distant rubble chunks.
 - Density scaling beyond the object budget: `scene.density` also packs `ceil(density)`

@@ -3,6 +3,7 @@
 #include <DirectXMath.h>
 
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 #include "scene/PhysicsWorld.h"
@@ -32,6 +33,8 @@ struct SceneSettings {
     bool vehicles = true;
     bool vegetation = true;
     int quality = 1; // 0 = low, 1 = medium, 2 = high
+    // 0 = free-air blast field, 1 = perfectly reflecting ground.
+    float groundReflection = 0.0f;
 };
 
 struct SceneDebrisSpawn {
@@ -49,6 +52,7 @@ struct SceneChunk {
     int gridY = 0;
     bool detached = false;
     std::vector<int> neighbors;
+    std::vector<uint8_t> neighborBroken; // parallel to neighbors
 };
 
 struct SceneFireSpawn {
@@ -64,6 +68,7 @@ struct SceneStats {
     int trees = 0;
     int chunks = 0;
     int bodies = 0;
+    int staticBodies = 0;
 };
 
 // One procedurally placed object. The blast fields are evaluated once at
@@ -91,6 +96,8 @@ struct SceneObject {
     float burnTimer = 0.0f;
     int bodyIndex = -1;
     bool collapsed = false;
+    bool collapsing = false;
+    bool structureRegistered = false;
     int occluders = 0;
     std::vector<SceneChunk> chunks;
 };
@@ -117,14 +124,32 @@ public:
     const PhysicsWorld& Physics() const { return physics_; }
 
 private:
+    struct PendingJointFailure {
+        double time = 0.0;
+        int objectIndex = -1;
+        int chunkA = -1;
+        int chunkB = -1;
+    };
+
     void ActivateBody(SceneObject& object);
-    void CollapseBuilding(SceneObject& object);
+    void StartCollapse(SceneObject& object);
+    void UpdateSupport(SceneObject& object);
+    std::vector<uint8_t> ComputeSupport(const SceneObject& object) const;
+    void DetachChunk(SceneObject& object, int index);
+    void BreakJoint(SceneObject& object, int a, int b);
+    void ProcessJointFailures();
+    void RegisterStructureBodies(SceneObject& object,
+                                 const std::vector<uint8_t>& supported);
+    void ApplyContactDamage(float dtSim);
     void StepPhysics(float dtSim);
 
     SceneSettings settings_{};
     std::vector<SceneObject> objects_;
     std::vector<SceneDebrisSpawn> debrisSpawns_;
     std::vector<SceneFireSpawn> fireSpawns_;
+    std::vector<PendingJointFailure> pendingFailures_;
+    // Maps a physics body index back to (object, chunk) for contact damage.
+    std::vector<std::pair<int, int>> bodyChunk_;
     PhysicsWorld physics_;
     uint64_t hash_ = 0;
     float extent_ = 0.0f;

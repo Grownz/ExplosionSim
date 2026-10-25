@@ -184,23 +184,38 @@ Friedlander impulse (`OverpressureImpulsePaS`) and thermal fluence evaluated at
 generation, plus the number of buildings that block the line of sight to ground zero.
 
 At the arrival time a pressure-impulse criterion sets the damage state
-(intact/light/heavy/destroyed). Heavy or destroyed buildings are replaced by
-pre-fractured convex chunks (2x3x2 by default; `scene.quality` changes the grid),
-vehicles and trees become 6-DOF rigid bodies, and burning objects emit fire particles.
-The rigid-body world uses an averaged ground contact point for stability, OBB-OBB
-saturating-axis tests with a four-point contact manifold for body-body contacts, Coulomb
-friction, contact damping and sleeping; it runs in fixed 1/120 s substeps. Damage events
-are queued and drained by `Simulation`, which spawns debris and fire particles on the
-main thread.
+(intact/light/heavy/destroyed). Heavy or destroyed buildings are split into pre-fractured
+chunks along jittered planes (2x3x2 by default; `scene.quality` changes the grid), so no
+two neighbours share the same dimensions. Vehicles and trees become 6-DOF rigid bodies,
+and burning objects emit fire particles.
+
+Collapse is progressive. Each chunk edge carries a joint; the blast load sets a failure
+time (strongly loaded joints fail almost immediately, the rest over the next few tenths of
+a second). A priority list of pending failures is processed every update: the joint is
+broken, the support graph is flood-filled again from the ground, and only the chunks that
+lost their connection detach. Chunks that are still standing are registered as static
+collision boxes, so debris piles up against the remaining structure; a heavy impact
+reports a contact impulse back to the scene, which damages the struck chunk's joints and
+can start a local cascade.
+
+The rigid-body world uses an averaged ground contact point, OBB-OBB saturating-axis tests
+with a contact manifold, analytic box inertia, Coulomb friction and sleeping, and a
+shock-propagation pass that resolves each upper body against the lower one as if it were
+infinitely massive. It runs in fixed 1/120 s substeps. Damage events are queued and
+drained by `Simulation`, which spawns debris and fire particles on the main thread.
+
+Blast shielding traces 3x3 rays from the burst to the receiver, accumulates the optical
+depth of every building the ray crosses (`exp(-depth/3 m)`), applies a diffraction floor
+around the nearest occluder and, optionally, a ground-reflection factor near the surface.
 
 `SceneRenderer` draws the intact objects and active chunks as instanced procedural
 meshes (box buildings with shader-generated windows, low-poly vehicles and trees). It is
-split into a depth-only shadow pass (2048x2048 directional map, 3x3 PCF, camera-frustum
-culling of casters) and a main pass that runs after the ground, so buildings correctly
-occlude the fireball and smoke and cast shadows on the terrain. Distance-based level of
-detail fades the procedural facade beyond 150 m and drops rubble chunks below one pixel.
-A distance haze matches the ground and sky. Determinism is preserved by a seeded RNG,
-fixed physics substeps and a generation hash exposed for tests.
+split into a depth-only shadow pass and a main pass that runs after the ground. The shadow
+pass renders three cascades (2048/1024/1024) with slope-scaled normal offset and 5x5 PCF;
+the far cascade draws only the large silhouettes. Trees switch to a single-cone mesh
+beyond 80 m and the procedural facade fades beyond 150 m. A distance haze matches the
+ground and sky. Determinism is preserved by a seeded RNG, fixed physics substeps and a
+generation hash exposed for tests.
 
 ### Integration with the application
 

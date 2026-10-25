@@ -70,10 +70,13 @@ DamageState EvaluateDamage(float pressure, float impulse,
     return DamageState::Intact;
 }
 
-bool SegmentHitsAabb(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end,
-                     const DirectX::XMFLOAT3& lower, const DirectX::XMFLOAT3& upper) {
-    float tMin = 0.0f;
-    float tMax = 1.0f;
+// Slab test returning the parametric interval [t0, t1] of the segment inside the
+// box. The interval is clamped to [0, 1]; false means the segment misses.
+bool SegmentInterval(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& end,
+                     const DirectX::XMFLOAT3& lower, const DirectX::XMFLOAT3& upper,
+                     float& t0, float& t1) {
+    t0 = 0.0f;
+    t1 = 1.0f;
     const float origin[3] = {start.x, start.y, start.z};
     const float direction[3] = {end.x - start.x, end.y - start.y, end.z - start.z};
     const float boxMin[3] = {lower.x, lower.y, lower.z};
@@ -86,18 +89,18 @@ bool SegmentHitsAabb(const DirectX::XMFLOAT3& start, const DirectX::XMFLOAT3& en
             }
             continue;
         }
-        float t1 = (boxMin[axis] - origin[axis]) / direction[axis];
-        float t2 = (boxMax[axis] - origin[axis]) / direction[axis];
-        if (t1 > t2) {
-            std::swap(t1, t2);
+        float enter = (boxMin[axis] - origin[axis]) / direction[axis];
+        float leave = (boxMax[axis] - origin[axis]) / direction[axis];
+        if (enter > leave) {
+            std::swap(enter, leave);
         }
-        tMin = std::max(tMin, t1);
-        tMax = std::min(tMax, t2);
-        if (tMin > tMax) {
+        t0 = std::max(t0, enter);
+        t1 = std::min(t1, leave);
+        if (t0 > t1) {
             return false;
         }
     }
-    return tMax > 0.0f && tMin < 1.0f;
+    return t1 >= 0.0f && t0 <= 1.0f;
 }
 
 // Places the k-th copy of a block-sized object on a small sub-grid so that
@@ -122,6 +125,8 @@ void Scene::Clear() {
     objects_.clear();
     debrisSpawns_.clear();
     fireSpawns_.clear();
+    pendingFailures_.clear();
+    bodyChunk_.clear();
     physics_.Clear();
     hash_ = 0;
     extent_ = 0.0f;
@@ -134,6 +139,8 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     objects_.clear();
     debrisSpawns_.clear();
     fireSpawns_.clear();
+    pendingFailures_.clear();
+    bodyChunk_.clear();
     physics_.Clear();
     hash_ = 0;
     extent_ = 0.0f;
@@ -199,18 +206,48 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
             const float sx = size.x / float(nx);
             const float sy = size.y / float(ny);
             const float sz = size.z / float(nz);
+
+            // Jittered split planes give non-uniform chunks without changing the
+            // grid topology or the OBB physics.
+            std::vector<float> splitX(nx + 1);
+            std::vector<float> splitY(ny + 1);
+            std::vector<float> splitZ(nz + 1);
+            for (int i = 0; i <= nx; ++i) {
+                const float base = x - size.x * 0.5f + size.x * float(i) / float(nx);
+                const float jitter =
+                    (i > 0 && i < nx) ? rng.Range(-0.16f, 0.16f) * sx : 0.0f;
+                splitX[i] = base + jitter;
+            }
+            for (int i = 0; i <= ny; ++i) {
+                const float base = size.y * float(i) / float(ny);
+                const float jitter =
+                    (i > 0 && i < ny) ? rng.Range(-0.16f, 0.16f) * sy : 0.0f;
+                splitY[i] = base + jitter;
+            }
+            for (int i = 0; i <= nz; ++i) {
+                const float base = z - size.z * 0.5f + size.z * float(i) / float(nz);
+                const float jitter =
+                    (i > 0 && i < nz) ? rng.Range(-0.16f, 0.16f) * sz : 0.0f;
+                splitZ[i] = base + jitter;
+            }
+
             for (int ix = 0; ix < nx; ++ix) {
                 for (int iy = 0; iy < ny; ++iy) {
                     for (int iz = 0; iz < nz; ++iz) {
                         SceneChunk chunk;
                         chunk.center = DirectX::XMFLOAT3(
-                            x - size.x * 0.5f + (float(ix) + 0.5f) * sx,
-                            (float(iy) + 0.5f) * sy,
-                            z - size.z * 0.5f + (float(iz) + 0.5f) * sz);
-                        chunk.half = DirectX::XMFLOAT3(sx * 0.5f, sy * 0.5f, sz * 0.5f);
+                            (splitX[ix] + splitX[ix + 1]) * 0.5f,
+                            (splitY[iy] + splitY[iy + 1]) * 0.5f,
+                            (splitZ[iz] + splitZ[iz + 1]) * 0.5f);
+                        chunk.half = DirectX::XMFLOAT3(
+                            (splitX[ix + 1] - splitX[ix]) * 0.5f,
+                            (splitY[iy + 1] - splitY[iy]) * 0.5f,
+                            (splitZ[iz + 1] - splitZ[iz]) * 0.5f);
+                        const float shade = rng.Range(0.90f, 1.04f);
                         chunk.color = DirectX::XMFLOAT4(
-                            object.color.x * 0.82f, object.color.y * 0.80f,
-                            object.color.z * 0.78f, 1.0f);
+                            object.color.x * 0.82f * shade,
+                            object.color.y * 0.80f * shade,
+                            object.color.z * 0.78f * shade, 1.0f);
                         chunk.gridY = iy;
                         object.chunks.push_back(chunk);
                     }
@@ -253,6 +290,9 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                         }
                     }
                 }
+            }
+            for (SceneChunk& chunk : object.chunks) {
+                chunk.neighborBroken.assign(chunk.neighbors.size(), 0);
             }
         }
 
@@ -362,7 +402,9 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         }
     }
 
-    // Blast shielding: buildings attenuate the load for objects behind them.
+    // Blast shielding: nine rays over the receiver's bounding box, each
+    // attenuated by the optical depth of every building it crosses. A
+    // diffraction floor keeps receivers in the shadow from going to zero.
     struct BuildingAabb {
         DirectX::XMFLOAT3 min;
         DirectX::XMFLOAT3 max;
@@ -383,24 +425,72 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         buildingBoxes.push_back(box);
     }
 
+    constexpr float kScreeningLength = 3.0f;   // structural screening length, m
+    constexpr float kDiffractionLength = 12.0f; // ~c * positive phase, m
+    const float groundReflection = std::clamp(settings_.groundReflection, 0.0f, 1.0f);
     const DirectX::XMFLOAT3 burstPoint(0.0f, float(burstHeight), 0.0f);
+
     for (SceneObject& object : objects_) {
-        const DirectX::XMFLOAT3 target(object.position.x, object.size.y * 0.5f,
+        const DirectX::XMFLOAT3 center(object.position.x, object.size.y * 0.5f,
                                        object.position.z);
-        int occluders = 0;
-        for (const BuildingAabb& box : buildingBoxes) {
-            if (box.id == object.id) {
-                continue;
-            }
-            if (SegmentHitsAabb(burstPoint, target, box.min, box.max)) {
-                ++occluders;
+        const DirectX::XMFLOAT3 half(object.size.x * 0.5f, object.size.y * 0.5f,
+                                     object.size.z * 0.5f);
+
+        float transmissionSum = 0.0f;
+        float reflectionSum = 0.0f;
+        int blockedRays = 0;
+        for (int sx = -1; sx <= 1; ++sx) {
+            for (int sy = -1; sy <= 1; ++sy) {
+                for (int sz = -1; sz <= 1; sz += 2) {
+                    const DirectX::XMFLOAT3 sample(
+                        center.x + float(sx) * half.x,
+                        std::max(0.2f, center.y + float(sy) * half.y),
+                        center.z + float(sz) * half.z);
+
+                    const DirectX::XMFLOAT3 delta(sample.x - burstPoint.x,
+                                                  sample.y - burstPoint.y,
+                                                  sample.z - burstPoint.z);
+                    const float length =
+                        std::sqrt(delta.x * delta.x + delta.y * delta.y +
+                                  delta.z * delta.z);
+
+                    float opticalDepth = 0.0f;
+                    for (const BuildingAabb& box : buildingBoxes) {
+                        if (box.id == object.id) {
+                            continue;
+                        }
+                        float t0 = 0.0f;
+                        float t1 = 1.0f;
+                        if (SegmentInterval(burstPoint, sample, box.min, box.max, t0,
+                                            t1)) {
+                            opticalDepth += std::max(0.0f, t1 - t0) * length;
+                        }
+                    }
+
+                    float transmission =
+                        std::clamp(std::exp(-opticalDepth / kScreeningLength), 0.04f,
+                                   1.0f);
+                    // Knife-edge diffraction around the nearest occluder.
+                    const float diffraction =
+                        0.5f * std::exp(-opticalDepth / kDiffractionLength);
+                    transmission = std::max(transmission, diffraction);
+                    if (opticalDepth > 0.05f) {
+                        ++blockedRays;
+                    }
+                    transmissionSum += transmission;
+                    // Surface reflection only matters close to the ground.
+                    reflectionSum +=
+                        1.0f + groundReflection * std::exp(-sample.y / 8.0f);
+                }
             }
         }
-        object.occluders = occluders;
-        const float factor =
-            std::clamp(std::pow(0.35f, float(occluders)), 0.05f, 1.0f);
-        object.peakOverpressurePa *= factor;
-        object.impulsePaS *= factor;
+
+        constexpr float kSampleCount = 18.0f; // 3 x 3 x 2
+        const float factor = transmissionSum / kSampleCount;
+        const float reflection = reflectionSum / kSampleCount;
+        object.occluders = blockedRays;
+        object.peakOverpressurePa *= factor * reflection;
+        object.impulsePaS *= factor * reflection;
         object.thermalFluenceJm2 *= factor;
     }
 
@@ -414,6 +504,7 @@ void Scene::Update(const sim::BlastModel&, float dtSim) {
     if (dtSim > 0.0f) {
         time_ += double(dtSim);
     }
+    ProcessJointFailures();
 
     for (SceneObject& object : objects_) {
         if (object.resolved) {
@@ -467,10 +558,9 @@ void Scene::Update(const sim::BlastModel&, float dtSim) {
         }
 
         if (object.type == SceneObjectType::Building) {
-            if ((object.damage == DamageState::Heavy ||
-                 object.damage == DamageState::Destroyed) &&
-                !object.collapsed) {
-                CollapseBuilding(object);
+            if (object.damage == DamageState::Heavy ||
+                object.damage == DamageState::Destroyed) {
+                StartCollapse(object);
             }
         } else if ((object.damage == DamageState::Heavy ||
                     object.damage == DamageState::Destroyed) &&
@@ -541,10 +631,11 @@ void Scene::ActivateBody(SceneObject& object) {
     object.bodyIndex = physics_.AddBody(body);
 }
 
-void Scene::CollapseBuilding(SceneObject& object) {
-    if (object.collapsed || object.chunks.empty()) {
+void Scene::StartCollapse(SceneObject& object) {
+    if (object.collapsed || object.collapsing || object.chunks.empty()) {
         return;
     }
+    object.collapsing = true;
 
     const int count = int(object.chunks.size());
     const float peak = object.peakOverpressurePa;
@@ -572,72 +663,252 @@ void Scene::CollapseBuilding(SceneObject& object) {
         load[i] = peak * (0.65f + 0.35f * heightFraction) * (0.70f + 0.60f * facing);
     }
 
-    auto jointBroken = [&](int a, int b) {
-        return 0.5f * (load[a] + load[b]) > jointStrength;
-    };
+    // Stagger the joint failures: strongly loaded joints break almost at once,
+    // lightly loaded ones follow over the next few tenths of a second.
+    const int objectIndex = int(&object - objects_.data());
+    for (int i = 0; i < count; ++i) {
+        const SceneChunk& chunk = object.chunks[i];
+        for (size_t n = 0; n < chunk.neighbors.size(); ++n) {
+            const int j = chunk.neighbors[n];
+            if (j < i) {
+                continue;
+            }
+            const float stress = 0.5f * (load[i] + load[j]);
+            const float ratio = stress / jointStrength;
+            if (ratio >= 1.0f) {
+                // Overstressed joints fail immediately; the flood fill below
+                // detaches whatever they were carrying.
+                BreakJoint(object, i, j);
+                continue;
+            }
+            if (ratio < 0.15f) {
+                continue;
+            }
+            PendingJointFailure failure;
+            failure.time = time_ + 0.05 + 0.45 * (1.0 - std::min(ratio, 1.0f));
+            failure.objectIndex = objectIndex;
+            failure.chunkA = i;
+            failure.chunkB = j;
+            pendingFailures_.push_back(failure);
+        }
+    }
 
-    // Flood-fill the remaining support from the ground. Chunks that are no
-    // longer connected to a supported base chunk detach and fall.
-    std::vector<bool> supported(count, false);
+    const std::vector<uint8_t> supported = ComputeSupport(object);
+    RegisterStructureBodies(object, supported);
+    for (int i = 0; i < count; ++i) {
+        if (!supported[i] && !object.chunks[i].detached) {
+            DetachChunk(object, i);
+        }
+    }
+}
+
+void Scene::BreakJoint(SceneObject& object, int a, int b) {
+    auto mark = [&](int from, int to) {
+        SceneChunk& chunk = object.chunks[from];
+        for (size_t i = 0; i < chunk.neighbors.size(); ++i) {
+            if (chunk.neighbors[i] == to) {
+                chunk.neighborBroken[i] = 1;
+                return;
+            }
+        }
+    };
+    if (a < 0 || a >= int(object.chunks.size()) || b < 0 ||
+        b >= int(object.chunks.size())) {
+        return;
+    }
+    mark(a, b);
+    mark(b, a);
+}
+
+void Scene::UpdateSupport(SceneObject& object) {
+    const std::vector<uint8_t> supported = ComputeSupport(object);
+    for (int i = 0; i < int(object.chunks.size()); ++i) {
+        if (!supported[i] && !object.chunks[i].detached) {
+            DetachChunk(object, i);
+        }
+    }
+}
+
+std::vector<uint8_t> Scene::ComputeSupport(const SceneObject& object) const {
+    const int count = int(object.chunks.size());
+    std::vector<uint8_t> supported(count, 0);
     std::queue<int> queue;
     for (int i = 0; i < count; ++i) {
-        if (object.chunks[i].gridY == 0 && load[i] <= jointStrength * 1.15f) {
-            supported[i] = true;
+        if (object.chunks[i].gridY == 0 && !object.chunks[i].detached) {
+            supported[i] = 1;
             queue.push(i);
         }
     }
     while (!queue.empty()) {
         const int current = queue.front();
         queue.pop();
-        for (int neighbour : object.chunks[current].neighbors) {
-            if (supported[neighbour] || jointBroken(current, neighbour)) {
+        const SceneChunk& chunk = object.chunks[current];
+        for (size_t n = 0; n < chunk.neighbors.size(); ++n) {
+            if (chunk.neighborBroken[n]) {
                 continue;
             }
-            supported[neighbour] = true;
-            queue.push(neighbour);
+            const int next = chunk.neighbors[n];
+            if (supported[next] || object.chunks[next].detached) {
+                continue;
+            }
+            supported[next] = 1;
+            queue.push(next);
         }
     }
+    return supported;
+}
 
-    int detached = 0;
-    for (int i = 0; i < count; ++i) {
-        if (!supported[i]) {
-            ++detached;
-        }
+void Scene::DetachChunk(SceneObject& object, int index) {
+    SceneChunk& chunk = object.chunks[index];
+    if (chunk.detached) {
+        return;
     }
-    if (detached == 0) {
-        return; // heavy damage, but the structure is still supported
-    }
-
+    chunk.detached = true;
     object.collapsed = true;
+
+    const float peak = object.peakOverpressurePa;
+    const bool destroyed = object.damage == DamageState::Destroyed;
+    const float radialLength = std::sqrt(object.position.x * object.position.x +
+                                         object.position.z * object.position.z);
+    const float burstX = -object.position.x / std::max(radialLength, 1e-3f);
+    const float burstZ = -object.position.z / std::max(radialLength, 1e-3f);
     const float baseSpeed =
         std::clamp(peak / 8000.0f, 1.0f, 12.0f) * (destroyed ? 1.0f : 0.6f);
+    const float volume = 8.0f * chunk.half.x * chunk.half.y * chunk.half.z;
+    const float mass = std::clamp(volume * 350.0f, 80.0f, 15000.0f);
+    const DirectX::XMFLOAT3 velocity(burstX * baseSpeed * 0.8f, baseSpeed * 0.25f,
+                                     burstZ * baseSpeed * 0.8f);
+    const DirectX::XMFLOAT3 angular(chunk.center.x * 0.08f, chunk.center.z * 0.08f,
+                                    chunk.center.y * 0.05f);
 
-    for (int i = 0; i < count; ++i) {
-        if (supported[i]) {
+    if (chunk.bodyIndex >= 0) {
+        physics_.SetBodyDynamic(chunk.bodyIndex, mass, velocity, angular);
+        return;
+    }
+
+    RigidBody body;
+    body.position = chunk.center;
+    body.halfExtents = chunk.half;
+    body.boundingRadius = std::sqrt(chunk.half.x * chunk.half.x +
+                                    chunk.half.y * chunk.half.y +
+                                    chunk.half.z * chunk.half.z);
+    body.mass = mass;
+    body.orientation = DirectX::XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
+    body.velocity = velocity;
+    body.angularVelocity = angular;
+    body.restitution = 0.12f;
+    body.friction = 0.8f;
+    chunk.bodyIndex = physics_.AddBody(body);
+
+    const int objectIndex = int(&object - objects_.data());
+    if (int(bodyChunk_.size()) <= chunk.bodyIndex) {
+        bodyChunk_.resize(chunk.bodyIndex + 1, std::pair<int, int>(-1, -1));
+    }
+    bodyChunk_[chunk.bodyIndex] = {objectIndex, index};
+}
+
+void Scene::RegisterStructureBodies(SceneObject& object,
+                                    const std::vector<uint8_t>& supported) {
+    if (object.structureRegistered) {
+        return;
+    }
+    object.structureRegistered = true;
+    const int objectIndex = int(&object - objects_.data());
+    for (int i = 0; i < int(object.chunks.size()); ++i) {
+        SceneChunk& chunk = object.chunks[i];
+        if (chunk.bodyIndex >= 0 || !supported[i]) {
             continue;
         }
-        SceneChunk& chunk = object.chunks[i];
-        chunk.detached = true;
-
         RigidBody body;
         body.position = chunk.center;
         body.halfExtents = chunk.half;
         body.boundingRadius = std::sqrt(chunk.half.x * chunk.half.x +
                                         chunk.half.y * chunk.half.y +
                                         chunk.half.z * chunk.half.z);
-        const float volume = 8.0f * chunk.half.x * chunk.half.y * chunk.half.z;
-        body.mass = std::clamp(volume * 350.0f, 80.0f, 15000.0f);
-        body.invMass = 1.0f / body.mass;
-        body.orientation = DirectX::XMFLOAT4(0.0f, 0.0f, 0.0f, 1.0f);
-        body.velocity = DirectX::XMFLOAT3(burstX * baseSpeed * 0.8f,
-                                          baseSpeed * 0.25f,
-                                          burstZ * baseSpeed * 0.8f);
-        body.angularVelocity = DirectX::XMFLOAT3(chunk.center.x * 0.08f,
-                                                 chunk.center.z * 0.08f,
-                                                 chunk.center.y * 0.05f);
-        body.restitution = 0.12f;
+        body.mass = 1.0f;
+        body.isStatic = true;
         body.friction = 0.8f;
+        body.restitution = 0.1f;
         chunk.bodyIndex = physics_.AddBody(body);
+        if (int(bodyChunk_.size()) <= chunk.bodyIndex) {
+            bodyChunk_.resize(chunk.bodyIndex + 1, std::pair<int, int>(-1, -1));
+        }
+        bodyChunk_[chunk.bodyIndex] = {objectIndex, i};
+    }
+}
+
+void Scene::ProcessJointFailures() {
+    for (size_t i = 0; i < pendingFailures_.size();) {
+        if (pendingFailures_[i].time > time_) {
+            ++i;
+            continue;
+        }
+        const PendingJointFailure failure = pendingFailures_[i];
+        pendingFailures_[i] = pendingFailures_.back();
+        pendingFailures_.pop_back();
+        if (failure.objectIndex < 0 ||
+            failure.objectIndex >= int(objects_.size())) {
+            continue;
+        }
+        SceneObject& object = objects_[failure.objectIndex];
+        BreakJoint(object, failure.chunkA, failure.chunkB);
+        UpdateSupport(object);
+    }
+}
+
+void Scene::ApplyContactDamage(float dtSim) {
+    if (dtSim <= 0.0f) {
+        return;
+    }
+    const auto& bodies = physics_.Bodies();
+    for (const ContactEvent& event : physics_.ContactEvents()) {
+        int staticBody = -1;
+        if (event.bodyA >= 0 && event.bodyA < int(bodies.size()) &&
+            bodies[event.bodyA].isStatic) {
+            staticBody = event.bodyA;
+        } else if (event.bodyB >= 0 && event.bodyB < int(bodies.size()) &&
+                   bodies[event.bodyB].isStatic) {
+            staticBody = event.bodyB;
+        }
+        if (staticBody < 0 || staticBody >= int(bodyChunk_.size())) {
+            continue;
+        }
+        const auto location = bodyChunk_[staticBody];
+        if (location.first < 0 || location.first >= int(objects_.size())) {
+            continue;
+        }
+        SceneObject& object = objects_[location.first];
+        if (location.second < 0 || location.second >= int(object.chunks.size())) {
+            continue;
+        }
+        const SceneChunk& chunk = object.chunks[location.second];
+        if (chunk.detached) {
+            continue;
+        }
+        const float area =
+            4.0f * (chunk.half.x * chunk.half.y + chunk.half.y * chunk.half.z +
+                    chunk.half.x * chunk.half.z);
+        const float pressure =
+            event.impulse / (std::max(area, 0.1f) * dtSim);
+        const float strength =
+            object.damage == DamageState::Destroyed ? 9000.0f : 26000.0f;
+        if (pressure < strength * 0.35f) {
+            continue;
+        }
+        // A heavy impact breaks the joints of the struck chunk after a short
+        // delay, which can start a local collapse cascade.
+        const int objectIndex = location.first;
+        for (size_t n = 0; n < chunk.neighbors.size(); ++n) {
+            if (chunk.neighborBroken[n]) {
+                continue;
+            }
+            PendingJointFailure failure;
+            failure.time = time_ + 0.03;
+            failure.objectIndex = objectIndex;
+            failure.chunkA = location.second;
+            failure.chunkB = chunk.neighbors[n];
+            pendingFailures_.push_back(failure);
+        }
     }
 }
 
@@ -650,6 +921,7 @@ void Scene::StepPhysics(float dtSim) {
     int guard = 0;
     while (physicsAccumulator_ >= step && guard++ < 8) {
         physics_.Step(float(step));
+        ApplyContactDamage(float(step));
         physicsAccumulator_ -= step;
     }
 }
@@ -686,6 +958,12 @@ SceneStats Scene::Stats() const {
         stats.chunks += int(object.chunks.size());
     }
     stats.bodies = physics_.BodyCount();
+    stats.staticBodies = 0;
+    for (const RigidBody& body : physics_.Bodies()) {
+        if (body.isStatic) {
+            ++stats.staticBodies;
+        }
+    }
     return stats;
 }
 

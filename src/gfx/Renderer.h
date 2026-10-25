@@ -162,7 +162,14 @@ private:
     ComPtr<ID3D11Buffer> shadowConstantBuffer_;
     FrameConstants frameConstants_{};
     BloomConstants bloomConstants_{};
-    DirectX::XMFLOAT4X4 lightViewProj_{};
+
+    struct ShadowConstants {
+        DirectX::XMFLOAT4X4 lightViewProj[3]{};
+        DirectX::XMFLOAT4 cascadeSplits{};
+        DirectX::XMFLOAT4 cascadeTexels{};      // 1 / shadow map size
+        DirectX::XMFLOAT4 cascadeWorldTexels{}; // world size of one texel
+    };
+    ShadowConstants shadowConstants_{};
 
     ComPtr<ID3D11Buffer> particleBufferAdditive_;
     ComPtr<ID3D11ShaderResourceView> particleSRVAdditive_;

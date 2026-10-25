@@ -525,6 +525,7 @@ void TestSettingsRoundTrip() {
     original.simulation.scene.vehicles = true;
     original.simulation.scene.vegetation = false;
     original.simulation.scene.quality = 2;
+    original.simulation.scene.groundReflection = 0.7f;
 
     original.render.raymarchSteps = 77;
     original.render.exposure = 1.25f;
@@ -754,6 +755,69 @@ void TestStackSettles() {
     CHECK(top.position.y > 7.0f);
 }
 
+void TestProgressiveCollapse() {
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 1000.0;
+    charge.heightOfBurstM = 0.4;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 7;
+    settings.density = 1.0f;
+    settings.quality = 2;
+    ex::scene::Scene scene;
+    scene.Generate(settings, model);
+    CHECK(!scene.Empty());
+
+    // Jittered chunks: a building must not be a uniform grid.
+    bool varied = false;
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        if (object.type != ex::scene::SceneObjectType::Building ||
+            object.chunks.size() < 4) {
+            continue;
+        }
+        for (size_t i = 1; i < object.chunks.size(); ++i) {
+            if (std::abs(object.chunks[i].half.x - object.chunks[0].half.x) > 1e-4f ||
+                std::abs(object.chunks[i].half.y - object.chunks[0].half.y) > 1e-4f) {
+                varied = true;
+            }
+        }
+    }
+    CHECK(varied);
+
+    scene.Update(model, 10.0f);
+    auto detachedCount = [&scene]() {
+        int count = 0;
+        for (const ex::scene::SceneObject& object : scene.Objects()) {
+            for (const ex::scene::SceneChunk& chunk : object.chunks) {
+                if (chunk.detached) {
+                    ++count;
+                }
+            }
+        }
+        return count;
+    };
+
+    const int initial = detachedCount();
+    int maximum = initial;
+    int staticBodies = 0;
+    for (const ex::scene::RigidBody& body : scene.Physics().Bodies()) {
+        if (body.isStatic) {
+            ++staticBodies;
+        }
+    }
+    CHECK(staticBodies > 0);
+
+    // Staggered joint failures must detach more chunks over the following second.
+    for (int i = 0; i < 20; ++i) {
+        scene.Update(model, 0.05f);
+        maximum = std::max(maximum, detachedCount());
+    }
+    CHECK(maximum > initial);
+}
+
 int main() {
     TestChargeScaling();
     TestAtmosphere();
@@ -775,6 +839,7 @@ int main() {
     TestDropNoTilt();
     TestBroadphaseManyBodies();
     TestStackSettles();
+    TestProgressiveCollapse();
     TestSettingsRoundTrip();
     TestFuseAndDetonation();
 

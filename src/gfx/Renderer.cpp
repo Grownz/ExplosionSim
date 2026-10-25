@@ -131,7 +131,7 @@ bool Renderer::Initialize(GfxDevice& device) {
         return false;
     }
 
-    cbDesc.ByteWidth = sizeof(XMFLOAT4X4);
+    cbDesc.ByteWidth = sizeof(ShadowConstants);
     if (FAILED(device_->Device()->CreateBuffer(&cbDesc, nullptr,
                                                &shadowConstantBuffer_))) {
         LogError("Failed to create shadow constant buffer.");
@@ -1021,36 +1021,80 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     context->PSSetShader(skyPS_.Get(), nullptr, 0);
     context->Draw(3, 0);
 
-    // --- Directional light matrix ------------------------------------------
-    // Computed unconditionally so the ground always has a valid light matrix,
+    // --- Cascaded directional light matrices -------------------------------
+    // Computed unconditionally so the ground always has valid light matrices,
     // even when the procedural scene is disabled.
     {
-        const float extent =
-            std::max(simulation.Settings().scene.enabled ? simulation.Scene().Extent()
-                                                         : 0.0f,
-                     60.0f);
+        const float sceneExtent =
+            simulation.Settings().scene.enabled ? simulation.Scene().Extent() : 0.0f;
+        const float extent = std::max(sceneExtent, 60.0f);
         const XMVECTOR sunDirection =
             XMVector3Normalize(XMVectorSet(frameConstants_.sunDirection.x,
                                            frameConstants_.sunDirection.y,
                                            frameConstants_.sunDirection.z, 0.0f));
-        const XMVECTOR lightCenter = XMVectorSet(0.0f, extent * 0.30f, 0.0f, 1.0f);
-        // sunDirection points towards the sun, so the shadow camera sits on that
-        // side and looks back at the scene.
-        const XMVECTOR lightEye = lightCenter + sunDirection * (extent * 2.0f);
-        const XMVECTOR lightUp = std::abs(XMVectorGetY(sunDirection)) > 0.95f
-                                     ? XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f)
-                                     : XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-        const XMMATRIX lightView = XMMatrixLookAtLH(lightEye, lightCenter, lightUp);
-        const XMMATRIX lightProjection = XMMatrixOrthographicLH(
-            extent * 2.2f, extent * 2.2f, 1.0f, extent * 4.0f);
+        const float nearPlane = std::max(camera.NearPlane(), 0.2f);
+        const float farPlane =
+            std::max({extent * 2.0f, 320.0f, camera.Distance() * 3.0f});
+        constexpr float kSplitLambda = 0.7f;
+        float splits[4] = {nearPlane, 0.0f, 0.0f, 0.0f};
+        for (int i = 1; i <= 3; ++i) {
+            const float p = float(i) / 3.0f;
+            const float logSplit = nearPlane * std::pow(farPlane / nearPlane, p);
+            const float uniform = nearPlane + (farPlane - nearPlane) * p;
+            splits[i] = kSplitLambda * logSplit + (1.0f - kSplitLambda) * uniform;
+        }
 
-        lightViewProj_ = XMFLOAT4X4{};
-        XMStoreFloat4x4(&lightViewProj_, lightView * lightProjection);
+        const XMMATRIX inverseView = XMMatrixInverse(nullptr, camera.ViewMatrix());
+        const float aspect =
+            float(hdr_.width) / float(std::max(hdr_.height, 1));
+        const float tanY = std::tan(camera.FovY() * 0.5f);
+        const float tanX = tanY * aspect;
+        const XMVECTOR up = std::abs(XMVectorGetY(sunDirection)) > 0.95f
+                                ? XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f)
+                                : XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+
+        for (int cascade = 0; cascade < 3; ++cascade) {
+            XMVECTOR corners[8];
+            int corner = 0;
+            for (int side = 0; side < 2; ++side) {
+                const float z = side == 0 ? splits[cascade] : splits[cascade + 1];
+                for (int sy = -1; sy <= 1; sy += 2) {
+                    for (int sx = -1; sx <= 1; sx += 2) {
+                        corners[corner++] = XMVector3TransformCoord(
+                            XMVectorSet(sx * tanX * z, sy * tanY * z, z, 1.0f),
+                            inverseView);
+                    }
+                }
+            }
+            XMVECTOR center = XMVectorZero();
+            for (int i = 0; i < 8; ++i) {
+                center += corners[i];
+            }
+            center /= 8.0f;
+            float radius = 2.0f;
+            for (int i = 0; i < 8; ++i) {
+                radius = std::max(
+                    radius, XMVectorGetX(XMVector3Length(corners[i] - center)));
+            }
+            const XMVECTOR eye = center + sunDirection * (radius + 2.0f);
+            const XMMATRIX lightView = XMMatrixLookAtLH(eye, center, up);
+            const XMMATRIX lightProjection = XMMatrixOrthographicLH(
+                radius * 2.1f, radius * 2.1f, 0.1f, radius * 2.0f + 4.0f);
+            XMStoreFloat4x4(&shadowConstants_.lightViewProj[cascade],
+                            lightView * lightProjection);
+            (&shadowConstants_.cascadeSplits.x)[cascade] = splits[cascade + 1];
+            (&shadowConstants_.cascadeTexels.x)[cascade] =
+                1.0f / float(SceneRenderer::ShadowSize(cascade));
+            (&shadowConstants_.cascadeWorldTexels.x)[cascade] =
+                radius * 2.1f / float(SceneRenderer::ShadowSize(cascade));
+        }
+        shadowConstants_.cascadeSplits.w = farPlane;
 
         D3D11_MAPPED_SUBRESOURCE shadowMapped{};
         if (SUCCEEDED(context->Map(shadowConstantBuffer_.Get(), 0,
                                    D3D11_MAP_WRITE_DISCARD, 0, &shadowMapped))) {
-            std::memcpy(shadowMapped.pData, &lightViewProj_, sizeof(lightViewProj_));
+            std::memcpy(shadowMapped.pData, &shadowConstants_,
+                        sizeof(shadowConstants_));
             context->Unmap(shadowConstantBuffer_.Get(), 0);
         }
     }
@@ -1064,7 +1108,8 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     sceneView.eye = camera.Position();
     sceneView.projScale =
         float(hdr_.height) / (2.0f * std::tan(camera.FovY() * 0.5f));
-    sceneRenderer_.RenderShadow(context, simulation.Scene(), sceneView);
+    sceneRenderer_.RenderShadow(context, simulation.Scene(), sceneView,
+                                shadowConstants_.lightViewProj);
 
     // --- Ground ------------------------------------------------------------
     if (settings.enableGround) {
@@ -1075,15 +1120,17 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
         context->PSSetShader(groundPS_.Get(), nullptr, 0);
 
-        ID3D11ShaderResourceView* groundShadow = sceneRenderer_.ShadowSRV();
-        context->PSSetShaderResources(2, 1, &groundShadow);
+        ID3D11ShaderResourceView* groundShadow[3] = {
+            sceneRenderer_.ShadowSRV(0), sceneRenderer_.ShadowSRV(1),
+            sceneRenderer_.ShadowSRV(2)};
+        context->PSSetShaderResources(2, 3, groundShadow);
         ID3D11SamplerState* groundShadowSampler = sceneRenderer_.ShadowSampler();
         context->PSSetSamplers(2, 1, &groundShadowSampler);
 
         context->Draw(3, 0);
 
-        ID3D11ShaderResourceView* nullShadow = nullptr;
-        context->PSSetShaderResources(2, 1, &nullShadow);
+        ID3D11ShaderResourceView* nullShadow[3] = {nullptr, nullptr, nullptr};
+        context->PSSetShaderResources(2, 3, nullShadow);
         ID3D11SamplerState* nullSampler = nullptr;
         context->PSSetSamplers(2, 1, &nullSampler);
         context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());

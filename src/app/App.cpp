@@ -549,9 +549,10 @@ int App::RunHeadless() {
                 simulation_.Particles().AliveCount(), simulation_.Volume().LastBakeMilliseconds(),
                 simulation_.Volume().Resolution(), int(pool_->WorkerCount()));
         const scene::SceneStats sceneStats = simulation_.Scene().Stats();
-        LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %d rigid bodies",
+        LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %d rigid bodies "
+                "(%d static structure)",
                 sceneStats.buildings, sceneStats.vehicles, sceneStats.trees,
-                sceneStats.chunks, sceneStats.bodies);
+                sceneStats.chunks, sceneStats.bodies, sceneStats.staticBodies);
         LogInfo("Physics: %d awake of %d bodies",
                 simulation_.Scene().Physics().AwakeCount(),
                 simulation_.Scene().Physics().BodyCount());

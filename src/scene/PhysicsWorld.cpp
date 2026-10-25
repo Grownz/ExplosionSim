@@ -14,6 +14,7 @@ namespace {
 constexpr float kGravity = 9.80665f;
 constexpr float kShockSpeed = 0.5f;
 constexpr bool kShockPropagation = true;
+constexpr float kContactEventImpulse = 500.0f;
 constexpr float kCellSize = 4.0f;
 constexpr int kGridSlots = 65536;
 
@@ -193,19 +194,49 @@ int PhysicsWorld::AddBody(const RigidBody& body) {
     const float hx = std::max(copy.halfExtents.x, 0.01f);
     const float hy = std::max(copy.halfExtents.y, 0.01f);
     const float hz = std::max(copy.halfExtents.z, 0.01f);
-    // Solid box inertia: Ixx = m/3 * (hy^2 + hz^2), and so on.
-    copy.invInertiaLocal =
-        XMFLOAT3(3.0f / (copy.mass * (hy * hy + hz * hz)),
-                 3.0f / (copy.mass * (hx * hx + hz * hz)),
-                 3.0f / (copy.mass * (hx * hx + hy * hy)));
+    if (copy.isStatic) {
+        copy.invMass = 0.0f;
+        copy.invInertiaLocal = XMFLOAT3(0.0f, 0.0f, 0.0f);
+        copy.velocity = XMFLOAT3(0.0f, 0.0f, 0.0f);
+        copy.angularVelocity = XMFLOAT3(0.0f, 0.0f, 0.0f);
+        copy.sleeping = false;
+    } else {
+        // Solid box inertia: Ixx = m/3 * (hy^2 + hz^2), and so on.
+        copy.invInertiaLocal =
+            XMFLOAT3(3.0f / (copy.mass * (hy * hy + hz * hz)),
+                     3.0f / (copy.mass * (hx * hx + hz * hz)),
+                     3.0f / (copy.mass * (hx * hx + hy * hy)));
+    }
     bodies_.push_back(copy);
     return int(bodies_.size()) - 1;
+}
+
+void PhysicsWorld::SetBodyDynamic(int index, float mass, const XMFLOAT3& velocity,
+                                  const XMFLOAT3& angularVelocity) {
+    if (index < 0 || index >= int(bodies_.size())) {
+        return;
+    }
+    RigidBody& body = bodies_[index];
+    body.isStatic = false;
+    body.mass = std::max(mass, 1e-3f);
+    body.invMass = 1.0f / body.mass;
+    const float hx = std::max(body.halfExtents.x, 0.01f);
+    const float hy = std::max(body.halfExtents.y, 0.01f);
+    const float hz = std::max(body.halfExtents.z, 0.01f);
+    body.invInertiaLocal =
+        XMFLOAT3(3.0f / (body.mass * (hy * hy + hz * hz)),
+                 3.0f / (body.mass * (hx * hx + hz * hz)),
+                 3.0f / (body.mass * (hx * hx + hy * hy)));
+    body.velocity = velocity;
+    body.angularVelocity = angularVelocity;
+    body.sleeping = false;
+    body.sleepTimer = 0.0f;
 }
 
 int PhysicsWorld::AwakeCount() const {
     int count = 0;
     for (const RigidBody& body : bodies_) {
-        if (!body.sleeping) {
+        if (!body.isStatic && !body.sleeping) {
             ++count;
         }
     }
@@ -220,7 +251,7 @@ void PhysicsWorld::Step(float dt) {
     const XMVECTOR gravity = XMVectorSet(0.0f, -kGravity, 0.0f, 0.0f);
 
     for (RigidBody& body : bodies_) {
-        if (body.sleeping) {
+        if (body.isStatic || body.sleeping) {
             continue;
         }
 
@@ -250,6 +281,7 @@ void PhysicsWorld::Step(float dt) {
 
     BuildBroadphase();
     shockContacts_.clear();
+    contactEvents_.clear();
     for (uint64_t key : pairs_) {
         const int a = int(key >> 32);
         const int b = int(key & 0xFFFFFFFFu);
@@ -258,7 +290,7 @@ void PhysicsWorld::Step(float dt) {
     if (kShockPropagation) ShockPropagation();
 
     for (RigidBody& body : bodies_) {
-        if (body.sleeping) {
+        if (body.isStatic || body.sleeping) {
             continue;
         }
         const float speed = VectorLength(body.velocity);
@@ -358,7 +390,8 @@ void PhysicsWorld::BuildBroadphase() {
                 }
                 const int lo = a < b ? a : b;
                 const int hi = a < b ? b : a;
-                if (bodies_[lo].sleeping && bodies_[hi].sleeping) {
+                if ((bodies_[lo].sleeping && bodies_[hi].sleeping) ||
+                    (bodies_[lo].isStatic && bodies_[hi].isStatic)) {
                     continue;
                 }
                 if (aabbMin_[lo].x > aabbMax_[hi].x || aabbMax_[lo].x < aabbMin_[hi].x ||
@@ -388,6 +421,9 @@ void PhysicsWorld::ShockPropagation() {
         for (const ShockContact& contact : shockContacts_) {
             RigidBody& lower = bodies_[contact.bodyA];
             RigidBody& upper = bodies_[contact.bodyB];
+            if (upper.isStatic) {
+                continue;
+            }
             if (lower.sleeping && upper.sleeping) {
                 continue;
             }
@@ -439,6 +475,9 @@ void PhysicsWorld::ShockPropagation() {
 
 void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
     (void)dt;
+    if (body.isStatic) {
+        return;
+    }
 
     const XMMATRIX rotation = XMMatrixRotationQuaternion(XMLoadFloat4(&body.orientation));
     XMVECTOR center = XMLoadFloat3(&body.position);
@@ -529,6 +568,9 @@ void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
 void PhysicsWorld::ResolvePair(int indexA, int indexB) {
     RigidBody& a = bodies_[indexA];
     RigidBody& b = bodies_[indexB];
+    if (a.isStatic && b.isStatic) {
+        return;
+    }
     const XMVECTOR delta = XMLoadFloat3(&b.position) - XMLoadFloat3(&a.position);
     const float distance = XMVectorGetX(XMVector3Length(delta));
     if (distance > a.boundingRadius + b.boundingRadius) {
@@ -599,6 +641,7 @@ void PhysicsWorld::ResolvePair(int indexA, int indexB) {
     XMVECTOR omegaB = XMLoadFloat3(&b.angularVelocity);
     XMVECTOR positionA = XMLoadFloat3(&a.position);
     XMVECTOR positionB = XMLoadFloat3(&b.position);
+    float totalImpulse = 0.0f;
 
     for (int iteration = 0; iteration < 6; ++iteration) {
         for (int point = 0; point < manifold.count; ++point) {
@@ -628,6 +671,7 @@ void PhysicsWorld::ResolvePair(int indexA, int indexB) {
             }
 
             const XMVECTOR normalImpulse = bestAxis * impulse;
+            totalImpulse += impulse;
             velocityA -= normalImpulse * a.invMass;
             omegaA -= XMVector3TransformNormal(rnA * impulse, invInertiaA);
             velocityB += normalImpulse * b.invMass;
@@ -669,6 +713,15 @@ void PhysicsWorld::ResolvePair(int indexA, int indexB) {
     XMStoreFloat3(&b.angularVelocity, omegaB);
     XMStoreFloat3(&a.position, positionA);
     XMStoreFloat3(&b.position, positionB);
+
+    if (totalImpulse > kContactEventImpulse) {
+        ContactEvent event;
+        event.bodyA = indexA;
+        event.bodyB = indexB;
+        event.impulse = totalImpulse;
+        XMStoreFloat3(&event.position, manifold.points[0]);
+        contactEvents_.push_back(event);
+    }
 
     a.sleeping = false;
     a.sleepTimer = 0.0f;

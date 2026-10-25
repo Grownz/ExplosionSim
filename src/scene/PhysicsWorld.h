@@ -24,7 +24,16 @@ struct RigidBody {
     float linearDamping = 0.02f;
     float angularDamping = 0.05f;
     float sleepTimer = 0.0f;
+    bool isStatic = false;
     bool sleeping = false;
+};
+
+// A contact impulse worth reporting to the scene (debris hitting structure).
+struct ContactEvent {
+    int bodyA = -1;
+    int bodyB = -1;
+    float impulse = 0.0f;
+    DirectX::XMFLOAT3 position{};
 };
 
 // Box rigid bodies with a uniform-grid broadphase, oriented-box contacts and
@@ -39,6 +48,11 @@ public:
     std::vector<RigidBody>& Bodies() { return bodies_; }
     int BodyCount() const { return int(bodies_.size()); }
     int AwakeCount() const;
+
+    // Converts a static structure body into a dynamic one (chunk detachment).
+    void SetBodyDynamic(int index, float mass, const DirectX::XMFLOAT3& velocity,
+                        const DirectX::XMFLOAT3& angularVelocity);
+    const std::vector<ContactEvent>& ContactEvents() const { return contactEvents_; }
 
 private:
     struct CellSlot {
@@ -74,6 +88,7 @@ private:
     std::vector<DirectX::XMFLOAT3> aabbMin_;
     std::vector<DirectX::XMFLOAT3> aabbMax_;
     std::vector<ShockContact> shockContacts_;
+    std::vector<ContactEvent> contactEvents_;
 };
 
 } // namespace ex::scene

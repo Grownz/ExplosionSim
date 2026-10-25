@@ -190,33 +190,46 @@ bool SceneRenderer::Initialize(ID3D11Device* device) {
 }
 
 bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
-    D3D11_TEXTURE2D_DESC textureDesc{};
-    textureDesc.Width = 2048;
-    textureDesc.Height = 2048;
-    textureDesc.MipLevels = 1;
-    textureDesc.ArraySize = 1;
-    textureDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-    textureDesc.SampleDesc.Count = 1;
-    textureDesc.Usage = D3D11_USAGE_DEFAULT;
-    textureDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-    if (FAILED(device->CreateTexture2D(&textureDesc, nullptr, &shadowTexture_))) {
-        return false;
+    for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
+        const int size = ShadowSize(cascade);
+        D3D11_TEXTURE2D_DESC textureDesc{};
+        textureDesc.Width = UINT(size);
+        textureDesc.Height = UINT(size);
+        textureDesc.MipLevels = 1;
+        textureDesc.ArraySize = 1;
+        textureDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        textureDesc.SampleDesc.Count = 1;
+        textureDesc.Usage = D3D11_USAGE_DEFAULT;
+        textureDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+        if (FAILED(device->CreateTexture2D(&textureDesc, nullptr,
+                                           &shadowTexture_[cascade]))) {
+            return false;
+        }
+
+        D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+        dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+        dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+        if (FAILED(device->CreateDepthStencilView(shadowTexture_[cascade].Get(),
+                                                  &dsvDesc, &shadowDSV_[cascade]))) {
+            return false;
+        }
+
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Texture2D.MipLevels = 1;
+        if (FAILED(device->CreateShaderResourceView(shadowTexture_[cascade].Get(),
+                                                    &srvDesc, &shadowSRV_[cascade]))) {
+            return false;
+        }
     }
 
-    D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
-    dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
-    dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-    if (FAILED(device->CreateDepthStencilView(shadowTexture_.Get(), &dsvDesc,
-                                              &shadowDSV_))) {
-        return false;
-    }
-
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-    srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Texture2D.MipLevels = 1;
-    if (FAILED(device->CreateShaderResourceView(shadowTexture_.Get(), &srvDesc,
-                                                &shadowSRV_))) {
+    D3D11_BUFFER_DESC bufferDesc{};
+    bufferDesc.ByteWidth = sizeof(XMFLOAT4X4);
+    bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
+    bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, &shadowCascadeBuffer_))) {
         return false;
     }
 
@@ -235,10 +248,13 @@ bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
 }
 
 void SceneRenderer::Shutdown() {
+    shadowCascadeBuffer_.Reset();
     shadowSampler_.Reset();
-    shadowSRV_.Reset();
-    shadowDSV_.Reset();
-    shadowTexture_.Reset();
+    for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
+        shadowSRV_[cascade].Reset();
+        shadowDSV_[cascade].Reset();
+        shadowTexture_[cascade].Reset();
+    }
     meshes_.clear();
     blendState_.Reset();
     rasterizer_.Reset();
@@ -321,7 +337,7 @@ bool SceneRenderer::EnsureInstanceCapacity(Mesh& mesh, UINT capacity) {
 }
 
 void SceneRenderer::BuildMeshes() {
-    meshes_.resize(8);
+    meshes_.resize(9);
     const XMFLOAT3 white{1.0f, 1.0f, 1.0f};
     const XMFLOAT3 brown{0.22f, 0.14f, 0.08f};
 
@@ -437,15 +453,28 @@ void SceneRenderer::BuildMeshes() {
                XMFLOAT3(0.5f, 0.5f, 0.5f), white);
         CreateMesh(vertices, indices, meshes_[7]);
     }
+
+    // 8: low-detail tree used beyond the near distance (one cone, no trunk).
+    {
+        std::vector<Vertex> vertices;
+        std::vector<uint32_t> indices;
+        AddCone(vertices, indices, XMFLOAT3(0.0f, 0.25f, 0.0f), 0.48f, 0.75f,
+                XMFLOAT3(0.14f, 0.33f, 0.11f));
+        CreateMesh(vertices, indices, meshes_[8]);
+    }
 }
 
 void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
-                                 const scene::Scene& scene, const ViewInfo& view) {
+                                 const scene::Scene& scene, const ViewInfo& view,
+                                 const XMFLOAT4X4* lightViewProj) {
     if (!device_ || !context) {
         return;
     }
     // Always clear so the ground samples a fully lit map when the scene is off.
-    context->ClearDepthStencilView(shadowDSV_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
+        context->ClearDepthStencilView(shadowDSV_[cascade].Get(), D3D11_CLEAR_DEPTH,
+                                       1.0f, 0);
+    }
     if (!scene.Settings().enabled || scene.Empty()) {
         return;
     }
@@ -494,13 +523,19 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
                              object.size.z / 5.0f);
             type = 1.0f;
             break;
-        case scene::SceneObjectType::Tree:
-            meshIndex = 4 + (object.meshVariant % 3);
+        case scene::SceneObjectType::Tree: {
+            const float dx = object.position.x - view.eye.x;
+            const float dz = object.position.z - view.eye.z;
+            const float distanceSquared = dx * dx + dz * dz;
+            meshIndex = distanceSquared > 80.0f * 80.0f
+                            ? 8
+                            : 4 + (object.meshVariant % 3);
             scale = XMFLOAT3(object.size.x * 2.0f, object.size.y,
                              object.size.x * 2.0f);
             sway = 0.05f;
             type = 2.0f;
             break;
+        }
         default:
             continue;
         }
@@ -596,9 +631,7 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         context->Unmap(mesh.instanceBuffer.Get(), 0);
     }
 
-    // --- Shadow pass -------------------------------------------------------
-    context->OMSetRenderTargets(0, nullptr, shadowDSV_.Get());
-    context->ClearDepthStencilView(shadowDSV_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    // --- Shadow pass: one draw per cascade -------------------------------
     context->OMSetDepthStencilState(depthState_.Get(), 0);
     context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
     context->RSSetState(rasterizer_.Get());
@@ -607,27 +640,44 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
     context->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
     context->PSSetShader(nullptr, nullptr, 0);
 
-    D3D11_VIEWPORT shadowViewport{0.0f, 0.0f, 2048.0f, 2048.0f, 0.0f, 1.0f};
-    context->RSSetViewports(1, &shadowViewport);
+    for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
+        context->OMSetRenderTargets(0, nullptr, shadowDSV_[cascade].Get());
+        const float size = float(ShadowSize(cascade));
+        D3D11_VIEWPORT shadowViewport{0.0f, 0.0f, size, size, 0.0f, 1.0f};
+        context->RSSetViewports(1, &shadowViewport);
 
-    for (Mesh& mesh : meshes_) {
-        if (mesh.instances.empty() || !mesh.instanceBuffer) {
-            continue;
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (SUCCEEDED(context->Map(shadowCascadeBuffer_.Get(), 0,
+                                   D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+            std::memcpy(mapped.pData, &lightViewProj[cascade], sizeof(XMFLOAT4X4));
+            context->Unmap(shadowCascadeBuffer_.Get(), 0);
         }
-        ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
-        UINT stride = sizeof(Vertex);
-        UINT offset = 0;
-        context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-        context->IASetIndexBuffer(mesh.indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-        ID3D11ShaderResourceView* srv = mesh.instanceSRV.Get();
-        context->VSSetShaderResources(0, 1, &srv);
-        context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()), 0, 0,
-                                      0);
+        ID3D11Buffer* cascadeBuffer = shadowCascadeBuffer_.Get();
+        context->VSSetConstantBuffers(3, 1, &cascadeBuffer);
+
+        // Level of detail: the far cascade only draws the large silhouettes.
+        const int maxMesh = cascade == kShadowCascades - 1 ? 0 : int(meshes_.size());
+        for (int m = 0; m < maxMesh; ++m) {
+            Mesh& mesh = meshes_[m];
+            if (mesh.instances.empty() || !mesh.instanceBuffer) {
+                continue;
+            }
+            ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
+            UINT stride = sizeof(Vertex);
+            UINT offset = 0;
+            context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
+            context->IASetIndexBuffer(mesh.indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+            ID3D11ShaderResourceView* srv = mesh.instanceSRV.Get();
+            context->VSSetShaderResources(0, 1, &srv);
+            context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()),
+                                          0, 0, 0);
+        }
     }
 
     ID3D11ShaderResourceView* nullSrv = nullptr;
     context->VSSetShaderResources(0, 1, &nullSrv);
-
+    ID3D11Buffer* nullBuffer = nullptr;
+    context->VSSetConstantBuffers(3, 1, &nullBuffer);
 }
 
 void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene& scene,
@@ -653,8 +703,10 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
     D3D11_VIEWPORT viewport{0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f};
     context->RSSetViewports(1, &viewport);
 
-    ID3D11ShaderResourceView* shadowView = shadowSRV_.Get();
-    context->PSSetShaderResources(2, 1, &shadowView);
+    ID3D11ShaderResourceView* shadowViews[3] = {shadowSRV_[0].Get(),
+                                                shadowSRV_[1].Get(),
+                                                shadowSRV_[2].Get()};
+    context->PSSetShaderResources(2, 3, shadowViews);
     ID3D11SamplerState* shadowSampler = shadowSampler_.Get();
     context->PSSetSamplers(2, 1, &shadowSampler);
 
@@ -674,8 +726,8 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
     }
 
     ID3D11ShaderResourceView* nullSrv = nullptr;
-    ID3D11ShaderResourceView* nullShadow = nullptr;
-    context->PSSetShaderResources(2, 1, &nullShadow);
+    ID3D11ShaderResourceView* nullShadow[3] = {nullptr, nullptr, nullptr};
+    context->PSSetShaderResources(2, 3, nullShadow);
     ID3D11SamplerState* nullSampler = nullptr;
     context->PSSetSamplers(2, 1, &nullSampler);
     context->VSSetShaderResources(0, 1, &nullSrv);

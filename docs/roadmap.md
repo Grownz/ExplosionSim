@@ -55,6 +55,27 @@ Target releases: `0.4.0` (phases 1-2), `0.5.0` (phases 3-4), `0.6.0` (phase 5).
   accumulates in tall stacks. A future solver should combine shock propagation
   with a clipped manifold and graph-coloured batching, or switch to XPBD.
 
+## Status: phases 2-4 (2026-10-25)
+
+- **2.1 Progressive collapse - done.** Per-edge joints with staggered failure times and a
+  pending-failure list. Each failure re-runs the support flood fill, so chunks detach in
+  waves instead of all at once. Test: a destroyed building goes from 243 to 513 detached
+  chunks over the second after the blast.
+- **2.2 Static structure - done.** Chunks that are still standing become static collision
+  boxes; detached chunks reuse the same body and are switched to dynamic. Contact impulses
+  above 500 N s are converted to pressure and damage the struck chunk's joints.
+- **2.3 Jittered chunks - done.** Split planes are offset by up to +-16 % per axis, so no
+  two neighbours share dimensions; topology and OBB physics are unchanged.
+- **3 Blast shielding - done.** Nine rays per receiver, thickness-based optical depth,
+  diffraction floor and an optional ground-reflection setting (default off).
+- **4 Shadows and LOD - done.** Three cascades (2048/1024/1024) with practical splits,
+  slope-scaled normal offset, 5x5 PCF, far-cascade caster LOD, a single-cone tree mesh
+  beyond 80 m and the existing facade fade.
+
+Measured at density 1 with a 20 t charge and seed 1337: 3553 bodies (864 static),
+render 2.2 ms/frame at 1920x1080, physics 2.8 ms per 1/120 s step. At density 3:
+10681 bodies (2592 static), render 5.2 ms, physics 8.6 ms per step.
+
 ## 0. Baseline and budget
 
 Measured with `--benchmark --frames 120 --reduced-order --time 1.5 --charge 20000`,

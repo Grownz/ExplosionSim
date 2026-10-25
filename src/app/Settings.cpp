@@ -155,6 +155,10 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
         ParseBool(values, "sceneVegetation", simulation.scene.vegetation);
     simulation.scene.quality =
         std::clamp(ParseInt(values, "sceneQuality", simulation.scene.quality), 0, 2);
+    simulation.scene.groundReflection =
+        std::clamp(ParseFloat(values, "sceneGroundReflection",
+                              simulation.scene.groundReflection),
+                   0.0f, 1.0f);
 
     auto& render = settings.render;
     render.raymarchSteps = std::clamp(ParseInt(values, "raymarchSteps", render.raymarchSteps), 16, 256);
@@ -212,6 +216,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "sceneVehicles=" << (simulation.scene.vehicles ? "true" : "false") << "\n";
     stream << "sceneVegetation=" << (simulation.scene.vegetation ? "true" : "false") << "\n";
     stream << "sceneQuality=" << simulation.scene.quality << "\n";
+    stream << "sceneGroundReflection=" << simulation.scene.groundReflection << "\n";
 
     stream << "[render]\n";
     stream << "raymarchSteps=" << render.raymarchSteps << "\n";

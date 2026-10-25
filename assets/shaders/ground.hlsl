@@ -1,41 +1,64 @@
 #include "common.hlsli"
 
 Texture2D<float> SceneDepth : register(t1);
-Texture2D<float> ShadowMap : register(t2);
+Texture2D<float> ShadowMap0 : register(t2);
+Texture2D<float> ShadowMap1 : register(t3);
+Texture2D<float> ShadowMap2 : register(t4);
 SamplerComparisonState ShadowSampler : register(s2);
 
 cbuffer ShadowConstants : register(b2)
 {
-    float4x4 LightViewProj;
+    float4x4 LightViewProj[3];
+    float4 CascadeSplits;
+    float4 CascadeTexel;
+    float4 CascadeWorldTexel;
 };
 
 // Renders the infinite ground plane as a fullscreen ray/plane intersection and
 // writes the correct hardware depth.
 
-// 3x3 PCF against the directional shadow map, matching scene.hlsl.
-float SampleGroundShadow(float3 worldPosition)
+float SampleGroundCascade(Texture2D<float> map, float4x4 lightViewProj,
+                          float texelUV, float texelWorld, float3 worldPosition)
 {
-    const float4 lightPosition = mul(LightViewProj, float4(worldPosition, 1.0));
+    const float3 offsetPosition = worldPosition + float3(0.0, texelWorld * 1.5, 0.0);
+    const float4 lightPosition = mul(lightViewProj, float4(offsetPosition, 1.0));
     const float2 uv = float2(0.5 + lightPosition.x * 0.5, 0.5 - lightPosition.y * 0.5);
     if (any(uv < 0.0) || any(uv > 1.0))
     {
         return 1.0;
     }
-    const float depth = lightPosition.z - 0.0015;
-    const float texel = 1.0 / 2048.0;
+    const float depth = lightPosition.z - 0.0004;
 
     float shadow = 0.0;
     [unroll]
-    for (int y = -1; y <= 1; ++y)
+    for (int y = -2; y <= 2; ++y)
     {
         [unroll]
-        for (int x = -1; x <= 1; ++x)
+        for (int x = -2; x <= 2; ++x)
         {
-            shadow += ShadowMap.SampleCmpLevelZero(
-                ShadowSampler, uv + float2(x, y) * texel, depth);
+            shadow += map.SampleCmpLevelZero(
+                ShadowSampler, uv + float2(x, y) * texelUV, depth);
         }
     }
-    return shadow / 9.0;
+    return shadow / 25.0;
+}
+
+// 5x5 PCF against the cascade selected by view distance, matching scene.hlsl.
+float SampleGroundShadow(float3 worldPosition)
+{
+    const float distance = length(worldPosition - CameraPosition.xyz);
+    if (distance <= CascadeSplits.x)
+    {
+        return SampleGroundCascade(ShadowMap0, LightViewProj[0], CascadeTexel.x,
+                                   CascadeWorldTexel.x, worldPosition);
+    }
+    if (distance <= CascadeSplits.y)
+    {
+        return SampleGroundCascade(ShadowMap1, LightViewProj[1], CascadeTexel.y,
+                                   CascadeWorldTexel.y, worldPosition);
+    }
+    return SampleGroundCascade(ShadowMap2, LightViewProj[2], CascadeTexel.z,
+                               CascadeWorldTexel.z, worldPosition);
 }
 
 float TerrainHeight(float2 p)
