@@ -63,6 +63,26 @@ target_link_libraries(imgui PUBLIC d3d11 dxgi d3dcompiler)
 target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 target_compile_options(imgui PRIVATE /W3 /utf-8)
 
+# Jolt Physics (MIT) provides the rigid-body solver. The Build subdirectory
+# contains the library project; when included through FetchContent it builds
+# only the Jolt target and skips the samples/tests.
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(FLOATING_POINT_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
+set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(jolt
+    URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.6.0.zip
+    URL_HASH SHA256=0AF9BEEA51637EF805E624FE838EA2870F7B68CD48CBE1615C853BD9BCF4F1D7
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR Build)
+FetchContent_MakeAvailable(jolt)
+
+# Keep the project standard explicit after adding the third-party subproject.
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 # ---------------------------------------------------------------------------
 # Core simulation (platform independent, unit tested)
 # ---------------------------------------------------------------------------
@@ -80,6 +100,7 @@ add_library(explosion_core STATIC
 target_include_directories(explosion_core PUBLIC src)
 target_compile_definitions(explosion_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
 target_compile_options(explosion_core PRIVATE /W4 /permissive- /fp:fast /utf-8)
+target_link_libraries(explosion_core PRIVATE Jolt)
 if(EXPLOSION_WARNINGS_AS_ERRORS)
     target_compile_options(explosion_core PRIVATE /WX)
 endif()

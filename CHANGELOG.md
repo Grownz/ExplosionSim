@@ -8,9 +8,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-- True oriented-box contacts in the rigid-body world: a 15-axis saturating-axis test with
-  a four-point contact manifold, sequential impulses and Coulomb friction replace the
-  bounding-sphere proxies, so collapsed chunks stack and slide instead of interpenetrating.
 - Progressive building collapse: chunks form a six-neighbour support graph with per-edge
   joints and staggered failure times. Every failure re-runs the support flood fill, so
   chunks detach in waves instead of all at once; strongly loaded joints fail immediately,
@@ -52,15 +49,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Scene generation and benchmark logs report building/vehicle/tree, chunk and rigid-body
   counts, plus the number of awake bodies.
 - `--distance-scale` now also applies to the reduced-order camera framing.
-- Uniform-grid broadphase for the rigid-body world (4 m cells, AABB insertion, sorted and
-  de-duplicated pairs). At `scene.density = 3` the simulation cost per 1/120 s step
-  dropped from ~13.7 ms to ~5.8 ms.
-- Analytic box inertia tensor. Ground and body-body contacts use the world-space inverse
-  inertia, so long chunks tumble instead of rotating like cubes.
-- Shock-propagation pass for the rigid-body solver: after the normal solve, contacts are
-  visited from the ground up and each upper body is resolved against the lower one as if
-  it were infinitely massive. An eight-box tower now stays together for ~3.5 s instead of
-  ~1.5 s, at roughly 20 % extra solver cost.
+
+### Changed
+
+- **Rigid-body backend replaced by Jolt Physics 5.6.0 (MIT).** The in-house solver
+  (uniform grid, SAT, sequential impulses, shock propagation) is gone; Jolt provides the
+  BVH broadphase, persistent manifolds with warm starting, box inertia, island sleeping
+  and a multithreaded solver. The `PhysicsWorld` interface is unchanged, body state is
+  mirrored for the renderer and tests, contact impulses are estimated with
+  `EstimateCollisionResponse`, and the left-handed scene is mirrored on Z at the boundary.
+  At density 3 the 1920x1080 benchmark dropped from 8.0 to 5.75 ms/frame (Voronoi) and
+  from 8.7 to 4.16 ms/frame (grid). Jolt is fetched
+  by CMake at configure time, so the first configure needs network access. Physics is no
+  longer bit-exact across runs because Jolt uses a multithreaded job system.
 
 ### Fixed
 

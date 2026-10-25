@@ -203,11 +203,16 @@ collision boxes, so debris piles up against the remaining structure; a heavy imp
 reports a contact impulse back to the scene, which damages the struck chunk's joints and
 can start a local cascade.
 
-The rigid-body world uses an averaged ground contact point, OBB-OBB saturating-axis tests
-with a contact manifold, analytic box inertia, Coulomb friction and sleeping, and a
-shock-propagation pass that resolves each upper body against the lower one as if it were
-infinitely massive. It runs in fixed 1/120 s substeps. Damage events are queued and
-drained by `Simulation`, which spawns debris and fire particles on the main thread.
+The rigid-body world is backed by Jolt Physics (MIT): box shapes, a BVH broadphase,
+persistent manifolds with warm starting, analytic box inertia, island sleeping and a
+multithreaded solver. Bodies live in two object layers (standing structure and moving
+debris) and a large static box provides the ground plane. The scene keeps DirectX's
+left-handed world and mirrors Z at the Jolt boundary; `PhysicsWorld` copies the body
+state back after each step so the renderer and tests see the usual `RigidBody` array. A
+contact listener turns static-dynamic impacts into `ContactEvent`s and estimates the
+impulse with `EstimateCollisionResponse`. It runs in fixed 1/120 s substeps. Damage events
+are queued and drained by `Simulation`, which spawns debris and fire particles on the main
+thread.
 
 Blast shielding traces 3x3 rays from the burst to the receiver, accumulates the optical
 depth of every building the ray crosses (`exp(-depth/3 m)`), applies a diffraction floor
@@ -263,8 +268,10 @@ dedicated video memory.
 - Synchronous volume bake before the capture
 - No temporal post-processing history
 
-`--screenshot` therefore produces byte-identical images for the same command line and
-GPU/driver combination.
+`--screenshot` therefore reproduces the same scene and rendering for the same command
+line and GPU/driver combination. The rigid-body solver uses Jolt's multithreaded job
+system, so the exact rubble state can vary slightly between runs; captures that depend on
+the debris layout are not guaranteed to be bit-identical.
 
 ## Performance notes
 

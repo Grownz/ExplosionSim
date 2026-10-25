@@ -3,6 +3,7 @@
 #include <DirectXMath.h>
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace ex::scene {
@@ -36,10 +37,16 @@ struct ContactEvent {
     DirectX::XMFLOAT3 position{};
 };
 
-// Box rigid bodies with a uniform-grid broadphase, oriented-box contacts and
-// per-body sleeping.
+// Box rigid bodies backed by Jolt Physics. The public interface is the same as
+// the previous in-house solver: the scene owns body indices, switches standing
+// structure bodies to dynamic on detachment and consumes contact events.
 class PhysicsWorld {
 public:
+    PhysicsWorld();
+    ~PhysicsWorld();
+    PhysicsWorld(const PhysicsWorld&) = delete;
+    PhysicsWorld& operator=(const PhysicsWorld&) = delete;
+
     void Clear();
     int AddBody(const RigidBody& body);
     void Step(float dt);
@@ -55,39 +62,10 @@ public:
     const std::vector<ContactEvent>& ContactEvents() const { return contactEvents_; }
 
 private:
-    struct CellSlot {
-        uint64_t key = 0;
-        int head = -1;
-    };
-
-    // Contact data kept after the pair solve so the shock-propagation pass can
-    // re-solve each contact with the lower body treated as static.
-    struct ShockContact {
-        int bodyA = -1;
-        int bodyB = -1;
-        DirectX::XMFLOAT3 normal{0.0f, 1.0f, 0.0f};
-        DirectX::XMFLOAT3 points[4]{};
-        int count = 0;
-        float height = 0.0f;
-        float friction = 0.6f;
-    };
-
-    void BuildBroadphase();
-    void ShockPropagation();
-    void ResolveGround(RigidBody& body, float dt);
-    void ResolvePair(int indexA, int indexB);
-
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+    // Mirror of the Jolt body state, used by the renderer and the tests.
     std::vector<RigidBody> bodies_;
-
-    // Broadphase scratch, reused between steps.
-    std::vector<CellSlot> slots_;
-    std::vector<int> usedSlots_;
-    std::vector<int> insertBody_;
-    std::vector<int> insertNext_;
-    std::vector<uint64_t> pairs_;
-    std::vector<DirectX::XMFLOAT3> aabbMin_;
-    std::vector<DirectX::XMFLOAT3> aabbMax_;
-    std::vector<ShockContact> shockContacts_;
     std::vector<ContactEvent> contactEvents_;
 };
 

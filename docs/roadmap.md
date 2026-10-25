@@ -10,6 +10,11 @@ Target releases: `0.4.0` (phases 1-2), `0.5.0` (phases 3-4), `0.6.0` (phase 5).
 
 ## Status (2026-10-25)
 
+**Update:** the in-house rigid-body solver has been replaced by Jolt Physics 5.6.0
+(MIT). Items 1.1-1.5 are now covered by the engine (BVH broadphase, clipped manifolds,
+warm starting, box inertia, island sleeping, multithreaded solving). The measurements and
+findings below describe the previous solver and are kept for history.
+
 - **1.1 Broadphase - done.** Uniform grid with 4 m cells, AABB insertion and a
   sorted, de-duplicated pair list. At `scene.density = 3` the simulation cost per
   1/120 s step dropped from ~13.7 ms to ~5.8 ms.

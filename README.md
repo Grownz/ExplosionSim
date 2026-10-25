@@ -51,8 +51,9 @@ start-up at 0.4 m above the ground**.
   the volumetric field. Selectable under *Physics & Effects → Simulation model*.
 - **2 s fuse** – the charge is armed on start-up, a countdown is shown, then the
   detonation is simulated in slow motion (time scale is adjustable).
-- **Headless capture** – deterministic PNG screenshots and a benchmark mode without a
-  window, ideal for CI and documentation.
+- **Headless capture** - reproducible PNG screenshots and a benchmark mode without a
+  window, ideal for CI and documentation. Scene generation and rendering are deterministic;
+  the multithreaded physics solver can vary the exact debris layout between runs.
 - **No runtime dependencies** – static MSVC runtime, no VC++ redistributable, single
   executable plus the shader folder.
 
@@ -63,7 +64,7 @@ start-up at 0.4 m above the ground**.
 | OS | Windows 10 / 11 x64 |
 | GPU | Direct3D 11 capable (feature level 11_0), 2 GB VRAM recommended |
 | Build | Visual Studio 2022 Build Tools (MSVC), CMake ≥ 3.21 |
-| Network | required once, to download Dear ImGui |
+| Network | required once, to download Dear ImGui and Jolt Physics |
 
 ## Build
 
@@ -73,7 +74,8 @@ cmake --build build --config Release --parallel
 ```
 
 The executable is written to `build\Release\ExplosionSim.exe`; the `assets` folder is
-copied next to it automatically.
+copied next to it automatically. The first configure downloads Dear ImGui and Jolt
+Physics (MIT) into `build\_deps`; later builds reuse the cached copies.
 
 Run the tests:
 

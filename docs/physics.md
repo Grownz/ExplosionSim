@@ -291,13 +291,11 @@ pre-fractured chunks along jittered planes (2x3x2 by default, 3x4x3/3x5x3 at hig
 `scene.quality`); the planes jitter by up to +-28 % of a cell and keep a minimum width of
 0.28 cell, so the rubble is irregular but every chunk stays a valid OBB. Vehicles and
 trees become 6-DOF rigid bodies.
-The rigid-body solver uses the analytic box inertia tensor, an averaged ground contact
-point and true oriented-box contacts: a 15-axis saturating-axis test (three face axes per
-box plus nine edge-edge cross products) selects the minimum-overlap axis, and the incident
-box vertices inside the other box form a contact manifold that is solved with sequential
-impulses and Coulomb friction. A shock-propagation pass then re-solves each contact with
-the lower body treated as infinitely massive, so the support impulse reaches the top of a
-stack in one sweep.
+The rigid-body world is handled by Jolt Physics (MIT): analytic box inertia, a BVH
+broadphase, persistent contact manifolds with warm starting, Coulomb friction, island
+sleeping and a multithreaded solver. The scene supplies a large static ground box and
+keeps the support graph, progressive collapse and static/dynamic switching on its side;
+contact impulses are estimated with `EstimateCollisionResponse` for structural damage.
 
 Collapse is progressive. Each building chunk knows its grid height and its six face
 neighbours; a load value per chunk is derived from the peak overpressure, height and
