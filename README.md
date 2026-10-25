@@ -256,6 +256,13 @@ virtual temperature.
 
 The renderer is described in [docs/architecture.md](docs/architecture.md).
 
+## Roadmap
+
+The remaining limitations of the procedural environment (broadphase, contact manifolds,
+progressive collapse, blast shielding, shadow cascades, fire spread, wind and soil) are
+planned in [docs/roadmap.md](docs/roadmap.md), including the chosen algorithms,
+performance budgets and acceptance criteria.
+
 ## Packaging a release
 
 ```powershell
