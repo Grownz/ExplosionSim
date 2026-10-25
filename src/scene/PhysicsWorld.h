@@ -46,6 +46,8 @@ public:
     ~PhysicsWorld();
     PhysicsWorld(const PhysicsWorld&) = delete;
     PhysicsWorld& operator=(const PhysicsWorld&) = delete;
+    PhysicsWorld(PhysicsWorld&&) noexcept;
+    PhysicsWorld& operator=(PhysicsWorld&&) noexcept;
 
     void Clear();
     int AddBody(const RigidBody& body);

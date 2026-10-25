@@ -364,9 +364,13 @@ void GpuEulerSolver::ConsumeStaging() {
         maxSpeed_ = value;
     }
 
-    if (values[1] > 0 || values[2] > 0) {
+    if (values[1] > 0) {
         stats_.plumeTop = float(values[1]) / kBoundScale;
+    }
+    if (values[2] > 0) {
         stats_.plumeRadius = float(values[2]) / kBoundScale;
+    }
+    if (values[1] > 0 || values[2] > 0) {
         stats_.fieldBoundsValid = true;
     }
 }

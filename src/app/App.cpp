@@ -117,6 +117,9 @@ int App::Run(const LaunchOptions& options) {
     }
 
     pool_ = std::make_unique<core::ThreadPool>();
+    // The interactive app generates the town on a worker thread so the loading
+    // bar can animate; headless captures and tests stay synchronous.
+    simulation_.SetAsyncSceneGeneration(!options_.headless);
     simulation_.Initialize(settings_.simulation, *pool_);
     FrameCamera();
 
@@ -383,6 +386,15 @@ int App::RunInteractive() {
         }
         frameMs_ = float(smoothedFrameMs);
 
+        simulation_.PollSceneGeneration();
+        if (simulation_.ConsumeSceneCompletion() && !sceneFramed_) {
+            // The first town is ready; frame it once. Later resets keep the
+            // camera where the user left it.
+            FrameCamera();
+            sceneFramed_ = true;
+        }
+        const bool loadingScene = simulation_.SceneGenerating();
+
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
@@ -411,7 +423,7 @@ int App::RunInteractive() {
             }
         }
 
-        if (!settings_.paused) {
+        if (!settings_.paused && !loadingScene) {
             if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
                 if (simulation_.IsArmed()) {
                     simulation_.Update(dt);
@@ -425,7 +437,7 @@ int App::RunInteractive() {
                 simulation_.Update(dt);
             }
         }
-        renderer_.SetSolverPaused(settings_.paused);
+        renderer_.SetSolverPaused(settings_.paused || loadingScene);
 
         ui::UiContext context{settings_, simulation_, camera_, renderer_};
         context.fps = fps_;

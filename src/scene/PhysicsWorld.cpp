@@ -240,6 +240,9 @@ PhysicsWorld::~PhysicsWorld() {
     }
 }
 
+PhysicsWorld::PhysicsWorld(PhysicsWorld&&) noexcept = default;
+PhysicsWorld& PhysicsWorld::operator=(PhysicsWorld&&) noexcept = default;
+
 void PhysicsWorld::Clear() {
     if (!impl_) {
         return;

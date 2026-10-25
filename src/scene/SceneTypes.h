@@ -3,6 +3,7 @@
 #include <DirectXMath.h>
 
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -119,7 +120,10 @@ struct SceneObject {
 // single-threaded and seeded; the hash allows tests to verify reproducibility.
 class Scene {
 public:
-    void Generate(const SceneSettings& settings, const sim::BlastModel& blast);
+    // `progress` is called with a monotonic 0..1 value; returning false aborts
+    // the generation (used to cancel a superseded background job).
+    void Generate(const SceneSettings& settings, const sim::BlastModel& blast,
+                  const std::function<bool(float)>& progress = {});
     void Clear();
     void Update(const sim::BlastModel& blast, float dtSim);
 

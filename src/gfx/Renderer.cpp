@@ -761,20 +761,26 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
 
     // Follow the measured plume: the analytic cloud overestimates the early
     // cap, and expanding to fit it coarsens the grid before the vortex ring has
-    // formed. The analytic model is only a fallback until the first reduction
-    // result is available.
-    double requiredHalf = 0.0;
-    double requiredTop = 0.0;
+    // formed. The analytic model is only a per-component fallback until the
+    // reduction has measured a radius/top.
+    const sim::BlastState& state = simulation.Blast().State();
+    const double analyticHalf = std::max({state.fireballRadius * 2.4,
+                                          state.cloudRadius * 1.35, 0.5});
+    const double analyticTop =
+        std::max({state.fireballCenterY + state.fireballRadius * 2.0,
+                  state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
+
+    double requiredHalf = analyticHalf;
+    double requiredTop = analyticTop;
     if (solver_.HasFieldBounds()) {
-        requiredHalf = std::max(double(solver_.FieldRadius()) * kFieldMargin, 0.5);
-        requiredTop = std::max(double(solver_.FieldTop()) * kFieldMargin, 1.0);
-    } else {
-        const sim::BlastState& state = simulation.Blast().State();
-        requiredHalf = std::max({state.fireballRadius * 2.4,
-                                 state.cloudRadius * 1.35, 0.5});
-        requiredTop =
-            std::max({state.fireballCenterY + state.fireballRadius * 2.0,
-                      state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
+        const double measuredRadius = double(solver_.FieldRadius());
+        const double measuredTop = double(solver_.FieldTop());
+        if (measuredRadius > 0.0) {
+            requiredHalf = std::max(measuredRadius * kFieldMargin, 0.5);
+        }
+        if (measuredTop > 0.0) {
+            requiredTop = std::max(measuredTop * kFieldMargin, 1.0);
+        }
     }
 
     // A single 1.3x step is not always enough after a fast plume rise, so keep

@@ -12,10 +12,16 @@ groupshared uint gMaxHeight;
 groupshared uint gMaxRadius;
 
 static const float kBoundScale = 512.0;
-static const float kProductThreshold = 0.004;
-// The radial trigger must not react to the low base surge; measure the cloud
-// only above a fraction of the domain height.
+static const float kHeightThreshold = 0.004;
+static const float kSmokeThreshold = 0.0005;
+static const float kFireballThreshold = 0.02;
+// The radial trigger must not react to the low, dilute base surge; above this
+// fraction of the domain height every visible smoke cell counts. Below it only
+// dense fireball products count, so the fireball's equator is still measured.
 static const float kRadiusHeightFraction = 0.25;
+// Ignore the ground layer that the render fades out (see euler_render.hlsl).
+static const float kLowLayerFraction = 0.02;
+static const float kGroundFadeVoxels = 2.4;
 
 uint Quantize(float value)
 {
@@ -42,7 +48,8 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
     uint radius = 0;
 
     const float domainHeight = max(DomainMax.y - DomainMin.y, 1e-3);
-    const float radiusFloor = max(1.5 * DomainMin.w, kRadiusHeightFraction * domainHeight);
+    const float lowFloor = max(kGroundFadeVoxels * DomainMin.w, kLowLayerFraction * domainHeight);
+    const float upperFloor = kRadiusHeightFraction * domainHeight;
 
     if (all(id < (uint3)Grid.xyz))
     {
@@ -55,13 +62,19 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
         float soundSpeed = sqrt(Ambient.w * pressure / rho);
         speed = length(velocity) + soundSpeed;
 
-        if (b.y > kProductThreshold)
+        const float3 world = DomainMin.xyz + (float3(id) + 0.5) * DomainMin.w;
+        if (b.y > kHeightThreshold)
         {
-            float3 world = DomainMin.xyz + (float3(id) + 0.5) * DomainMin.w;
             height = Quantize(world.y);
-            // Ignore the ground-hugging base surge for the radial extent; it
-            // would otherwise expand the domain long before the cloud needs it.
-            if (world.y > radiusFloor)
+        }
+
+        // Horizontal extent: the dilute smoke cap counts above the base surge;
+        // below it only the dense fireball counts. Both are visible in the
+        // render, so letting either reach the wall must grow the domain.
+        if (b.y > kSmokeThreshold && world.y > lowFloor)
+        {
+            const bool aboveBaseSurge = world.y > upperFloor;
+            if (aboveBaseSurge || b.y > kFireballThreshold)
             {
                 radius = Quantize(max(abs(world.x), abs(world.z)));
             }

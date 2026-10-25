@@ -45,6 +45,17 @@ void Hint(const char* text) {
     ImGui::PopStyleColor();
 }
 
+// Compact TNT-equivalent label for the on-screen data box.
+void FormatMass(double kilograms, char* buffer, size_t size) {
+    if (kilograms >= 1.0e6) {
+        snprintf(buffer, size, "%.4g kt TNT", kilograms / 1.0e6);
+    } else if (kilograms >= 1.0e3) {
+        snprintf(buffer, size, "%.4g t TNT", kilograms / 1.0e3);
+    } else {
+        snprintf(buffer, size, "%.4g kg TNT", kilograms);
+    }
+}
+
 // Bottom-left map scale for the active grid overlay. The bar length is snapped
 // to a 1-2-5 sequence and its pixel size is kept within a readable range as the
 // camera zooms.
@@ -755,16 +766,68 @@ UiActions Draw(UiContext& context) {
         ImGui::PopStyleColor();
         ImGui::SetWindowFontScale(1.0f);
         ImGui::End();
-    } else {
-        ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + margin),
-                                ImGuiCond_Always);
-        ImGui::Begin("##timecode", nullptr, overlayFlags | ImGuiWindowFlags_NoBackground);
+    }
+
+    // Keep the data box visible in every state so the frame rate can always be
+    // read; the countdown is a separate centred overlay above.
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + margin),
+                            ImGuiCond_Always);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.11f, 0.115f, 0.125f, 0.88f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 9.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::Begin("##timecode", nullptr, overlayFlags);
+
+    char massText[64];
+    FormatMass(context.settings.simulation.chargeMassKg, massText, sizeof(massText));
+    char timeText[64];
+    snprintf(timeText, sizeof(timeText), "%.4f s", context.simulation.Time());
+    char shockText[64];
+    snprintf(shockText, sizeof(shockText), "%.1f m",
+             context.simulation.Blast().State().shockRadius);
+    char fpsText[64];
+    snprintf(fpsText, sizeof(fpsText), "%.1f fps", context.fps);
+
+    const float labelWidth = ImGui::GetFontSize() * 6.8f;
+    const auto dataRow = [&](const char* label, const char* value) {
         ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
-        ImGui::Text("t = %.4f s   |   %.3g kg TNT   |   shock front %.1f m",
-                    context.simulation.Time(), context.settings.simulation.chargeMassKg,
-                    context.simulation.Blast().State().shockRadius);
+        ImGui::TextUnformatted(label);
         ImGui::PopStyleColor();
-        ImGui::End();
+        ImGui::SameLine(labelWidth);
+        ImGui::TextUnformatted(value);
+    };
+    dataRow("Time", timeText);
+    dataRow("TNT", massText);
+    dataRow("Shock front", shockText);
+    dataRow("FPS", fpsText);
+
+    ImGui::PopStyleVar(3);
+    ImGui::PopStyleColor();
+    ImGui::End();
+
+    // Scene generation is synchronous on the worker thread; keep the window
+    // responsive and show a full-width progress strip along the bottom edge.
+    if (context.simulation.SceneGenerating()) {
+        ImDrawList* foreground = ImGui::GetForegroundDrawList();
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const float height = display.y * 0.05f;
+        const float top = display.y - height;
+        foreground->AddRectFilled(ImVec2(0.0f, top), display,
+                                  IM_COL32(14, 16, 19, 235));
+        const float progress =
+            std::clamp(context.simulation.SceneProgress(), 0.0f, 1.0f);
+        if (progress > 0.0f) {
+            foreground->AddRectFilled(ImVec2(0.0f, top),
+                                      ImVec2(display.x * progress, display.y),
+                                      IM_COL32(52, 199, 89, 255));
+        }
+        char label[64];
+        snprintf(label, sizeof(label), "Generating scene  %d%%",
+                 int(progress * 100.0f + 0.5f));
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        foreground->AddText(ImVec2((display.x - textSize.x) * 0.5f,
+                                   top + (height - textSize.y) * 0.5f),
+                            IM_COL32(245, 248, 250, 255), label);
     }
 
     return actions;

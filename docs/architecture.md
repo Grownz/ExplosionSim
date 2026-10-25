@@ -40,13 +40,20 @@ Two kinds of work are submitted:
 The bake result is double-buffered. A new bake writes into the buffer that is not
 currently displayed, so the renderer never samples a partially written volume.
 
+In the interactive app the procedural town is generated on a dedicated `std::jthread`
+into a separate `Scene`. A progress callback publishes 0..1 through an atomic, and the
+main thread swaps the finished scene into place. The simulation is frozen while the town
+is generated, so the countdown and the solver cannot advance into a half-built scene.
+Headless captures and tests keep the synchronous path.
+
 The UI reports the worker count and the measured bake time.
 
 ## Frame loop
 
 ```
 process Win32 messages
-├─ simulate (unless paused)
+├─ poll scene generation (adopt finished town, re-frame on first load)
+├─ simulate (unless paused or loading the town)
 │   ├─ fuse countdown / detonation
 │   ├─ BlastModel::Advance          (shock integration, fireball, cloud)
 │   ├─ ParticleSystem::Update       (parallel, spawning on the main thread)
@@ -170,11 +177,14 @@ the camera frames the analytic cloud rather than the solver domain.
 
 When auto-scale is enabled, the reduction pass also reports the bounding box of the
 visible detonation products (maximum height and maximum `|x|/|z|` radius). The radial
-measurement ignores the low base surge below 25 % of the domain height, which otherwise
-expands the box long before the cloud needs it. The measured bounds drive the expansion:
-the domain grows when the plume approaches 78 % of the boundary, with a 12 % margin, so
-the grid stays as fine as possible while the cap forms. The analytic cloud is only a
-fallback until the first reduction result is available. When the criterion fires, the
+measurement has two tiers: above 25 % of the domain height every visible smoke cell
+counts, while below it only dense fireball products count, so the fireball's equator is
+measured without reacting to the low, dilute base surge. The lowest layer faded out by
+the renderer is ignored. A zero radius is never written over a previously measured one,
+and the analytic cloud is a per-component fallback until the reduction has measured that
+component. The measured bounds drive the expansion: the domain grows when the plume
+approaches 78 % of the boundary, with a 12 % margin, so the grid stays as fine as
+possible while the cap forms. When the criterion fires, the
 renderer calls `RescaleDomain`, which grows the box by 1.3×
 (up to an accuracy factor of 16). The expansion is repeated if one step is not enough, so
 a fast plume rise is caught before it clips. A compute pass resamples the six conserved

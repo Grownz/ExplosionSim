@@ -90,6 +90,7 @@ private:
     double statAccumulator_ = 0.0;
     int statFrames_ = 0;
     int screenshotCounter_ = 0;
+    bool sceneFramed_ = false;
 };
 
 } // namespace ex::app

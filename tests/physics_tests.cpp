@@ -15,9 +15,11 @@
 #include <DirectXPackedVector.h>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cwchar>
+#include <thread>
 #include <vector>
 
 // The settings serializer only needs this symbol for DefaultSettingsPath; the
@@ -1017,6 +1019,52 @@ void TestSceneExtentScalesWithCharge() {
     }
 }
 
+// The interactive app generates the town on a worker thread. This covers the
+// progress/completion handoff and the scene swap without a window.
+void TestAsyncSceneGeneration() {
+    ex::sim::SimulationSettings settings{};
+    settings.chargeMassKg = 20000.0;
+    settings.heightOfBurstM = 0.4;
+    settings.fuseSeconds = 1.0;
+    settings.scene.seed = 1357;
+    settings.scene.density = 1.1f;
+    settings.scene.quality = 2;
+    settings.scene.voronoiChunks = true;
+
+    ex::core::ThreadPool pool;
+    ex::sim::Simulation simulation;
+    simulation.SetAsyncSceneGeneration(true);
+    CHECK(simulation.Initialize(settings, pool));
+
+    const auto waitForScene = [](ex::sim::Simulation& sim) {
+        for (int guard = 0; guard < 6000; ++guard) {
+            sim.PollSceneGeneration();
+            if (sim.ConsumeSceneCompletion()) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return false;
+    };
+
+    CHECK(waitForScene(simulation));
+    CHECK(!simulation.SceneGenerating());
+    CHECK_NEAR(simulation.SceneProgress(), 1.0f, 1e-4);
+    CHECK(!simulation.Scene().Empty());
+
+    // A superseded 100 kt job must abort quickly and the next town must still
+    // be adopted.
+    settings.chargeMassKg = 1.0e8;
+    simulation.ApplySettings(settings);
+    settings.chargeMassKg = 0.2;
+    simulation.ApplySettings(settings);
+    CHECK(waitForScene(simulation));
+    CHECK(!simulation.SceneGenerating());
+    CHECK(!simulation.Scene().Empty());
+
+    simulation.Shutdown();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -1049,6 +1097,7 @@ int main() {
     RUN(TestVoronoiChunks);
     RUN(TestVoronoiCapRegression);
     RUN(TestSceneExtentScalesWithCharge);
+    RUN(TestAsyncSceneGeneration);
     RUN(TestSettingsRoundTrip);
     RUN(TestFuseAndDetonation);
 #undef RUN

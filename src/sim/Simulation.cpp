@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
 
 namespace ex::sim {
 
@@ -40,9 +41,104 @@ bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool
 }
 
 void Simulation::Shutdown() {
+    WaitForSceneGeneration();
     volume_.WaitForIdle();
     scene_.Clear();
     initialized_ = false;
+}
+
+Simulation::~Simulation() {
+    WaitForSceneGeneration();
+}
+
+void Simulation::StartSceneGeneration(const scene::SceneSettings& settings,
+                                      const Charge& charge,
+                                      const Environment& environment) {
+    // A superseded job only checks cancellation at row boundaries, so the join
+    // below is short (one building row at most).
+    if (sceneThread_.joinable()) {
+        sceneThread_.request_stop();
+        sceneThread_.join();
+    }
+    pendingScene_.reset();
+    sceneReady_.store(false, std::memory_order_relaxed);
+    sceneCompleted_ = false;
+    sceneProgress_.store(0.0f, std::memory_order_relaxed);
+    sceneGenerating_.store(true, std::memory_order_release);
+
+    sceneThread_ = std::jthread(
+        [this, settings, charge, environment](std::stop_token token) {
+            auto scene = std::make_unique<scene::Scene>();
+            bool success = false;
+            try {
+                sim::BlastModel localBlast;
+                localBlast.Configure(charge, environment);
+                scene->Generate(settings, localBlast, [this, token](float value) {
+                    sceneProgress_.store(value, std::memory_order_relaxed);
+                    return !token.stop_requested();
+                });
+                success = !token.stop_requested();
+            } catch (const std::exception& error) {
+                LogError("Scene generation failed: %s", error.what());
+            } catch (...) {
+                LogError("Scene generation failed.");
+            }
+            if (success) {
+                pendingScene_ = std::move(scene);
+                sceneReady_.store(true, std::memory_order_release);
+            }
+            sceneGenerating_.store(false, std::memory_order_release);
+        });
+}
+
+void Simulation::PollSceneGeneration() {
+    if (sceneReady_.exchange(false, std::memory_order_acquire)) {
+        if (sceneThread_.joinable()) {
+            sceneThread_.join();
+        }
+        if (pendingScene_) {
+            scene_ = std::move(*pendingScene_);
+            pendingScene_.reset();
+            sceneCompleted_ = true;
+            sceneProgress_.store(1.0f, std::memory_order_relaxed);
+            LogSceneStats();
+        }
+        sceneGenerating_.store(false, std::memory_order_release);
+        return;
+    }
+    if (!sceneGenerating_.load(std::memory_order_acquire) && sceneThread_.joinable()) {
+        // The job was cancelled or failed; release its resources.
+        sceneThread_.join();
+        pendingScene_.reset();
+    }
+}
+
+void Simulation::WaitForSceneGeneration() {
+    if (sceneThread_.joinable()) {
+        sceneThread_.request_stop();
+        sceneThread_.join();
+    }
+    if (sceneReady_.exchange(false, std::memory_order_acquire) && pendingScene_) {
+        scene_ = std::move(*pendingScene_);
+        LogSceneStats();
+    }
+    pendingScene_.reset();
+    sceneGenerating_.store(false, std::memory_order_release);
+}
+
+bool Simulation::ConsumeSceneCompletion() {
+    const bool completed = sceneCompleted_;
+    sceneCompleted_ = false;
+    return completed;
+}
+
+void Simulation::LogSceneStats() {
+    if (scene_.Settings().enabled && !scene_.Empty()) {
+        const scene::SceneStats stats = scene_.Stats();
+        LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %.0f m extent",
+                stats.buildings, stats.vehicles, stats.trees, stats.chunks,
+                scene_.Extent());
+    }
 }
 
 void Simulation::Reset() {
@@ -64,12 +160,11 @@ void Simulation::Reset() {
     charge.heightOfBurstM = std::max(settings_.heightOfBurstM, 0.0);
 
     blast_.Configure(charge, environment);
-    scene_.Generate(settings_.scene, blast_);
-    if (settings_.scene.enabled && !scene_.Empty()) {
-        const scene::SceneStats stats = scene_.Stats();
-        LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, %.0f m extent",
-                stats.buildings, stats.vehicles, stats.trees, stats.chunks,
-                scene_.Extent());
+    if (asyncScene_) {
+        StartSceneGeneration(settings_.scene, charge, environment);
+    } else {
+        scene_.Generate(settings_.scene, blast_);
+        LogSceneStats();
     }
     particles_.Reset();
     volume_.SetAutoScale(settings_.autoScaleVolume);
@@ -152,7 +247,13 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     }
 
     if (sceneChanged) {
-        scene_.Generate(settings_.scene, blast_);
+        if (asyncScene_) {
+            StartSceneGeneration(settings_.scene, blast_.GetCharge(),
+                                 blast_.GetEnvironment());
+        } else {
+            scene_.Generate(settings_.scene, blast_);
+            LogSceneStats();
+        }
     }
 }
 
@@ -160,6 +261,8 @@ void Simulation::Update(float realDt) {
     if (!initialized_) {
         return;
     }
+
+    PollSceneGeneration();
 
     realDt = std::clamp(realDt, 0.0f, 0.1f);
     realTime_ += realDt;
@@ -226,6 +329,9 @@ void Simulation::AdvanceExternal(double dtSim) {
 }
 
 void Simulation::UpdateScene(double dtSim) {
+    if (sceneGenerating_.load(std::memory_order_acquire)) {
+        return;
+    }
     scene_.Update(blast_, float(dtSim));
 
     const std::vector<scene::SceneDebrisSpawn> spawns = scene_.ConsumeDebrisSpawns();

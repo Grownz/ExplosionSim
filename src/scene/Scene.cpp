@@ -295,7 +295,15 @@ void Scene::Clear() {
     physicsAccumulator_ = 0.0;
 }
 
-void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast) {
+void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast,
+                     const std::function<bool(float)>& progress) {
+    const auto report = [&](float value) {
+        return !progress || progress(std::clamp(value, 0.0f, 1.0f));
+    };
+    if (!report(0.0f)) {
+        return;
+    }
+
     settings_ = settings;
     objects_.clear();
     debrisSpawns_.clear();
@@ -309,6 +317,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     physicsAccumulator_ = 0.0;
 
     if (!settings_.enabled) {
+        report(1.0f);
         return;
     }
 
@@ -336,6 +345,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     const int budget = std::clamp(
         int(800.0 * density * extentScale * extentScale), 0, maxBudget);
     if (budget == 0) {
+        report(1.0f);
         return;
     }
 
@@ -376,6 +386,9 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     const float buildingChance = keepChance(buildingBudget, 0.85f);
     const float vehicleChance = keepChance(vehicleBudget, 0.45f);
     const float treeChance = keepChance(treeBudget, 0.55f);
+    if (!report(0.02f)) {
+        return;
+    }
 
     auto addObject = [&](SceneObjectType type, float x, float z, float yaw,
                          DirectX::XMFLOAT3 size, int variant) {
@@ -453,6 +466,13 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 ++buildings;
             }
         }
+        if (!report(0.03f + 0.73f * float(ix + cells + 1) /
+                                 float(2 * cells + 1))) {
+            return;
+        }
+    }
+    if (!report(0.76f)) {
+        return;
     }
 
     int vehicles = 0;
@@ -485,6 +505,13 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 ++vehicles;
             }
         }
+        if (!report(0.76f + 0.04f * float(ix + cells + 1) /
+                                 float(2 * cells + 1))) {
+            return;
+        }
+    }
+    if (!report(0.81f)) {
+        return;
     }
 
     int trees = 0;
@@ -516,6 +543,13 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 ++trees;
             }
         }
+        if (!report(0.81f + 0.03f * float(ix + cells + 1) /
+                                 float(2 * cells + 1))) {
+            return;
+        }
+    }
+    if (!report(0.85f)) {
+        return;
     }
 
     // Blast shielding: nine rays over the receiver's bounding box, each
@@ -540,11 +574,16 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                                     object.position.z + object.size.z * 0.5f);
         buildingBoxes.push_back(box);
     }
+    if (!report(0.87f)) {
+        return;
+    }
 
     constexpr float kScreeningLength = 3.0f;   // structural screening length, m
     constexpr float kDiffractionLength = 12.0f; // ~c * positive phase, m
     const float groundReflection = std::clamp(settings_.groundReflection, 0.0f, 1.0f);
     const DirectX::XMFLOAT3 burstPoint(0.0f, float(burstHeight), 0.0f);
+    const float objectCount = float(std::max<size_t>(1, objects_.size()));
+    size_t shielded = 0;
 
     for (SceneObject& object : objects_) {
         const DirectX::XMFLOAT3 center(object.position.x, object.size.y * 0.5f,
@@ -608,12 +647,21 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         object.peakOverpressurePa *= factor * reflection;
         object.impulsePaS *= factor * reflection;
         object.thermalFluenceJm2 *= factor;
+
+        if ((++shielded & 63u) == 0u &&
+            !report(0.87f + 0.12f * float(shielded) / objectCount)) {
+            return;
+        }
+    }
+    if (!report(0.99f)) {
+        return;
     }
 
     hash_ = 1469598103934665603ull;
     for (const SceneObject& object : objects_) {
         hash_ = HashObject(hash_, object);
     }
+    report(1.0f);
 }
 
 void Scene::Update(const sim::BlastModel&, float dtSim) {

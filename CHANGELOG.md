@@ -6,6 +6,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- A green loading strip along the bottom edge (5 % of the window height) shows the
+  procedural scene generation progress. The interactive app builds the town on a worker
+  thread and freezes the simulation while loading; headless captures stay synchronous.
+- The on-screen data box now includes the frame rate and lists time, TNT equivalent,
+  shock-front radius and FPS in four rows inside a rounded dark-grey panel that sizes
+  itself to the text.
+
 ### Changed
 
 - High-fidelity mode now forms a mushroom cap instead of a narrow rising column. The
@@ -37,6 +46,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   then indexed the vertex list with a garbage value. Caps are now ordered with precomputed
   angles and a bounded insertion sort, which cannot walk out of bounds. A regression test
   covers the exact 100 kt / seed 1357 cell.
+- High-fidelity auto-scale sometimes did not grow the domain when the smoke or fireball
+  reached the lateral boundary. A zero radius from the reduction could overwrite the last
+  valid value, and the 25 % height floor ignored the visible smoke cap. The reduction now
+  measures dilute smoke above the base surge and dense fireball products below it, ignores
+  the ground layer faded out by the renderer, and never overwrites a valid radius with
+  zero. The analytic cloud is a per-component fallback until that component is measured.
 
 ## [0.4.0] - 2026-10-25
 
