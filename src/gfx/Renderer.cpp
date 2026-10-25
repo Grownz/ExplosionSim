@@ -1111,8 +1111,13 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         shadowConstants_.cascadeSplits.w = farPlane;
 
         // Static world-space map for the intact buildings. It covers the town
-        // and is independent of the camera, so it can be cached across frames.
-        const float staticRadius = std::max(extent * 1.2f, 60.0f) + 20.0f;
+        // and the longest shadows of its tallest buildings, and is independent
+        // of the camera, so it can be cached across frames.
+        const float sunY = std::max(XMVectorGetY(sunDirection), 0.2f);
+        const float shadowLength =
+            30.0f * std::sqrt(std::max(1.0f - sunY * sunY, 0.0f)) / sunY;
+        const float staticRadius =
+            std::max(extent * 1.2f, 60.0f) + 20.0f + shadowLength * 0.5f;
         const XMVECTOR staticCenter = XMVectorSet(0.0f, 15.0f, 0.0f, 1.0f);
         const XMVECTOR staticEye =
             staticCenter + sunDirection * (staticRadius * 2.0f);
@@ -1126,7 +1131,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         shadowConstants_.staticTexel = XMFLOAT4(
             1.0f / float(SceneRenderer::kStaticShadowSize),
             staticRadius * 2.0f / float(SceneRenderer::kStaticShadowSize),
-            0.0006f, 0.0f);
+            0.05f / (staticRadius * 4.0f), 0.0f);
 
         D3D11_MAPPED_SUBRESOURCE shadowMapped{};
         if (SUCCEEDED(context->Map(shadowConstantBuffer_.Get(), 0,
