@@ -12,6 +12,8 @@ namespace ex::scene {
 namespace {
 
 constexpr float kGravity = 9.80665f;
+constexpr float kShockSpeed = 0.5f;
+constexpr bool kShockPropagation = true;
 constexpr float kCellSize = 4.0f;
 constexpr int kGridSlots = 65536;
 
@@ -174,6 +176,7 @@ void PhysicsWorld::Clear() {
     pairs_.clear();
     aabbMin_.clear();
     aabbMax_.clear();
+    shockContacts_.clear();
 }
 
 int PhysicsWorld::AddBody(const RigidBody& body) {
@@ -246,11 +249,13 @@ void PhysicsWorld::Step(float dt) {
     }
 
     BuildBroadphase();
+    shockContacts_.clear();
     for (uint64_t key : pairs_) {
         const int a = int(key >> 32);
         const int b = int(key & 0xFFFFFFFFu);
-        ResolvePair(bodies_[a], bodies_[b]);
+        ResolvePair(a, b);
     }
+    if (kShockPropagation) ShockPropagation();
 
     for (RigidBody& body : bodies_) {
         if (body.sleeping) {
@@ -370,6 +375,68 @@ void PhysicsWorld::BuildBroadphase() {
     pairs_.erase(std::unique(pairs_.begin(), pairs_.end()), pairs_.end());
 }
 
+void PhysicsWorld::ShockPropagation() {
+    // Second pass over the contacts from the ground up. Each upper body is
+    // resolved against the lower body as if it were infinitely massive, which
+    // propagates the support impulse to the top of a stack in one sweep.
+    std::sort(shockContacts_.begin(), shockContacts_.end(),
+              [](const ShockContact& a, const ShockContact& b) {
+                  return a.height < b.height;
+              });
+
+    for (int pass = 0; pass < 3; ++pass) {
+        for (const ShockContact& contact : shockContacts_) {
+            RigidBody& lower = bodies_[contact.bodyA];
+            RigidBody& upper = bodies_[contact.bodyB];
+            if (lower.sleeping && upper.sleeping) {
+                continue;
+            }
+            const XMVECTOR normal = XMLoadFloat3(&contact.normal);
+            const float lowerNormalVelocity =
+                XMVectorGetX(XMVector3Dot(XMLoadFloat3(&lower.velocity), normal));
+            const float upperNormalVelocity =
+                XMVectorGetX(XMVector3Dot(XMLoadFloat3(&upper.velocity), normal));
+            // Resting contacts only: real impacts stay with the normal solver.
+            if (lowerNormalVelocity < -kShockSpeed ||
+                upperNormalVelocity < -kShockSpeed) {
+                continue;
+            }
+
+            const XMMATRIX invInertia = InverseInertiaWorld(upper);
+            XMVECTOR velocity = XMLoadFloat3(&upper.velocity);
+            XMVECTOR omega = XMLoadFloat3(&upper.angularVelocity);
+            const XMVECTOR position = XMLoadFloat3(&upper.position);
+
+            for (int i = 0; i < contact.count; ++i) {
+                const XMVECTOR point = XMLoadFloat3(&contact.points[i]);
+                const XMVECTOR r = point - position;
+                const XMVECTOR pointVelocity = velocity + XMVector3Cross(omega, r);
+                const float normalVelocity =
+                    XMVectorGetX(XMVector3Dot(pointVelocity, normal));
+                if (normalVelocity >= 0.0f) {
+                    continue;
+                }
+                const XMVECTOR rn = XMVector3Cross(r, normal);
+                const float denominator =
+                    upper.invMass +
+                    XMVectorGetX(XMVector3Dot(
+                        rn, XMVector3TransformNormal(rn, invInertia)));
+                if (denominator <= 1e-8f) {
+                    continue;
+                }
+                const float impulse = -normalVelocity / denominator;
+                velocity += normal * (impulse * upper.invMass);
+                omega += XMVector3TransformNormal(rn * impulse, invInertia);
+            }
+
+            XMStoreFloat3(&upper.velocity, velocity);
+            XMStoreFloat3(&upper.angularVelocity, omega);
+            upper.sleepTimer = 0.0f;
+        }
+    }
+
+}
+
 void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
     (void)dt;
 
@@ -459,7 +526,9 @@ void PhysicsWorld::ResolveGround(RigidBody& body, float dt) {
     XMStoreFloat3(&body.angularVelocity, omega);
 }
 
-void PhysicsWorld::ResolvePair(RigidBody& a, RigidBody& b) {
+void PhysicsWorld::ResolvePair(int indexA, int indexB) {
+    RigidBody& a = bodies_[indexA];
+    RigidBody& b = bodies_[indexB];
     const XMVECTOR delta = XMLoadFloat3(&b.position) - XMLoadFloat3(&a.position);
     const float distance = XMVectorGetX(XMVector3Length(delta));
     if (distance > a.boundingRadius + b.boundingRadius) {
@@ -497,6 +566,22 @@ void PhysicsWorld::ResolvePair(RigidBody& a, RigidBody& b) {
     BuildManifold(obbA, obbB, bestAxis, minOverlap, manifold);
     if (manifold.count == 0) {
         return;
+    }
+
+    {
+        ShockContact contact;
+        contact.bodyA = indexA;
+        contact.bodyB = indexB;
+        XMStoreFloat3(&contact.normal, bestAxis);
+        contact.count = std::min(manifold.count, 4);
+        float height = 0.0f;
+        for (int i = 0; i < contact.count; ++i) {
+            XMStoreFloat3(&contact.points[i], manifold.points[i]);
+            height += XMVectorGetY(manifold.points[i]);
+        }
+        contact.height = height / float(contact.count);
+        contact.friction = std::sqrt(a.friction * b.friction);
+        shockContacts_.push_back(contact);
     }
 
     const float totalInv = a.invMass + b.invMass;

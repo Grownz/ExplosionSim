@@ -18,26 +18,27 @@ Target releases: `0.4.0` (phases 1-2), `0.5.0` (phases 3-4), `0.6.0` (phase 5).
   of rotating like cubes.
 - **1.5 Sleeping - unchanged.** The existing per-body sleep is kept. Island
   sleeping was implemented but reverted together with the solver rewrite below.
-- **1.2 / 1.3 - implemented, measured, not shipped.** The complete pipeline was
-  built: clipped four-point manifold, regularised 4x4 block LCP with active-set
-  enumeration, warm starting and split impulse. The LCP is correct (symmetric
-  impulses for a symmetric contact, correct `A * lambda_old` right-hand side), but
-  the acceptance criteria were not met, so the code was reverted. The patch is
-  preserved in `docs/experiments/block-solver.patch`.
+- **1.2 / 1.3 - shock propagation shipped; clipped manifold and block LCP not.**
+  The solver keeps the existing vertex-in-box manifold and sequential impulses.
+  A second **shock-propagation pass** was added: after the normal solve, the
+  contacts are visited from the ground up and each upper body is resolved against
+  the lower one as if it were infinitely massive. The support impulse therefore
+  reaches the top of a stack within one sweep.
 
-### Block solver measurements (2026-10-25)
+### Shock propagation measurements (2026-10-25)
 
-- **Stability:** a tower of eight boxes still sinks ~4 cm per contact and
-  collapses after ~1.5 s. The per-contact solution is exact, but the load needs
-  many Gauss-Seidel sweeps to travel through a chain of contacts; eight to twenty
-  iterations are not enough.
-- **Scene:** rubble does not settle better than with the previous solver
-  (~0.9-1.2 m/s average speed, almost no sleeping bodies). The behaviour is
-  pre-existing, not a regression.
-- **Cost:** density 1 5.2 ms vs 2.2 ms per 1/120 s step, density 3 15.5 ms vs
-  5.8 ms (2.4-2.7x). The matrix inertia and the 4x4 solve per contact dominate.
-- **Conclusion:** the block solver improves contact correctness but not the
-  observable behaviour, at a significant cost. Shipping it would be a regression.
+- **Stack:** an eight-box tower now stays together for ~3.5 s (previously ~1.5 s)
+  and sinks only ~5 cm. Beyond that an accumulated lateral drift and a slow tilt
+  make it topple; the test asserts the stable 2.5 s window.
+- **Scene:** neutral. With a fixed seed (`--scene-seed 1337`, 20 t) the awake
+  count is 1472 vs 1475 bodies with the pass disabled; rubble still does not
+  settle, which is pre-existing.
+- **Cost:** density 3 ~7.0 ms vs 5.8 ms per 1/120 s step (three shock passes,
+  ~20 %). Density 1 stays well inside the frame budget.
+- **Variants tried:** per-point vs centroid application, absolute vs relative
+  target, with and without shock friction, 1/2/3/6 passes. Per-point with an
+  absolute target was the most stable; centroid application and shock friction
+  introduced rocking, the relative target introduced lateral drift.
 
 ### Findings (kept for the next attempt)
 
@@ -50,9 +51,9 @@ Target releases: `0.4.0` (phases 1-2), `0.5.0` (phases 3-4), `0.6.0` (phase 5).
 - Two points leave a box free to rock about the connecting line.
 - The previous solver only looked stable because touching boxes produced a single
   centroid contact (no contact torque).
-- The remaining bottleneck is chain convergence. A future solver should add
-  shock propagation with a contact graph, graph-coloured batching, or switch to
-  XPBD, rather than more Gauss-Seidel iterations.
+- The remaining bottleneck is chain convergence and the lateral drift that
+  accumulates in tall stacks. A future solver should combine shock propagation
+  with a clipped manifold and graph-coloured batching, or switch to XPBD.
 
 ## 0. Baseline and budget
 

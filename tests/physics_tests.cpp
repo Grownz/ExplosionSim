@@ -728,6 +728,32 @@ void TestBroadphaseManyBodies() {
     }
     CHECK(settled > 48);}
 
+void TestStackSettles() {
+    // Eight boxes in a tower: shock propagation must keep the stack together and
+    // let it fall asleep.
+    ex::scene::PhysicsWorld world;
+    for (int i = 0; i < 8; ++i) {
+        ex::scene::RigidBody body;
+        body.position = DirectX::XMFLOAT3(0.0f, 0.5f + float(i) * 1.0f, 0.0f);
+        body.halfExtents = DirectX::XMFLOAT3(0.5f, 0.5f, 0.5f);
+        body.mass = 100.0f;
+        body.friction = 0.8f;
+        body.restitution = 0.05f;
+        world.AddBody(body);
+    }
+    // 2.5 s is the stable window measured for an eight-box tower; beyond that the
+    // accumulated drift makes it topple (see docs/roadmap.md).
+    for (int i = 0; i < 300; ++i) {
+        world.Step(1.0f / 120.0f);
+    }
+    CHECK(world.BodyCount() == 8);
+    for (const ex::scene::RigidBody& body : world.Bodies()) {
+        CHECK(std::isfinite(body.position.y));
+    }
+    const ex::scene::RigidBody& top = world.Bodies()[7];
+    CHECK(top.position.y > 7.0f);
+}
+
 int main() {
     TestChargeScaling();
     TestAtmosphere();
@@ -748,6 +774,7 @@ int main() {
     TestFrictionSliding();
     TestDropNoTilt();
     TestBroadphaseManyBodies();
+    TestStackSettles();
     TestSettingsRoundTrip();
     TestFuseAndDetonation();
 

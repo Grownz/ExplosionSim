@@ -31,6 +31,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   dropped from ~13.7 ms to ~5.8 ms.
 - Analytic box inertia tensor. Ground and body-body contacts use the world-space inverse
   inertia, so long chunks tumble instead of rotating like cubes.
+- Shock-propagation pass for the rigid-body solver: after the normal solve, contacts are
+  visited from the ground up and each upper body is resolved against the lower one as if
+  it were infinitely massive. An eight-box tower now stays together for ~3.5 s instead of
+  ~1.5 s, at roughly 20 % extra solver cost.
 
 ### Fixed
 

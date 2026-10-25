@@ -46,9 +46,22 @@ private:
         int head = -1;
     };
 
+    // Contact data kept after the pair solve so the shock-propagation pass can
+    // re-solve each contact with the lower body treated as static.
+    struct ShockContact {
+        int bodyA = -1;
+        int bodyB = -1;
+        DirectX::XMFLOAT3 normal{0.0f, 1.0f, 0.0f};
+        DirectX::XMFLOAT3 points[4]{};
+        int count = 0;
+        float height = 0.0f;
+        float friction = 0.6f;
+    };
+
     void BuildBroadphase();
+    void ShockPropagation();
     void ResolveGround(RigidBody& body, float dt);
-    void ResolvePair(RigidBody& a, RigidBody& b);
+    void ResolvePair(int indexA, int indexB);
 
     std::vector<RigidBody> bodies_;
 
@@ -60,6 +73,7 @@ private:
     std::vector<uint64_t> pairs_;
     std::vector<DirectX::XMFLOAT3> aabbMin_;
     std::vector<DirectX::XMFLOAT3> aabbMax_;
+    std::vector<ShockContact> shockContacts_;
 };
 
 } // namespace ex::scene
