@@ -134,7 +134,7 @@ int ParticleSystem::AcquireSlot(ParticleKind kind) {
     return slot;
 }
 
-void ParticleSystem::Detonate(const BlastModel& model) {
+void ParticleSystem::Detonate(const BlastModel& model, bool spawnBlastParticles) {
     const BlastState& state = model.State();
     detonationTime_ = float(state.time);
 
@@ -143,6 +143,12 @@ void ParticleSystem::Detonate(const BlastModel& model) {
     sizeScale_ = float(std::clamp(model.FireballMaxRadiusM() / 10.45, 0.05, 1.0));
     const float massRatio = float(model.GetCharge().tntMassKg / 20000.0);
     countScale_ = std::clamp(std::pow(massRatio, 0.35f), 0.25f, 1.0f);
+
+    if (!spawnBlastParticles) {
+        // High-fidelity mode: the Euler solver supplies the fireball and
+        // smoke; only scene fires on burning objects are rendered.
+        return;
+    }
 
     SpawnDebris(model, int(float(rangeEnd_[int(ParticleKind::Debris)]) * 0.85f * countScale_));
     SpawnSparks(model, int(float(rangeEnd_[int(ParticleKind::Spark)]) * 0.75f * countScale_));
@@ -422,7 +428,8 @@ void ParticleSystem::UpdateSpawners(float dt, const BlastModel& model) {
     (void)burst;
 }
 
-void ParticleSystem::Update(float dt, const BlastModel& model, core::ThreadPool& pool) {
+void ParticleSystem::Update(float dt, const BlastModel& model, core::ThreadPool& pool,
+                            bool spawnBlastParticles) {
     if (dt <= 0.0f) {
         return;
     }
@@ -430,7 +437,9 @@ void ParticleSystem::Update(float dt, const BlastModel& model, core::ThreadPool&
     const BlastState& state = model.State();
     const Environment& env = model.GetEnvironment();
 
-    UpdateSpawners(dt, model);
+    if (spawnBlastParticles) {
+        UpdateSpawners(dt, model);
+    }
 
     Forces forces{};
     forces.wind = XMFLOAT3(float(env.WindX()), 0.0f, float(env.WindZ()));

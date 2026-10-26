@@ -26,7 +26,8 @@ start-up at 0.4 m above the ground**.
 - **Cinematic particles** – instanced billboards for glowing debris, sparks,
   soot and shock-driven ground dust. Fire is rendered by a GPU flame shader that adds
   fbm turbulence, a heat ramp and soft depth fading in one instanced draw call; burning
-  objects spawn their flames on the visible canopy or roof surface.
+  objects spawn their flames on the visible canopy or roof surface and keep them in both
+  render modes.
 - **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
   1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
   pressure waveform.

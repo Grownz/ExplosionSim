@@ -328,7 +328,9 @@ generation hash exposed for tests.
 - The reduced-order model still advances, but its time is driven by the solver's
   simulated advance (`Simulation::AdvanceExternal`), so the camera, fireball light and
   readouts stay in sync.
-- Particle rendering is skipped in this mode: the volume is the physical solution.
+- The analytic blast particle batches are skipped in this mode: the volume is the
+  physical solution. Scene fires on burning objects are still simulated and rendered,
+  because the analytic blast model drives the scene damage in both modes.
 - `Renderer::PrepareHighFidelity` advances the solver to an exact target time for
   deterministic headless captures.
 - The UI shows solver time, time step, maximum signal speed and total steps.

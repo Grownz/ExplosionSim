@@ -206,7 +206,7 @@ void Simulation::Detonate() {
 
     blast_.Reset();
     particles_.Reset();
-    particles_.Detonate(blast_);
+    particles_.Detonate(blast_, settings_.mode == SimulationMode::ReducedOrder);
     volume_.SetResolution(settings_.volumeResolution);
     volume_.Reset();
 
@@ -297,9 +297,8 @@ void Simulation::Update(float realDt) {
     if (dtSim > 0.0) {
         blast_.Advance(dtSim);
         UpdateScene(dtSim);
-        if (settings_.mode == SimulationMode::ReducedOrder) {
-            particles_.Update(float(dtSim), blast_, *pool_);
-        }
+        particles_.Update(float(dtSim), blast_, *pool_,
+                          settings_.mode == SimulationMode::ReducedOrder);
     }
 
     if (settings_.loop && blast_.State().time > settings_.loopDurationS) {
@@ -328,9 +327,8 @@ void Simulation::StepFixed(double dtSim) {
 
     blast_.Advance(dtSim);
     UpdateScene(dtSim);
-    if (settings_.mode == SimulationMode::ReducedOrder) {
-        particles_.Update(float(dtSim), blast_, *pool_);
-    }
+    particles_.Update(float(dtSim), blast_, *pool_,
+                      settings_.mode == SimulationMode::ReducedOrder);
     volume_.Poll();
     realTime_ += dtSim;
 }
@@ -342,9 +340,8 @@ void Simulation::AdvanceExternal(double dtSim, double realDt) {
 
     blast_.Advance(dtSim);
     UpdateScene(dtSim);
-    if (settings_.mode == SimulationMode::ReducedOrder) {
-        particles_.Update(float(dtSim), blast_, *pool_);
-    }
+    particles_.Update(float(dtSim), blast_, *pool_,
+                      settings_.mode == SimulationMode::ReducedOrder);
     realTime_ += realDt >= 0.0 ? realDt : dtSim;
 }
 
@@ -356,13 +353,14 @@ void Simulation::UpdateScene(double dtSim) {
 
     const std::vector<scene::SceneDebrisSpawn> spawns = scene_.ConsumeDebrisSpawns();
     const std::vector<scene::SceneFireSpawn> fires = scene_.ConsumeFireSpawns();
-    if (settings_.mode != SimulationMode::ReducedOrder) {
-        return;
+    if (settings_.mode == SimulationMode::ReducedOrder) {
+        for (const scene::SceneDebrisSpawn& spawn : spawns) {
+            particles_.SpawnSceneDebris(spawn.position, spawn.count, spawn.scale,
+                                        spawn.speed);
+        }
     }
-    for (const scene::SceneDebrisSpawn& spawn : spawns) {
-        particles_.SpawnSceneDebris(spawn.position, spawn.count, spawn.scale,
-                                    spawn.speed);
-    }
+    // Scene fires are a cosmetic overlay on burning objects and are shown in
+    // both modes; the high-fidelity solver only replaces the blast particles.
     for (const scene::SceneFireSpawn& fire : fires) {
         particles_.SpawnSceneFire(fire.position, fire.count, fire.scale);
     }

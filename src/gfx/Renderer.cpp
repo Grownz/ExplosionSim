@@ -1075,9 +1075,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     if (!highFidelity) {
         UploadParticles(simulation.Particles().AdditiveBatch(), particleBufferAdditive_);
-        UploadParticles(simulation.Particles().FireBatch(), particleBufferFire_);
         UploadParticles(simulation.Particles().AlphaBatch(), particleBufferAlpha_);
     }
+    // Scene fires are rendered in both modes; in high-fidelity mode the batch
+    // contains only the fires on burning scene objects.
+    UploadParticles(simulation.Particles().FireBatch(), particleBufferFire_);
 
     if (frameIndex_ == 0) {
         const auto& state = simulation.Blast().State();
@@ -1304,7 +1306,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     info_.additiveParticles =
         highFidelity ? 0 : int(simulation.Particles().AdditiveBatch().size());
-    info_.fireParticles = highFidelity ? 0 : int(simulation.Particles().FireBatch().size());
+    info_.fireParticles = int(simulation.Particles().FireBatch().size());
     info_.alphaParticles =
         highFidelity ? 0 : int(simulation.Particles().AlphaBatch().size());
     info_.raymarchSteps = settings.raymarchSteps;
@@ -1363,8 +1365,9 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     }
 
     // --- Particles ---------------------------------------------------------
-    // Turbulent flame tongues on top of the fireball volume.
-    if (!highFidelity && settings.enableParticles && info_.fireParticles > 0) {
+    // Turbulent flame tongues on top of the fireball volume, plus scene fires on
+    // burning objects in both render modes.
+    if (settings.enableParticles && info_.fireParticles > 0) {
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);

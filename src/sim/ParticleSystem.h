@@ -41,8 +41,9 @@ class ParticleSystem {
 public:
     void Initialize(int capacity);
     void Reset();
-    void Detonate(const BlastModel& model);
-    void Update(float dt, const BlastModel& model, core::ThreadPool& pool);
+    void Detonate(const BlastModel& model, bool spawnBlastParticles = true);
+    void Update(float dt, const BlastModel& model, core::ThreadPool& pool,
+                bool spawnBlastParticles = true);
 
     // Spawns a generic debris burst for a damaged scene object (main thread).
     void SpawnSceneDebris(const DirectX::XMFLOAT3& center, int count, float sizeScale,

@@ -37,9 +37,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Burning trees and vehicles now show flames. Fire is spawned on the visible canopy rim
-  or roof surface instead of inside the mesh, where the soft depth fade hid it, and the
-  spawn point follows the current rigid-body pose of thrown objects.
+- Burning trees and vehicles now show flames in both render modes. Fire is spawned on
+  the visible canopy rim or roof surface instead of inside the mesh, where the soft depth
+  fade hid it, and the spawn point follows the current rigid-body pose of thrown objects.
+  The high-fidelity mode no longer drops the scene fire batch.
 
 ## [0.5.5] - 2026-10-26
 
