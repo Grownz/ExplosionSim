@@ -15,6 +15,7 @@ namespace ex::gfx {
 struct EulerConfig {
     int resolution = 128;
     double domainHalfExtent = 2.1;
+    bool hemispherical = false;
     double chargeMassKg = 0.2;
     double chargeEnergyJ = 8.37e5;
     double heightOfBurstM = 0.4;
@@ -42,6 +43,7 @@ struct SolverStats {
     int expansions = 0;
     float plumeTop = 0.0f;
     float plumeRadius = 0.0f;
+    float plumeDomeFraction = 0.0f;
     bool fieldBoundsValid = false;
 };
 
@@ -86,6 +88,7 @@ public:
     bool HasFieldBounds() const { return stats_.fieldBoundsValid; }
     float FieldTop() const { return stats_.plumeTop; }
     float FieldRadius() const { return stats_.plumeRadius; }
+    float FieldDomeFraction() const { return stats_.plumeDomeFraction; }
 
 private:
     struct Constants {

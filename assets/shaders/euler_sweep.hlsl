@@ -13,6 +13,13 @@ void CSSweep(uint3 id : SV_DispatchThreadID)
     const int3 offset = dir == 0 ? int3(1, 0, 0) : (dir == 1 ? int3(0, 1, 0) : int3(0, 0, 1));
     const int3 cell = int3(id);
 
+    if (!IsActiveCell(cell))
+    {
+        OutA[id] = float4(Ambient.x, 0.0, 0.0, 0.0);
+        OutB[id] = float4(Ambient.y / (Ambient.w - 1.0), 0.0, 0.0, 1.0);
+        return;
+    }
+
     Primitive wm2 = LoadPrimitive(cell - 2 * offset);
     Primitive wm1 = LoadPrimitive(cell - offset);
     Primitive w0 = LoadPrimitive(cell);

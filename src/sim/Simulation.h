@@ -42,6 +42,7 @@ struct SimulationSettings {
     int solverResolution = 128;
     int solverStepsPerFrame = 96; // max solver steps per rendered frame
     bool solverAutoScale = true;
+    bool solverHemisphere = false;
 
     // Performance
     int particleBudget = 40000;

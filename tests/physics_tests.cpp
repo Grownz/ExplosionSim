@@ -532,6 +532,7 @@ void TestSettingsRoundTrip() {
     original.simulation.solverResolution = 96;
     original.simulation.solverStepsPerFrame = 12;
     original.simulation.solverAutoScale = false;
+    original.simulation.solverHemisphere = true;
     original.simulation.loop = true;
     original.simulation.particleBudget = 12345;
     original.simulation.volumeResolution = 96;
@@ -584,6 +585,7 @@ void TestSettingsRoundTrip() {
     CHECK(loaded.simulation.solverResolution == 96);
     CHECK(loaded.simulation.solverStepsPerFrame == 12);
     CHECK(!loaded.simulation.solverAutoScale);
+    CHECK(loaded.simulation.solverHemisphere);
     CHECK(loaded.simulation.loop);
     CHECK(loaded.simulation.particleBudget == 12345);
     CHECK(loaded.simulation.volumeResolution == 96);

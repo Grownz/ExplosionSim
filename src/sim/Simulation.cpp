@@ -228,6 +228,8 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool modeChanged = settings_.mode != settings.mode;
     const bool solverResolutionChanged =
         settings_.solverResolution != settings.solverResolution;
+    const bool solverDomainChanged =
+        settings_.solverHemisphere != settings.solverHemisphere;
     const bool autoScaleChanged = settings_.autoScaleVolume != settings.autoScaleVolume;
 
     settings_ = settings;
@@ -244,7 +246,7 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
         particles_.Initialize(settings_.particleBudget);
     }
     if (physicsChanged || budgetChanged || fuseChanged || modeChanged ||
-        solverResolutionChanged) {
+        solverResolutionChanged || solverDomainChanged) {
         Reset();
         return;
     }

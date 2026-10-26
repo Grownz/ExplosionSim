@@ -410,10 +410,17 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
                  gfx::Renderer& renderer, UiActions& actions) {
     SectionHeader("SIMULATION MODEL");
 
-    int mode = int(settings.simulation.mode);
-    const char* modeLabels[] = {"Reduced-order (analytic)", "High-fidelity (GPU Euler)"};
-    if (ImGui::Combo("Model", &mode, modeLabels, 2)) {
-        settings.simulation.mode = sim::SimulationMode(mode);
+    int modelIndex = int(settings.simulation.mode) == 0
+                         ? 0
+                         : (settings.simulation.solverHemisphere ? 2 : 1);
+    const char* modeLabels[] = {"Reduced-order (analytic)",
+                                "High-fidelity (cube)",
+                                "High-fidelity (hemisphere)"};
+    if (ImGui::Combo("Model", &modelIndex, modeLabels, 3)) {
+        settings.simulation.mode =
+            modelIndex == 0 ? sim::SimulationMode::ReducedOrder
+                            : sim::SimulationMode::HighFidelity;
+        settings.simulation.solverHemisphere = modelIndex == 2;
         actions.applySimulationSettings = true;
     }
 
@@ -442,6 +449,11 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
         if (ImGui::Checkbox("Solver auto-scale", &settings.simulation.solverAutoScale)) {
             actions.applySimulationSettings = true;
         }
+        if (settings.simulation.solverHemisphere) {
+            Hint("Hemisphere mode masks the Cartesian solver volume to a semi-ellipsoidal "
+                 "dome. The 3D texture stays cubic, so memory use is unchanged; the dome "
+                 "uses the radial sponge and auto-scale.");
+        }
 
         if (settings.simulation.solverResolution >= 256) {
             Hint("Solver grids of 256³ and 512³ need several GB of VRAM and are not "
@@ -461,6 +473,9 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
         if (stats.fieldBoundsValid) {
             Readout("Plume top", "%.2f m", stats.plumeTop);
             Readout("Plume radius", "%.2f m", stats.plumeRadius);
+            if (settings.simulation.solverHemisphere) {
+                Readout("Dome fill", "%.2f", stats.plumeDomeFraction);
+            }
             if (stats.plumeTop > stats.domainTop * 0.9f) {
                 Hint("The plume is close to the top of the solver domain. Auto-scale "
                      "expands it until the accuracy factor reaches x16.");

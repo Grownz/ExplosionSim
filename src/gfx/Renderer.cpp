@@ -735,6 +735,7 @@ EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
     // Scale the cube with the charge: the old 30 m cap made large charges use
     // a tiny high-fidelity domain.
     config.domainHalfExtent = std::clamp(3.0 * fireball, 1.0, 2000.0);
+    config.hemispherical = simulation.Settings().solverHemisphere;
     config.chargeMassKg = std::max(charge.tntMassKg, 1e-6);
     config.chargeEnergyJ = charge.EnergyJ();
     config.heightOfBurstM =
@@ -772,6 +773,7 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
 
     double requiredHalf = analyticHalf;
     double requiredTop = analyticTop;
+    double measuredDome = 0.0;
     if (solver_.HasFieldBounds()) {
         const double measuredRadius = double(solver_.FieldRadius());
         const double measuredTop = double(solver_.FieldTop());
@@ -781,7 +783,9 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
         if (measuredTop > 0.0) {
             requiredTop = std::max(measuredTop * kFieldMargin, 1.0);
         }
+        measuredDome = double(solver_.FieldDomeFraction());
     }
+    const bool hemisphere = simulation.Settings().solverHemisphere;
 
     // A single 1.3x step is not always enough after a fast plume rise, so keep
     // expanding until the field fits with margin (or the accuracy budget is
@@ -792,7 +796,8 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
         const double top = bounds.max.y;
         const bool tooWide = requiredHalf > half * kTriggerFraction;
         const bool tooTall = requiredTop > top * kTriggerFraction;
-        if (!tooWide && !tooTall) {
+        const bool tooDome = hemisphere && measuredDome > kTriggerFraction;
+        if (!tooWide && !tooTall && !tooDome) {
             break;
         }
         if (solver_.Stats().accuracyFactor >= kMaxAccuracy) {

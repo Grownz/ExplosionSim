@@ -4,12 +4,13 @@
 //   [0] = max signal speed        (float bits)
 //   [1] = max product height      (fixed point, 1/512 m)
 //   [2] = max product radius      (fixed point, 1/512 m)
-//   [3] = reserved
+//   [3] = max normalized dome fill (fixed point, 1/512)
 RWStructuredBuffer<uint> ReduceOutput : register(u2);
 
 groupshared uint gMaxSpeed;
 groupshared uint gMaxHeight;
 groupshared uint gMaxRadius;
+groupshared uint gMaxDome;
 
 static const float kBoundScale = 512.0;
 static const float kHeightThreshold = 0.004;
@@ -40,18 +41,20 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
         gMaxSpeed = 0;
         gMaxHeight = 0;
         gMaxRadius = 0;
+        gMaxDome = 0;
     }
     GroupMemoryBarrierWithGroupSync();
 
     float speed = 0.0;
     uint height = 0;
     uint radius = 0;
+    uint dome = 0;
 
     const float domainHeight = max(DomainMax.y - DomainMin.y, 1e-3);
     const float lowFloor = max(kGroundFadeVoxels * DomainMin.w, kLowLayerFraction * domainHeight);
     const float upperFloor = kRadiusHeightFraction * domainHeight;
 
-    if (all(id < (uint3)Grid.xyz))
+    if (all(id < (uint3)Grid.xyz) && IsActiveCell(int3(id)))
     {
         float4 a = StateA.Load(int4(id, 0));
         float4 b = StateB.Load(int4(id, 0));
@@ -77,6 +80,10 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
             if (aboveBaseSurge || b.y > kFireballThreshold)
             {
                 radius = Quantize(max(abs(world.x), abs(world.z)));
+                if (IsHemispherical())
+                {
+                    dome = Quantize(DomainFraction(world));
+                }
             }
         }
     }
@@ -84,6 +91,7 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
     InterlockedMax(gMaxSpeed, asuint(speed));
     InterlockedMax(gMaxHeight, height);
     InterlockedMax(gMaxRadius, radius);
+    InterlockedMax(gMaxDome, dome);
     GroupMemoryBarrierWithGroupSync();
 
     if (localIndex == 0)
@@ -91,5 +99,6 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
         InterlockedMax(ReduceOutput[0], gMaxSpeed);
         InterlockedMax(ReduceOutput[1], gMaxHeight);
         InterlockedMax(ReduceOutput[2], gMaxRadius);
+        InterlockedMax(ReduceOutput[3], gMaxDome);
     }
 }

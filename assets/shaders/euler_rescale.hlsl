@@ -12,6 +12,13 @@ void CSRescale(uint3 id : SV_DispatchThreadID)
         return;
     }
 
+    if (!IsActiveCell(int3(id)))
+    {
+        OutA[id] = float4(Ambient.x, 0.0, 0.0, 0.0);
+        OutB[id] = float4(Ambient.y / (Ambient.w - 1.0), 0.0, 0.0, 1.0);
+        return;
+    }
+
     float3 world = DomainMin.xyz + (float3(id) + 0.5) * DomainMin.w;
     float3 oldSize = OldDomainMax.xyz - OldDomainMin.xyz;
     float3 uv = (world - OldDomainMin.xyz) / max(oldSize, 1e-5);

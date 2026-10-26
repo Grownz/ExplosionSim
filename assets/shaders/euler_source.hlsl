@@ -18,6 +18,13 @@ void CSSource(uint3 id : SV_DispatchThreadID)
         return;
     }
 
+    if (!IsActiveCell(int3(id)))
+    {
+        OutA[id] = float4(Ambient.x, 0.0, 0.0, 0.0);
+        OutB[id] = float4(Ambient.y / (Ambient.w - 1.0), 0.0, 0.0, 1.0);
+        return;
+    }
+
     float4 a = StateA.Load(int4(id, 0));
     float2 b = StateB.Load(int4(id, 0)).xy;
 
@@ -85,13 +92,23 @@ void CSSource(uint3 id : SV_DispatchThreadID)
     b.y = soot;
 
     // --- Open-boundary sponge --------------------------------------------
-    float3 extent = max(DomainMax.xyz - DomainMin.xyz, 1e-4);
-    float3 rel = (world - DomainMin.xyz) / extent;
-    float lateral = min(min(rel.x, 1.0 - rel.x), min(rel.z, 1.0 - rel.z));
-    float toTop = 1.0 - rel.y;
-    float edge = min(lateral, toTop);
-    float ramp = saturate(1.0 - edge / kSpongeWidth);
-    float blend = saturate(kSpongeRate * ramp * ramp * DomainMax.w);
+    float blend = 0.0;
+    if (IsHemispherical())
+    {
+        const float q = DomainFraction(world);
+        const float ramp = saturate((q - (1.0 - kSpongeWidth)) / kSpongeWidth);
+        blend = saturate(kSpongeRate * ramp * ramp * DomainMax.w);
+    }
+    else
+    {
+        float3 extent = max(DomainMax.xyz - DomainMin.xyz, 1e-4);
+        float3 rel = (world - DomainMin.xyz) / extent;
+        float lateral = min(min(rel.x, 1.0 - rel.x), min(rel.z, 1.0 - rel.z));
+        float toTop = 1.0 - rel.y;
+        float edge = min(lateral, toTop);
+        float ramp = saturate(1.0 - edge / kSpongeWidth);
+        blend = saturate(kSpongeRate * ramp * ramp * DomainMax.w);
+    }
 
     if (blend > 1e-5)
     {

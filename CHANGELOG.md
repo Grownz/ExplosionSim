@@ -10,6 +10,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - A **Max FPS** dropdown in the Performance panel with 30, 60, 90, 120 and 144 fps caps.
   The wait is included in the wall-clock frame delta used by the high-fidelity target.
+- The high-fidelity **Model** menu now offers a **hemisphere** domain in addition to the
+  cube. It masks the existing Cartesian volume to a semi-ellipsoidal dome with a radial
+  sponge and normalized auto-scale; the cubic texture/memory layout is unchanged.
 
 ### Changed
 

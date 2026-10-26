@@ -12,6 +12,12 @@ void CSRender(uint3 id : SV_DispatchThreadID)
         return;
     }
 
+    if (!IsActiveCell(int3(id)))
+    {
+        RenderVolume[id] = float4(0.0, 0.0, 0.0, 0.0);
+        return;
+    }
+
     float4 a = StateA.Load(int4(id, 0));
     float4 b = StateB.Load(int4(id, 0));
 

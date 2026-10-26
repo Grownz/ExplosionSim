@@ -50,7 +50,7 @@ start-up at 0.4 m above the ground**.
   under *Performance → Max FPS*.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
   MUSCL reconstruction, CFL-adaptive time step) runs on the GPU at 64³–128³ and drives
-  the volumetric field. Selectable under *Physics & Effects → Simulation model*.
+  the volumetric field. Selectable under *Physics & Effects → Simulation model* in cube or hemisphere mode.
 - **2 s fuse** – the charge is armed on start-up, a countdown is shown, then the
   detonation is simulated in adjustable slow motion (time scale; 1.0 = real time). The
   high-fidelity solver follows the same playback scale.
@@ -187,7 +187,9 @@ range.
 
 The high-fidelity mode is a genuine finite-volume Euler solution for the blast, with a
 sub-grid entrainment and vortex-ring closure for the mushroom cap that the coarse grid
-cannot resolve. It follows the playback time scale: at 1.0 the solver advances one
+cannot resolve. The domain can be a cube or a masked hemisphere: the hemisphere keeps the
+uniform Cartesian grid and only excludes the corners, so memory use is unchanged. It
+follows the playback time scale: at 1.0 the solver advances one
 simulated second per real second. The CFL step adapts to the grid (up to 1 ms), so coarse
 auto-scaled grids can keep up; fine grids or large charges lower the frame rate. Particle
 rendering is disabled in this mode because the volume is the physical solution. For a
@@ -206,6 +208,8 @@ High-fidelity settings (Physics & Effects panel):
   of VRAM and are not real-time)
 - Max solver steps per frame: 8–256 (the playback time scale is the target; lower
   caps keep the frame rate up but play the explosion slower)
+- Domain shape: cube or hemisphere (the hemisphere masks the Cartesian volume to a
+  semi-ellipsoidal dome; the cubic texture/memory layout is unchanged)
 - Domain: six times the analytic fireball radius (half extent 3×), cubic, with a
   reflecting ground and an absorbing sponge at the lateral/top boundaries
 - Uses the moist-air density and virtual temperature; wind drifts the rendered volume

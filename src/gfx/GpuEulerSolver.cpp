@@ -232,7 +232,8 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
                                  depositRadius_, float(config_.heightOfBurstM));
     constants_.physics = XMFLOAT4(float(config_.gravity), float(config_.gasConstant), kCooling,
                                   float(time_));
-    constants_.extra = XMFLOAT4(plumeRadius_, plumeCenterY_, 0.0f, 0.0f);
+    constants_.extra = XMFLOAT4(plumeRadius_, plumeCenterY_,
+                                config_.hemispherical ? 1.0f : 0.0f, 0.0f);
     constants_.oldDomainMin =
         XMFLOAT4(oldBounds_.min.x, oldBounds_.min.y, oldBounds_.min.z, oldDx_);
     constants_.oldDomainMax =
@@ -369,6 +370,9 @@ void GpuEulerSolver::ConsumeStaging() {
     }
     if (values[2] > 0) {
         stats_.plumeRadius = float(values[2]) / kBoundScale;
+    }
+    if (values[3] > 0) {
+        stats_.plumeDomeFraction = float(values[3]) / kBoundScale;
     }
     if (values[1] > 0 || values[2] > 0) {
         stats_.fieldBoundsValid = true;

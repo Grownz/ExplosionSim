@@ -155,7 +155,7 @@ step size is
 dt = CFL * dx / max(|v| + c),   CFL = 0.20
 ```
 
-clamped to `[0.1 us, 50 us]`. A batch is split into sub-batches of 8 steps so a rising
+clamped to `[0.1 us, 1 ms]`. A batch is split into sub-batches of 8 steps so a rising
 maximum signal speed is picked up without a long CFL overshoot. At start-up a
 conservative 4000 m/s is assumed until the first reduction result is available.
 
@@ -167,6 +167,17 @@ is a reflecting wall implemented by mirroring the ghost cell and reversing the v
 momentum. The lateral and top boundaries use zero-gradient ghost cells plus an absorbing
 sponge over the outer 6 % of the domain, which relaxes the state towards ambient so
 outgoing acoustic waves do not reflect back into the plume.
+
+### Domain shape
+
+The high-fidelity solver keeps its uniform Cartesian grid. `solverHemisphere` masks the
+active cells to a semi-ellipsoid with lateral radius `0.5 * (max.x - min.x)` and vertical
+semi-axis `max.y`; the ground remains the reflecting plane. Cells outside the mask are
+filled with ambient air, the sweep/source/render passes early-out, and the curved boundary
+uses the radial sponge. The reduction reports a normalized dome fill and the auto-scale
+expands when it approaches 78 %. The 3D texture stays cubic, so memory use is unchanged;
+the boundary is stair-stepped at voxel resolution. The Model menu selects cube or
+hemisphere.
 
 ### Sub-grid cap closure
 

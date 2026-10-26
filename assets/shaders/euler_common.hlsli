@@ -48,6 +48,58 @@ int3 ClampCell(int3 p)
     return clamp(p, int3(0, 0, 0), Grid.xyz - 1);
 }
 
+// --- Domain shape -------------------------------------------------------
+// Cube (default): the whole Cartesian box is active.
+// Hemisphere: the box is masked to a semi-ellipsoid with the lateral radius
+// 0.5 * (max.x - min.x) and the vertical semi-axis max.y. This keeps the
+// uniform Cartesian grid and its CFL behaviour, but treats the corners as
+// ambient/absorbing. The mask is normalized, so it scales with auto-scale.
+bool IsHemispherical()
+{
+    return Extra.z > 0.5;
+}
+
+float DomainLateralHalf()
+{
+    return max(0.5 * (DomainMax.x - DomainMin.x), 1e-3);
+}
+
+float DomainFractionSquared(float3 world)
+{
+    const float halfX = DomainLateralHalf();
+    const float top = max(DomainMax.y, 1e-3);
+    const float centerX = 0.5 * (DomainMin.x + DomainMax.x);
+    const float centerZ = 0.5 * (DomainMin.z + DomainMax.z);
+    const float x = (world.x - centerX) / halfX;
+    const float z = (world.z - centerZ) / halfX;
+    const float y = world.y / top;
+    return x * x + y * y + z * z;
+}
+
+float DomainFraction(float3 world)
+{
+    return sqrt(DomainFractionSquared(world));
+}
+
+bool IsActiveWorld(float3 world)
+{
+    if (!IsHemispherical())
+    {
+        return true;
+    }
+    return world.y >= 0.0 && DomainFractionSquared(world) <= 1.0;
+}
+
+bool IsActiveCell(int3 p)
+{
+    if (!IsHemispherical())
+    {
+        return true;
+    }
+    const float3 world = DomainMin.xyz + (float3(p) + 0.5) * DomainMin.w;
+    return IsActiveWorld(world);
+}
+
 // Ground (y = 0) is a reflecting wall: mirror the ghost cell and reverse the
 // vertical momentum. x/z and the top boundary are zero-gradient outflows.
 float4 LoadA(int3 p)
@@ -57,7 +109,12 @@ float4 LoadA(int3 p)
     {
         p.y = -p.y - 1;
     }
-    float4 state = StateA.Load(int4(ClampCell(p), 0));
+    const int3 cell = ClampCell(p);
+    if (!IsActiveCell(cell))
+    {
+        return float4(Ambient.x, 0.0, 0.0, 0.0);
+    }
+    float4 state = StateA.Load(int4(cell, 0));
     if (reflected)
     {
         state.z = -state.z;
@@ -71,7 +128,12 @@ float4 LoadB(int3 p)
     {
         p.y = -p.y - 1;
     }
-    return StateB.Load(int4(ClampCell(p), 0));
+    const int3 cell = ClampCell(p);
+    if (!IsActiveCell(cell))
+    {
+        return float4(Ambient.y / (Ambient.w - 1.0), 0.0, 0.0, 1.0);
+    }
+    return StateB.Load(int4(cell, 0));
 }
 
 Primitive LoadPrimitive(int3 p)
