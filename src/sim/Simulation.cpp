@@ -25,6 +25,7 @@ bool SceneChanged(const SimulationSettings& a, const SimulationSettings& b) {
            a.scene.vehicles != b.scene.vehicles ||
            a.scene.vegetation != b.scene.vegetation ||
            a.scene.quality != b.scene.quality ||
+           a.scene.chunkScale != b.scene.chunkScale ||
            a.scene.voronoiChunks != b.scene.voronoiChunks;
 }
 

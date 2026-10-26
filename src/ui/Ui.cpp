@@ -413,12 +413,27 @@ void DrawEnvironment(app::AppSettings& settings, const sim::Simulation& simulati
                           "Disable to use the cheaper jittered grid instead.");
     }
 
+    ImGui::BeginDisabled(!scene.voronoiChunks);
+    float chunkScale = scene.chunkScale;
+    if (ImGui::SliderFloat("Chunk size", &chunkScale, 0.25f, 2.0f, "%.2fx",
+                           ImGuiSliderFlags_Logarithmic)) {
+        scene.chunkScale = chunkScale;
+    }
+    // Rebuild once when the drag ends instead of on every intermediate frame.
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        actions.applySimulationSettings = true;
+    }
+    ImGui::EndDisabled();
+    Hint("Average Voronoi chunk size: 0.25x = four times smaller, 2x = twice as "
+         "large. Very small chunks are limited by the per-building cell cap.");
+
     if (ImGui::Button("Regenerate scene")) {
         scene.seed += 1;
         actions.applySimulationSettings = true;
     }
 
     Readout("Objects", "%d", int(simulation.Scene().Objects().size()));
+    Readout("Chunks", "%d", simulation.Scene().Stats().chunks);
     Readout("Scene radius", "%.0f m", simulation.Scene().Extent());
     Hint("Buildings, vehicles and trees are generated deterministically around ground "
          "zero. The scene reacts to the analytic blast field.");
@@ -590,6 +605,22 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
                        ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("Bloom strength", &render.bloomStrength, 0.0f, 1.5f, "%.2f");
     ImGui::SliderInt("Ray steps", &render.raymarchSteps, 24, 192);
+
+    static const int kAnisoValues[] = {0, 2, 4, 8};
+    static const char* kAnisoLabels[] = {"Off", "2x", "4x", "8x"};
+    int anisoIndex = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (kAnisoValues[i] == render.anisotropicFiltering) {
+            anisoIndex = i;
+        }
+    }
+    if (ImGui::Combo("Anisotropic filtering", &anisoIndex, kAnisoLabels, 4)) {
+        render.anisotropicFiltering = kAnisoValues[anisoIndex];
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("Anisotropic sampling for the volumetric raymarch. The scene "
+                          "materials are procedural and do not use texture filtering.");
+    }
 
     const int resolutions[] = {64, 96, 128, 160, 192, 256, 512, 1024};
     const char* resolutionLabels[] = {"64³", "96³", "128³", "160³",

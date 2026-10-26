@@ -545,6 +545,7 @@ void TestSettingsRoundTrip() {
     original.simulation.scene.vehicles = true;
     original.simulation.scene.vegetation = false;
     original.simulation.scene.quality = 2;
+    original.simulation.scene.chunkScale = 0.5f;
     original.simulation.scene.groundReflection = 0.7f;
     original.simulation.scene.voronoiChunks = true;
 
@@ -559,6 +560,7 @@ void TestSettingsRoundTrip() {
     original.render.sunAzimuthDeg = 111.0f;
     original.render.sunElevationDeg = 27.0f;
     original.render.particleScale = 1.75f;
+    original.render.anisotropicFiltering = 4;
 
     original.paused = true;
     original.showUi = false;
@@ -599,6 +601,7 @@ void TestSettingsRoundTrip() {
     CHECK(loaded.simulation.scene.vehicles);
     CHECK(!loaded.simulation.scene.vegetation);
     CHECK(loaded.simulation.scene.quality == 2);
+    CHECK_NEAR(loaded.simulation.scene.chunkScale, 0.5f, 1e-4);
     CHECK(loaded.simulation.scene.voronoiChunks);
 
     CHECK(loaded.render.raymarchSteps == 77);
@@ -612,6 +615,7 @@ void TestSettingsRoundTrip() {
     CHECK_NEAR(loaded.render.sunAzimuthDeg, 111.0f, 1e-4);
     CHECK_NEAR(loaded.render.sunElevationDeg, 27.0f, 1e-4);
     CHECK_NEAR(loaded.render.particleScale, 1.75f, 1e-4);
+    CHECK(loaded.render.anisotropicFiltering == 4);
 
     CHECK(loaded.paused);
     CHECK(!loaded.showUi);

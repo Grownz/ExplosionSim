@@ -181,10 +181,7 @@ void BuildGridChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int qua
                     4.0f * (chunk.half.x * chunk.half.y +
                             chunk.half.y * chunk.half.z +
                             chunk.half.x * chunk.half.z);
-                const float shade = rng.Range(0.90f, 1.04f);
-                chunk.color = DirectX::XMFLOAT4(
-                    object.color.x * shade, object.color.y * shade,
-                    object.color.z * shade, 1.0f);
+                chunk.color = object.color;
                 chunk.gridY = iy;
                 object.chunks.push_back(chunk);
             }
@@ -237,12 +234,14 @@ void BuildGridChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int qua
 // box. The cells keep a flat-shaded hull for rendering and a fitted OBB as the
 // collision proxy, so the rigid-body solver is unchanged.
 void BuildVoronoiChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int quality,
-                        core::Rng& rng) {
-    const float targetCellVolume =
+                        float chunkScale, core::Rng& rng) {
+    const float baseCellVolume =
         quality >= 2 ? 24.0f : (quality >= 1 ? 45.0f : 90.0f);
+    const float scale = std::clamp(chunkScale, 0.25f, 2.0f);
+    const float targetCellVolume = baseCellVolume * scale * scale * scale;
     const float volume = size.x * size.y * size.z;
     const int cellCount =
-        std::clamp(int(volume / targetCellVolume + 0.5f), 6, 72);
+        std::clamp(int(volume / targetCellVolume + 0.5f), 6, 256);
 
     std::vector<FractureCell> cells;
     const uint32_t cellSeed = rng.NextU32() ^ (object.id * 0x9E3779B9u);
@@ -264,10 +263,7 @@ void BuildVoronoiChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int 
         chunk.volume = cell.volume;
         chunk.surfaceArea = cell.surfaceArea;
         chunk.gridY = cell.grounded ? 0 : 1;
-        const float shade = rng.Range(0.90f, 1.04f);
-        chunk.color = DirectX::XMFLOAT4(object.color.x * shade,
-                                        object.color.y * shade,
-                                        object.color.z * shade, 1.0f);
+        chunk.color = object.color;
         chunk.hullPositions = std::move(cell.positions);
         chunk.hullNormals = std::move(cell.normals);
         chunk.hullIndices = std::move(cell.indices);
@@ -438,7 +434,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         if (type == SceneObjectType::Building) {
             const int quality = std::clamp(settings_.quality, 0, 2);
             if (settings_.voronoiChunks) {
-                BuildVoronoiChunks(object, size, quality, rng);
+                BuildVoronoiChunks(object, size, quality, settings_.chunkScale, rng);
             } else {
                 BuildGridChunks(object, size, quality, rng);
             }
@@ -761,8 +757,19 @@ void Scene::Update(const sim::BlastModel&, float dtSim) {
         if (object.burnTimer >= 0.25f) {
             object.burnTimer -= 0.25f;
             SceneFireSpawn spawn;
-            spawn.position = DirectX::XMFLOAT3(object.position.x, object.size.y * 0.5f,
-                                               object.position.z);
+            if (object.type == SceneObjectType::Building) {
+                // Building fires start near the roof rim so the flames are not
+                // buried inside the facade. The offset is deterministic.
+                const float phase = float(object.id) * 1.7f + float(time_) * 2.3f;
+                spawn.position = DirectX::XMFLOAT3(
+                    object.position.x + std::cos(phase) * object.size.x * 0.30f,
+                    object.size.y * 0.88f,
+                    object.position.z + std::sin(phase) * object.size.z * 0.30f);
+            } else {
+                spawn.position = DirectX::XMFLOAT3(object.position.x,
+                                                   object.size.y * 0.5f,
+                                                   object.position.z);
+            }
             spawn.count = object.type == SceneObjectType::Tree ? 3 : 2;
             spawn.scale = object.type == SceneObjectType::Tree ? 0.8f : 0.5f;
             fireSpawns_.push_back(spawn);

@@ -26,6 +26,7 @@ struct RenderSettings {
     float sunAzimuthDeg = 302.0f;
     float sunElevationDeg = 13.0f;
     float particleScale = 1.0f;
+    int anisotropicFiltering = 0; // 0 = off, 2/4/8 = sample count
 };
 
 struct FrameInfo {
@@ -197,11 +198,13 @@ private:
     ComPtr<ID3D11VertexShader> particleVS_;
     ComPtr<ID3D11PixelShader> particleAdditivePS_;
     ComPtr<ID3D11PixelShader> particleAlphaPS_;
+    ComPtr<ID3D11PixelShader> particleFirePS_;
     ComPtr<ID3D11PixelShader> downsamplePS_;
     ComPtr<ID3D11PixelShader> upsamplePS_;
     ComPtr<ID3D11PixelShader> compositePS_;
 
     ComPtr<ID3D11SamplerState> linearClamp_;
+    ComPtr<ID3D11SamplerState> anisoClamp_[3]; // 2x, 4x, 8x
     ComPtr<ID3D11SamplerState> noiseSampler_;
     ComPtr<ID3D11Texture3D> noiseTexture_;
     ComPtr<ID3D11ShaderResourceView> noiseSRV_;

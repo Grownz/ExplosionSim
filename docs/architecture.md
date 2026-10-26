@@ -87,6 +87,10 @@ starts the new explosion immediately.
 
 Opaque geometry writes depth; particles and the volume test against it but do not write.
 The volume is drawn before the smoke particles so soot composites over the fireball.
+Fire billboards use `PSFire`: two fbm lookups shape a rising flame silhouette and a
+red-orange-white heat ramp, and the result is additively blended with a soft depth fade.
+The CPU only advances the emitter positions, so the whole fire pass is one instanced
+draw call.
 
 ### Volume texture
 
@@ -102,7 +106,9 @@ The volume is drawn before the smoke particles so soot composites over the fireb
 - the raymarcher binds the noise volume at `t2` and uses it both to warp the sample
   position (filaments) and to modulate density at sub-voxel scale
 - updated with `UpdateSubresource` when the baker publishes a new version
-- linear clamp sampler, no mipmaps
+- linear clamp sampler by default; *Rendering > Anisotropic filtering* selects a
+  2x/4x/8x anisotropic clamp sampler for the raymarch instead
+- no mipmaps
 - the shader jitters ray start positions to hide slice banding and adds procedural noise
   for sub-voxel detail
 
@@ -245,6 +251,12 @@ sort: an inlined `std::atan2` comparator fed to `std::sort` could violate the
 strict-weak-ordering contract under `/fp:fast` + AVX2 and walk past the cap array for
 near-degenerate cells, which crashed large scenes. Vehicles and trees
 become 6-DOF rigid bodies, and burning objects emit fire particles.
+
+`scene.chunkScale` (0.25–2.0, default 1.0) multiplies the target Voronoi cell volume by
+`scale³`; the cell count is clamped to 6..256 per building, so the smallest settings
+saturate on large buildings. Chunk colours are static: every chunk inherits its object's
+colour and keeps the building-space facade coordinates, and only the semi-transparent
+fire effects overlay them.
 
 Collapse is progressive. Each chunk edge carries a joint; the blast load sets a failure
 time (strongly loaded joints fail almost immediately, the rest over the next few tenths of

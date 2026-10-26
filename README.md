@@ -23,8 +23,9 @@ start-up at 0.4 m above the ground**.
   and adds fine structure, so even moderate volume resolutions look turbulent.
 - **Multithreading** – a work-stealing thread pool parallelises particle integration and
   volume baking; the render thread always participates in the work.
-- **Cinematic particles** – instanced billboards for glowing debris, sparks, turbulent
-  flame tongues, soot and shock-driven ground dust.
+- **Cinematic particles** – instanced billboards for glowing debris, sparks,
+  soot and shock-driven ground dust. Fire is rendered by a GPU flame shader that adds
+  fbm turbulence, a heat ramp and soft depth fading in one instanced draw call.
 - **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
   1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
   pressure waveform.
@@ -43,12 +44,15 @@ start-up at 0.4 m above the ground**.
   shield each other from the blast, the rubble uses true oriented-box contacts, and a
   directional shadow map lets the town cast shadows on the terrain. Seed, density and
   chunk quality are configurable; *Environment > Voronoi chunks* switches between
-  convex Voronoi cells (default) and the jittered grid; `--no-scene` disables the scene.
+  convex Voronoi cells (default) and the jittered grid, and **Chunk size** continuously
+  scales the average cell size from 0.25x to 2x; `--no-scene` disables the scene.
   Facades use four high-resolution procedural styles (glass, brick, concrete,
   industrial); vehicles get paint, glass, lamp and tire detail, and trees get bark and
   foliage variation.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
+- **Anisotropic filtering** - Off, 2x, 4x or 8x for the volumetric raymarch sampler
+  under *Rendering > Anisotropic filtering*.
 - **Frame-rate cap** – limit the interactive renderer to 30, 60, 90, 120 or 144 fps
   under *Performance → Max FPS*.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,

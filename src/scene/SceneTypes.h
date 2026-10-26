@@ -34,6 +34,9 @@ struct SceneSettings {
     bool vehicles = true;
     bool vegetation = true;
     int quality = 1; // 0 = low, 1 = medium, 2 = high
+    // Average Voronoi chunk size multiplier: 0.25 = four times smaller,
+    // 2.0 = twice as large. The per-building cell count is capped for safety.
+    float chunkScale = 1.0f;
     // 0 = free-air blast field, 1 = perfectly reflecting ground.
     float groundReflection = 0.0f;
     // Phase B chunk geometry: Voronoi cells clipped to the building box instead

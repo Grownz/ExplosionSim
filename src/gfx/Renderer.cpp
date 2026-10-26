@@ -186,6 +186,16 @@ bool Renderer::CreateStates() {
         return false;
     }
 
+    const UINT anisoLevels[3] = {2, 4, 8};
+    for (int i = 0; i < 3; ++i) {
+        D3D11_SAMPLER_DESC anisoDesc = samplerDesc;
+        anisoDesc.Filter = D3D11_FILTER_ANISOTROPIC;
+        anisoDesc.MaxAnisotropy = anisoLevels[i];
+        if (FAILED(device_->Device()->CreateSamplerState(&anisoDesc, &anisoClamp_[i]))) {
+            return false;
+        }
+    }
+
     auto createBlend = [this](D3D11_BLEND source, D3D11_BLEND destination,
                               ComPtr<ID3D11BlendState>& state) {
         D3D11_BLEND_DESC desc{};
@@ -265,13 +275,14 @@ bool Renderer::CreatePipeline() {
     auto particleVSBlob = compile(particlesFile, "VSParticle", "vs_5_0");
     auto particleAddBlob = compile(particlesFile, "PSAdditive", "ps_5_0");
     auto particleAlphaBlob = compile(particlesFile, "PSAlpha", "ps_5_0");
+    auto particleFireBlob = compile(particlesFile, "PSFire", "ps_5_0");
     auto downsampleBlob = compile(bloomFile, "PSDownsample", "ps_5_0");
     auto upsampleBlob = compile(bloomFile, "PSUpsample", "ps_5_0");
     auto compositeBlob = compile(compositeFile, "PSComposite", "ps_5_0");
 
     if (!vsBlob || !skyBlob || !groundBlob || !volumeBlob || !particleVSBlob ||
-        !particleAddBlob || !particleAlphaBlob || !downsampleBlob || !upsampleBlob ||
-        !compositeBlob) {
+        !particleAddBlob || !particleAlphaBlob || !particleFireBlob ||
+        !downsampleBlob || !upsampleBlob || !compositeBlob) {
         LogError("One or more shaders failed to compile.");
         return false;
     }
@@ -291,6 +302,7 @@ bool Renderer::CreatePipeline() {
         !createVS(particleVSBlob.Get(), particleVS_) ||
         !createPS(particleAddBlob.Get(), particleAdditivePS_) ||
         !createPS(particleAlphaBlob.Get(), particleAlphaPS_) ||
+        !createPS(particleFireBlob.Get(), particleFirePS_) ||
         !createPS(downsampleBlob.Get(), downsamplePS_) ||
         !createPS(upsampleBlob.Get(), upsamplePS_) ||
         !createPS(compositeBlob.Get(), compositePS_)) {
@@ -1304,7 +1316,15 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
                                              volumeAuxSRV_ ? volumeAuxSRV_.Get()
                                                            : volumeDummySRV_.Get()};
         context->PSSetShaderResources(0, 4, srvs);
-        ID3D11SamplerState* samplers[2] = {linearClamp_.Get(), noiseSampler_.Get()};
+        ID3D11SamplerState* volumeSampler = linearClamp_.Get();
+        if (settings.anisotropicFiltering >= 8) {
+            volumeSampler = anisoClamp_[2].Get();
+        } else if (settings.anisotropicFiltering >= 4) {
+            volumeSampler = anisoClamp_[1].Get();
+        } else if (settings.anisotropicFiltering >= 2) {
+            volumeSampler = anisoClamp_[0].Get();
+        }
+        ID3D11SamplerState* samplers[2] = {volumeSampler, noiseSampler_.Get()};
         context->PSSetSamplers(0, 2, samplers);
         context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
         context->OMSetBlendState(blendPremultiplied_.Get(), nullptr, 0xffffffff);
@@ -1328,7 +1348,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->VSSetShaderResources(0, 1, srvs);
         context->PSSetShaderResources(0, 2, srvs);
         context->OMSetBlendState(blendAdditive_.Get(), nullptr, 0xffffffff);
-        context->PSSetShader(particleAdditivePS_.Get(), nullptr, 0);
+        context->PSSetShader(particleFirePS_.Get(), nullptr, 0);
         context->DrawInstanced(6, UINT(info_.fireParticles), 0, 0);
 
         ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};

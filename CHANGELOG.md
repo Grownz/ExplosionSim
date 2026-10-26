@@ -8,6 +8,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **GPU fire particles** - burning rubble and trees emit procedural flame billboards
+  (`PSFire`): fbm turbulence shapes the silhouette and heat gradient in a single
+  instanced draw call, with soft depth fading against the scene.
+- A continuous **Chunk size** slider in *Environment* (0.25x to 2x, default 1x) that
+  scales the average Voronoi cell volume. The per-building cell count is capped, so the
+  smallest sizes saturate on large buildings.
+- An **Anisotropic filtering** dropdown in *Rendering* (Off, 2x, 4x, 8x) for the
+  volumetric raymarch sampler.
 - The application starts in the armed/ready state and waits for **Detonate** (or **D**)
   instead of auto-detonating after the fuse.
 - **D** triggers Detonate; **H** cycles the UI: collapse the side panel, hide the
@@ -20,6 +28,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Chunk texturing is static: each chunk keeps its building's colour and facade
+  coordinates, and only the semi-transparent fire effects overlay it.
 - The Pause/Rearm/Frame row at the top of the panel was removed. Pause and Frame now sit
   below the main Detonate/Rearm button in the same style.
 

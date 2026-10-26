@@ -89,6 +89,52 @@ float4 PSAdditive(ParticleOutput input) : SV_Target
     return float4(color * fade, 1.0);
 }
 
+// GPU fire: procedural flame tongues on an additive billboard. Two fbm
+// lookups shape the silhouette and the heat gradient, so the CPU only has to
+// advance the emitter positions. The result reads as a turbulent flame while
+// staying a single instanced draw call.
+float4 PSFire(ParticleOutput input) : SV_Target
+{
+    float radiusSquared = dot(input.uv, input.uv);
+    if (radiusSquared > 1.0)
+    {
+        discard;
+    }
+
+    const float time = Misc3.x;
+    const float seed = input.variation * 43.0;
+    const float2 uv = input.uv;
+
+    // Flames narrow towards the top of the billboard.
+    const float height = saturate(uv.y * 0.5 + 0.5);
+    const float width = lerp(1.0, 0.32, height);
+
+    // Rising turbulence with a lateral sway and a finer detail layer.
+    float3 q = float3(uv * 1.45, seed);
+    q.y += time * 2.6;
+    q.x += sin(time * 1.9 + seed) * 0.22;
+    const float turbulence = Fbm3(q);
+    const float detail = Fbm3(q * 2.7 + float3(0.0, time * 4.2, 1.7));
+
+    const float body = saturate(1.0 - length(float2(uv.x / width, uv.y)));
+    float flame = body + (turbulence - 0.5) * 0.75 + (detail - 0.5) * 0.22;
+    flame = smoothstep(0.10, 0.92, flame) * (1.0 - height * 0.35);
+
+    // Heat ramp: deep red rim, orange body, white-hot core.
+    float heat = saturate(body * 1.15 + (turbulence - 0.5) * 0.55 +
+                          (1.0 - height) * 0.22);
+    float3 color = lerp(float3(0.42, 0.045, 0.01), float3(1.0, 0.36, 0.05),
+                        smoothstep(0.10, 0.62, heat));
+    color = lerp(color, float3(1.0, 0.86, 0.58), smoothstep(0.62, 0.96, heat));
+    color = lerp(input.color, color, 0.7);
+
+    const float flicker = 0.82 + 0.36 * Fbm3(float3(seed, time * 3.1, 0.0));
+    const float fade = SoftDepthFade(input);
+    const float intensity = flame * input.opacity * input.intensity *
+                            flicker * 5.5;
+    return float4(color * intensity * fade, 1.0);
+}
+
 // Smoke and dust puffs (alpha blended).
 float4 PSAlpha(ParticleOutput input) : SV_Target
 {

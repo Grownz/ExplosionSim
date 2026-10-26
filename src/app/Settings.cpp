@@ -159,6 +159,9 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
         ParseBool(values, "sceneVoronoiChunks", simulation.scene.voronoiChunks);
     simulation.scene.quality =
         std::clamp(ParseInt(values, "sceneQuality", simulation.scene.quality), 0, 2);
+    simulation.scene.chunkScale =
+        std::clamp(ParseFloat(values, "sceneChunkScale", simulation.scene.chunkScale),
+                   0.25f, 2.0f);
     simulation.scene.groundReflection =
         std::clamp(ParseFloat(values, "sceneGroundReflection",
                               simulation.scene.groundReflection),
@@ -177,6 +180,12 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
     render.sunElevationDeg =
         std::clamp(ParseFloat(values, "sunElevationDeg", render.sunElevationDeg), -5.0f, 85.0f);
     render.particleScale = std::clamp(ParseFloat(values, "particleScale", render.particleScale), 0.1f, 4.0f);
+    render.anisotropicFiltering =
+        std::clamp(ParseInt(values, "anisotropicFiltering", render.anisotropicFiltering), 0, 8);
+    if (render.anisotropicFiltering != 0 && render.anisotropicFiltering != 2 &&
+        render.anisotropicFiltering != 4 && render.anisotropicFiltering != 8) {
+        render.anisotropicFiltering = 0;
+    }
 
     settings.paused = ParseBool(values, "paused", settings.paused);
     settings.showUi = ParseBool(values, "showUi", settings.showUi);
@@ -228,6 +237,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "sceneVegetation=" << (simulation.scene.vegetation ? "true" : "false") << "\n";
     stream << "sceneVoronoiChunks=" << (simulation.scene.voronoiChunks ? "true" : "false") << "\n";
     stream << "sceneQuality=" << simulation.scene.quality << "\n";
+    stream << "sceneChunkScale=" << simulation.scene.chunkScale << "\n";
     stream << "sceneGroundReflection=" << simulation.scene.groundReflection << "\n";
 
     stream << "[render]\n";
@@ -242,6 +252,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "sunAzimuthDeg=" << render.sunAzimuthDeg << "\n";
     stream << "sunElevationDeg=" << render.sunElevationDeg << "\n";
     stream << "particleScale=" << render.particleScale << "\n";
+    stream << "anisotropicFiltering=" << render.anisotropicFiltering << "\n";
 
     stream << "[ui]\n";
     stream << "paused=" << (settings.paused ? "true" : "false") << "\n";

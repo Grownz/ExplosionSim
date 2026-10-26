@@ -321,12 +321,12 @@ void ParticleSystem::SpawnSceneFire(const DirectX::XMFLOAT3& center, int count,
         p.position = Add(center, Scale(direction, rng_.Range(0.2f, 1.2f) * scale));
         p.velocity = Scale(direction, rng_.Range(0.5f, 2.0f) * scale);
         p.velocity.y += rng_.Range(1.5f, 4.0f);
-        p.size = rng_.Range(0.25f, 0.70f) * scale;
+        p.size = rng_.Range(0.9f, 2.0f) * scale;
         p.life = 0.0f;
-        p.maxLife = rng_.Range(0.4f, 1.0f);
+        p.maxLife = rng_.Range(0.5f, 1.2f);
         p.temperature = rng_.Range(1600.0f, 2600.0f);
         p.opacity = 1.0f;
-        p.growth = rng_.Range(0.3f, 0.9f) * scale;
+        p.growth = rng_.Range(0.6f, 1.4f) * scale;
         p.drag = 1.2f;
         p.seed = rng_.Float01() * 1000.0f;
         p.kind = ParticleKind::Fire;
@@ -614,6 +614,9 @@ void ParticleSystem::BuildBatches() {
         } else if (p.kind == ParticleKind::Fire) {
             instance.color = BlackbodyColor(p.temperature);
             instance.opacity = p.opacity;
+            // Flames stay screen-aligned so the procedural tongue always points
+            // upwards; the variation field still randomises the turbulence.
+            instance.rotation = 0.0f;
             instance.pad0 = 0.25f;
             fire_.push_back(instance);
         } else {
