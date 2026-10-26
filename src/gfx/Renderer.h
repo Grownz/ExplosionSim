@@ -61,6 +61,7 @@ public:
     double ConsumeSolverAdvance();
     void StepSolverOnce(int steps = 8);
     const SolverStats& Solver() const { return solver_.Stats(); }
+    bool SolverBudgetHit() const { return solverBudgetHit_; }
 
     const FrameInfo& Info() const { return info_; }
     int VolumeTextureResolution() const { return volumeResolution_; }
@@ -156,6 +157,7 @@ private:
     bool solverPrepared_ = false;
     bool solverCapWarned_ = false;
     bool solverPaused_ = false;
+    bool solverBudgetHit_ = false;
 
     // Copy of the depth buffer that can be sampled while the original is still
     // bound as a depth-stencil target.

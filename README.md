@@ -46,6 +46,8 @@ start-up at 0.4 m above the ground**.
   convex Voronoi cells (default) and the jittered grid; `--no-scene` disables the scene.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
+- **Frame-rate cap** – limit the interactive renderer to 30, 60, 90, 120 or 144 fps
+  under *Performance → Max FPS*.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
   MUSCL reconstruction, CFL-adaptive time step) runs on the GPU at 64³–128³ and drives
   the volumetric field. Selectable under *Physics & Effects → Simulation model*.
@@ -132,7 +134,7 @@ terrain.
 --frames <count>      number of benchmark frames (default 120)
 --high-fidelity       use the GPU Euler solver for the volume
 --solver-resolution   solver grid resolution (64, 96 or 128)
---solver-steps        max solver steps per batch (default 24)
+--solver-steps        max solver steps per frame (default 96)
 --solver-time <s>     solver time for headless captures
 --solver-step-count <n>  capture at an exact solver step count
 --solver-auto-scale   expand the Euler domain before the field hits the edge
@@ -202,7 +204,8 @@ High-fidelity settings (Physics & Effects panel):
 
 - Grid resolution: 64³ / 96³ / 128³ / 192³ / 256³ / 512³ (256³ and 512³ need several GB
   of VRAM and are not real-time)
-- Max solver steps per batch: 4–64 (the playback time scale sets the speed)
+- Max solver steps per frame: 8–256 (the playback time scale is the target; lower
+  caps keep the frame rate up but play the explosion slower)
 - Domain: six times the analytic fireball radius (half extent 3×), cubic, with a
   reflecting ground and an absorbing sponge at the lateral/top boundaries
 - Uses the moist-air density and virtual temperature; wind drifts the rendered volume

@@ -284,10 +284,15 @@ generation hash exposed for tests.
 - While the charge is armed no solver work is done; after detonation the solver is
   advanced once per rendered frame to the playback target: `realDt * timeScale`
   simulated seconds, with 1.0 meaning real time. The solver's CFL step is smaller, so
-  `AdvanceSolver` submits enough steps to cover the target (up to a safety cap).
-  `solverStepsPerFrame` now only caps the work submitted per batch. The explicit time
-  step follows the CFL condition with a 1 ms upper bound, so coarse auto-scaled grids can
-  actually keep up with real-time playback. The "Real time" readout is wall-clock time.
+  `AdvanceSolver` submits enough steps to cover the target, but the total is capped by
+  `solverStepsPerFrame` (8..256). When the budget is reached the solver advances less
+  than the target and playback runs slower; the UI warns. This keeps the frame time
+  balanced across charge sizes: small charges have a small domain, a small CFL step and
+  would otherwise demand thousands of steps per frame. The explicit time step follows the
+  CFL condition with a 1 ms upper bound, so coarse auto-scaled grids can keep up with
+  real-time playback. The "Real time" readout is wall-clock time. The Performance panel
+  can cap the interactive frame rate at 30/60/90/120/144 fps; the wait is part of the
+  wall-clock delta used by the HF target.
 - The reduced-order model still advances, but its time is driven by the solver's
   simulated advance (`Simulation::AdvanceExternal`), so the camera, fireball light and
   readouts stay in sync.

@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A **Max FPS** dropdown in the Performance panel with 30, 60, 90, 120 and 144 fps caps.
+  The wait is included in the wall-clock frame delta used by the high-fidelity target.
+
+### Changed
+
+- High-fidelity solver work is capped by **Max steps/frame** (8..256). The playback time
+  scale remains the target, but when the budget is reached the simulation runs slower
+  instead of collapsing the frame rate; the UI warns when the budget is active.
+  `solverStepsPerFrame` now means total steps per frame (default 96).
+
+### Fixed
+
+- Small-charge high-fidelity detonations could drop to a few fps at the start: the small
+  domain produced a tiny CFL step, so covering the real-time target required thousands of
+  solver steps per frame. The per-frame step budget keeps the frame time balanced across
+  charge sizes.
+
 ## [0.5.0] - 2026-10-26
 
 This release is the high-fidelity and procedural-scene update. It turns the GPU solver
@@ -307,6 +328,7 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.3.0

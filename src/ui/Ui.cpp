@@ -431,13 +431,13 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
             actions.applySimulationSettings = true;
         }
 
-        if (ImGui::SliderInt("Max steps/batch", &settings.simulation.solverStepsPerFrame, 4, 64)) {
+        if (ImGui::SliderInt("Max steps/frame", &settings.simulation.solverStepsPerFrame, 8, 256)) {
         }
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             actions.applySimulationSettings = true;
         }
-        Hint("The playback time scale sets the solver speed; 1.0 = real time. "
-             "This only caps the work submitted per batch.");
+        Hint("Caps the high-fidelity solver work per frame. Lower values keep the frame "
+             "rate up but play the explosion slower; the playback time scale is the target.");
 
         if (ImGui::Checkbox("Solver auto-scale", &settings.simulation.solverAutoScale)) {
             actions.applySimulationSettings = true;
@@ -465,6 +465,11 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
                 Hint("The plume is close to the top of the solver domain. Auto-scale "
                      "expands it until the accuracy factor reaches x16.");
             }
+        }
+
+        if (renderer.SolverBudgetHit()) {
+            Hint("Solver step budget reached: playback is slower than the requested "
+                 "time scale. Raise Max steps/frame or lower the solver grid.");
         }
 
         Hint("Compressible Euler solver (HLLC + MUSCL) running on the GPU. It uses the "
@@ -611,8 +616,22 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
     Readout("Volume texture", "%d³", renderer.VolumeTextureResolution());
 }
 
-void DrawPerformance(const UiContext& context) {
+void DrawPerformance(UiContext& context) {
     SectionHeader("PERFORMANCE");
+
+    static const int kFpsChoices[] = {30, 60, 90, 120, 144};
+    static const char* kFpsLabels[] = {"30", "60", "90", "120", "144"};
+    int fpsIndex = 4;
+    for (int i = 0; i < 5; ++i) {
+        if (kFpsChoices[i] == context.settings.maxFps) {
+            fpsIndex = i;
+        }
+    }
+    if (ImGui::Combo("Max FPS", &fpsIndex, kFpsLabels, 5)) {
+        context.settings.maxFps = kFpsChoices[fpsIndex];
+    }
+    Hint("Caps the interactive frame rate; lower caps leave more GPU time for the "
+         "high-fidelity solver.");
 
     Readout("Frame rate", "%.1f fps", context.fps);
     Readout("Frame time", "%.2f ms", context.frameMs);

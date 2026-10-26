@@ -130,6 +130,7 @@ target_link_libraries(ExplosionSim PRIVATE
     dxgi
     d3dcompiler
     dwmapi
+    winmm
     windowscodecs
     ole32
     shell32)

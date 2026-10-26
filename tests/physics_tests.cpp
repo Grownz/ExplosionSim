@@ -561,6 +561,7 @@ void TestSettingsRoundTrip() {
 
     original.paused = true;
     original.showUi = false;
+    original.maxFps = 30;
     original.observerDistanceM = 42.0;
 
     const std::wstring path = L"test_settings_roundtrip.ini";
@@ -611,6 +612,7 @@ void TestSettingsRoundTrip() {
 
     CHECK(loaded.paused);
     CHECK(!loaded.showUi);
+    CHECK(loaded.maxFps == 30);
     CHECK_NEAR(loaded.observerDistanceM, 42.0, 1e-4);
 }
 

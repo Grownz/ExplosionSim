@@ -40,7 +40,7 @@ struct SimulationSettings {
     // Simulation model
     SimulationMode mode = SimulationMode::ReducedOrder;
     int solverResolution = 128;
-    int solverStepsPerFrame = 24;
+    int solverStepsPerFrame = 96; // max solver steps per rendered frame
     bool solverAutoScale = true;
 
     // Performance

@@ -131,7 +131,7 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
     simulation.solverResolution =
         std::clamp(ParseInt(values, "solverResolution", simulation.solverResolution), 32, 512);
     simulation.solverStepsPerFrame =
-        std::clamp(ParseInt(values, "solverStepsPerFrame", simulation.solverStepsPerFrame), 1, 96);
+        std::clamp(ParseInt(values, "solverStepsPerFrame", simulation.solverStepsPerFrame), 8, 256);
     simulation.solverAutoScale =
         ParseBool(values, "solverAutoScale", simulation.solverAutoScale);
     simulation.loop = ParseBool(values, "loop", simulation.loop);
@@ -178,6 +178,11 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
 
     settings.paused = ParseBool(values, "paused", settings.paused);
     settings.showUi = ParseBool(values, "showUi", settings.showUi);
+    const int maxFps = ParseInt(values, "maxFps", settings.maxFps);
+    settings.maxFps = (maxFps == 30 || maxFps == 60 || maxFps == 90 ||
+                       maxFps == 120 || maxFps == 144)
+                          ? maxFps
+                          : 144;
     settings.observerDistanceM =
         std::clamp(ParseDouble(values, "observerDistanceM", settings.observerDistanceM), 5.0, 5000.0);
 }
@@ -237,6 +242,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "[ui]\n";
     stream << "paused=" << (settings.paused ? "true" : "false") << "\n";
     stream << "showUi=" << (settings.showUi ? "true" : "false") << "\n";
+    stream << "maxFps=" << settings.maxFps << "\n";
     stream << "observerDistanceM=" << settings.observerDistanceM << "\n";
 }
 

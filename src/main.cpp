@@ -39,7 +39,7 @@ void PrintUsage() {
     LogInfo("  --high-fidelity       Use the GPU Euler solver for the volume.");
     LogInfo("  --reduced-order       Force the reduced-order blast model (overrides settings.ini).");
     LogInfo("  --solver-resolution <n>  Solver grid resolution (64, 96, 128, 192, 256, 512).");
-    LogInfo("  --solver-steps <n>    Max solver steps per batch (default 24).");
+    LogInfo("  --solver-steps <n>    Max solver steps per frame (default 96).");
     LogInfo("  --solver-time <s>     Solver time for headless captures.");
     LogInfo("  --solver-step-count <n>  Headless capture at an exact solver step count.");
     LogInfo("  --volume-resolution <n>  Volume grid (64, 96, 128, 160, 192, 256, 512, 1024).");

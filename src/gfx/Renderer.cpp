@@ -816,6 +816,7 @@ bool Renderer::EnsureSolver(sim::Simulation& simulation) {
             solverBlastSerial_ = simulation.BlastSerial();
             solverCapWarned_ = false;
             solverPrepared_ = false;
+            solverBudgetHit_ = false;
         } else {
             LogWarn("High-fidelity solver reset failed.");
             return false;
@@ -826,9 +827,11 @@ bool Renderer::EnsureSolver(sim::Simulation& simulation) {
 
 double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
     if (solverPaused_ || simulation.IsArmed()) {
+        solverBudgetHit_ = false;
         return 0.0;
     }
     if (!EnsureSolver(simulation)) {
+        solverBudgetHit_ = false;
         return 0.0;
     }
 
@@ -836,25 +839,27 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
 
     // The playback time scale is the target: at 1.0 the solver advances one
     // simulated second per real second. The solver's CFL step is smaller, so
-    // submit enough steps to cover the frame, with a safety cap.
+    // submit enough steps to cover the frame, but never more than the
+    // per-frame budget. The budget keeps the frame time balanced across charge
+    // sizes; when it is reached the playback simply runs slower.
     const double target =
         std::max(0.0, double(realDt) * simulation.Settings().timeScale);
     if (target <= 0.0) {
+        solverBudgetHit_ = false;
         return 0.0;
     }
 
-    constexpr int kMaxStepsPerFrame = 8192;
-    const int batchMax =
-        std::clamp(simulation.Settings().solverStepsPerFrame * 8, 32, 512);
+    const int maxSteps =
+        std::clamp(simulation.Settings().solverStepsPerFrame, 8, 256);
+    const int batchMax = std::min(maxSteps, 64);
     double advancedTotal = 0.0;
     int submitted = 0;
-    while (advancedTotal + 1e-9 < target && submitted < kMaxStepsPerFrame) {
+    while (advancedTotal + 1e-9 < target && submitted < maxSteps) {
         const float dt = solver_.Stats().dt;
         int steps = 1;
         if (dt > 0.0f) {
             steps = int(std::ceil((target - advancedTotal) / double(dt)));
-            steps =
-                std::clamp(steps, 1, std::min(batchMax, kMaxStepsPerFrame - submitted));
+            steps = std::clamp(steps, 1, std::min(batchMax, maxSteps - submitted));
         }
         solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius),
                               float(simulation.Blast().State().cloudCenterY));
@@ -866,6 +871,7 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
             break;
         }
     }
+    solverBudgetHit_ = advancedTotal + 1e-9 < target;
     solverPrepared_ = true;
     return advancedTotal;
 }

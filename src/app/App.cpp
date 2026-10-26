@@ -10,11 +10,13 @@
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
+#include <timeapi.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <thread>
 #include <vector>
 
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND window, UINT message, WPARAM wparam,
@@ -81,7 +83,7 @@ int App::Run(const LaunchOptions& options) {
             std::clamp(options_.solverResolution, 32, 512);
     }
     if (options_.solverSteps > 0) {
-        settings_.simulation.solverStepsPerFrame = std::clamp(options_.solverSteps, 1, 96);
+        settings_.simulation.solverStepsPerFrame = std::clamp(options_.solverSteps, 8, 256);
     }
     if (options_.volumeResolution > 0) {
         settings_.simulation.volumeResolution =
@@ -127,7 +129,13 @@ int App::Run(const LaunchOptions& options) {
             settings_.simulation.chargeMassKg, settings_.simulation.heightOfBurstM,
             int(pool_->WorkerCount()));
 
+    if (!options_.headless) {
+        timeBeginPeriod(1);
+    }
     const int result = options_.headless ? RunHeadless() : RunInteractive();
+    if (!options_.headless) {
+        timeEndPeriod(1);
+    }
 
     Shutdown();
     return result;
@@ -508,6 +516,20 @@ int App::RunInteractive() {
         }
 
         graphics_.Present(options_.vsync);
+
+        // Optional frame-rate cap. The wait is included in the next frame's
+        // wall-clock delta, so the high-fidelity time-scale target stays honest.
+        const double targetInterval =
+            1.0 / double(std::clamp(settings_.maxFps, 30, 144));
+        while (clock.Now() - now < targetInterval) {
+            const double remaining = targetInterval - (clock.Now() - now);
+            if (remaining > 0.0015) {
+                std::this_thread::sleep_for(
+                    std::chrono::duration<double>(remaining - 0.001));
+            } else {
+                std::this_thread::yield();
+            }
+        }
     }
 
     return 0;
