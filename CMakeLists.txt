@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(ExplosionSim
-    VERSION 0.5.0
+    VERSION 0.5.5
     DESCRIPTION "Physically based 3D explosion simulation for Windows x64"
     LANGUAGES CXX)
 

@@ -4,7 +4,21 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.5] - 2026-10-26
+
+This maintenance release keeps the high-fidelity solver responsive on small charges and
+adds two user-facing controls: a per-frame solver budget with a Max FPS cap, and a
+selectable hemispherical high-fidelity domain.
+
+### Highlights
+
+- **Balanced high-fidelity performance** - **Max steps/frame** bounds the solver work per
+  frame. The playback time scale remains the target; when the budget is reached the
+  simulation runs slower instead of collapsing the frame rate, and the UI warns.
+- **Frame-rate cap** - a **Max FPS** dropdown with 30, 60, 90, 120 and 144 fps.
+- **Hemispherical HF domain** - the **Model** menu switches between the cube and a masked
+  semi-ellipsoidal dome. The Cartesian grid, CFL behaviour and cubic texture/memory layout
+  are unchanged.
 
 ### Added
 
@@ -331,7 +345,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.5.5...HEAD
+[0.5.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.5
 [0.5.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.3.0
