@@ -196,6 +196,22 @@ bool Renderer::CreateStates() {
         }
     }
 
+    D3D11_SAMPLER_DESC wrapDesc = samplerDesc;
+    wrapDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+    wrapDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+    wrapDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    if (FAILED(device_->Device()->CreateSamplerState(&wrapDesc, &linearWrap_))) {
+        return false;
+    }
+    for (int i = 0; i < 3; ++i) {
+        D3D11_SAMPLER_DESC anisoDesc = wrapDesc;
+        anisoDesc.Filter = D3D11_FILTER_ANISOTROPIC;
+        anisoDesc.MaxAnisotropy = anisoLevels[i];
+        if (FAILED(device_->Device()->CreateSamplerState(&anisoDesc, &anisoWrap_[i]))) {
+            return false;
+        }
+    }
+
     auto createBlend = [this](D3D11_BLEND source, D3D11_BLEND destination,
                               ComPtr<ID3D11BlendState>& state) {
         D3D11_BLEND_DESC desc{};
@@ -668,7 +684,8 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
                                             1.0f, 1.0f);
     frameConstants_.volumeParams2 =
         XMFLOAT4(highFidelity ? 0.40f : 1.0f, highFidelity ? 0.16f : 1.0f,
-                 highFidelity ? 0.0f : 1.0f, 0.0f);
+                 highFidelity ? 0.0f : 1.0f,
+                 float(settings.anisotropicFiltering));
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11DeviceContext* context = device_->Context();
@@ -1266,8 +1283,17 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     // --- Procedural scene ---------------------------------------------------
     if (simulation.Settings().scene.enabled && !simulation.Scene().Empty()) {
+        ID3D11SamplerState* surfaceSampler = linearWrap_.Get();
+        if (settings.anisotropicFiltering >= 8) {
+            surfaceSampler = anisoWrap_[2].Get();
+        } else if (settings.anisotropicFiltering >= 4) {
+            surfaceSampler = anisoWrap_[1].Get();
+        } else if (settings.anisotropicFiltering >= 2) {
+            surfaceSampler = anisoWrap_[0].Get();
+        }
         sceneRenderer_.RenderScene(context, simulation.Scene(), hdrRTV,
-                                   device_->DepthDSV(), hdr_.width, hdr_.height);
+                                   device_->DepthDSV(), hdr_.width, hdr_.height,
+                                   surfaceSampler);
     }
 
     // Snapshot the depth buffer so subsequent passes can sample it without a

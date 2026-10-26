@@ -204,7 +204,9 @@ private:
     ComPtr<ID3D11PixelShader> compositePS_;
 
     ComPtr<ID3D11SamplerState> linearClamp_;
+    ComPtr<ID3D11SamplerState> linearWrap_;
     ComPtr<ID3D11SamplerState> anisoClamp_[3]; // 2x, 4x, 8x
+    ComPtr<ID3D11SamplerState> anisoWrap_[3];  // 2x, 4x, 8x
     ComPtr<ID3D11SamplerState> noiseSampler_;
     ComPtr<ID3D11Texture3D> noiseTexture_;
     ComPtr<ID3D11ShaderResourceView> noiseSRV_;

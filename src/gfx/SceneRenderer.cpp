@@ -346,7 +346,130 @@ bool SceneRenderer::Initialize(ID3D11Device* device) {
         LogError("Scene shadow resources could not be created.");
         return false;
     }
+    if (!CreateSurfaceDetailTexture(device)) {
+        LogError("Scene surface detail texture could not be created.");
+        return false;
+    }
     return true;
+}
+
+bool SceneRenderer::CreateSurfaceDetailTexture(ID3D11Device* device) {
+    constexpr int kSize = 256;
+
+    auto hash = [](int x, int y, int seed) {
+        uint32_t h = uint32_t(x) * 374761393u + uint32_t(y) * 668265263u +
+                     uint32_t(seed) * 2246822519u;
+        h = (h ^ (h >> 13)) * 1274126177u;
+        h ^= h >> 16;
+        return float(h & 0x00ffffffu) / 16777215.0f;
+    };
+    auto wrap = [](int v, int period) {
+        v %= period;
+        return v < 0 ? v + period : v;
+    };
+    auto noise = [&hash, &wrap](float x, float y, int period) {
+        const int x0 = int(std::floor(x));
+        const int y0 = int(std::floor(y));
+        const float fx = x - float(x0);
+        const float fy = y - float(y0);
+        const float sx = fx * fx * (3.0f - 2.0f * fx);
+        const float sy = fy * fy * (3.0f - 2.0f * fy);
+        const int xa = wrap(x0, period);
+        const int ya = wrap(y0, period);
+        const int xb = wrap(x0 + 1, period);
+        const int yb = wrap(y0 + 1, period);
+        const float n00 = hash(xa, ya, period);
+        const float n10 = hash(xb, ya, period);
+        const float n01 = hash(xa, yb, period);
+        const float n11 = hash(xb, yb, period);
+        const float nx0 = n00 + (n10 - n00) * sx;
+        const float nx1 = n01 + (n11 - n01) * sx;
+        return nx0 + (nx1 - nx0) * sy;
+    };
+    auto fbm = [&noise](float x, float y, int basePeriod, int seedOffset) {
+        float value = 0.0f;
+        float amplitude = 0.55f;
+        float scale = 1.0f;
+        int period = basePeriod;
+        for (int octave = 0; octave < 5; ++octave) {
+            value += amplitude * noise(x * scale + float(seedOffset),
+                                       y * scale + float(seedOffset), period);
+            amplitude *= 0.5f;
+            scale *= 2.0f;
+            period *= 2;
+        }
+        return std::clamp(value, 0.0f, 1.0f);
+    };
+
+    std::vector<uint8_t> base(size_t(kSize) * kSize * 4);
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            const float u = float(x) / float(kSize);
+            const float v = float(y) / float(kSize);
+            const float grain = fbm(u * 8.0f, v * 8.0f, 8, 0);
+            const float grime = fbm(u * 3.0f, v * 3.0f, 3, 17);
+            const float speckle = hash(x, y, 91);
+            const size_t index = (size_t(y) * kSize + size_t(x)) * 4;
+            base[index + 0] = uint8_t(std::clamp(grain, 0.0f, 1.0f) * 255.0f);
+            base[index + 1] = uint8_t(std::clamp(grime, 0.0f, 1.0f) * 255.0f);
+            base[index + 2] = uint8_t(speckle * 255.0f);
+            base[index + 3] = 255;
+        }
+    }
+
+    // Build the complete mip chain on the CPU so the texture can stay immutable.
+    std::vector<std::vector<uint8_t>> levels;
+    levels.push_back(std::move(base));
+    int width = kSize;
+    while (width > 1) {
+        const int nextWidth = width / 2;
+        std::vector<uint8_t> next(size_t(nextWidth) * nextWidth * 4);
+        const std::vector<uint8_t>& src = levels.back();
+        for (int y = 0; y < nextWidth; ++y) {
+            for (int x = 0; x < nextWidth; ++x) {
+                for (int channel = 0; channel < 4; ++channel) {
+                    int sum = 0;
+                    for (int dy = 0; dy < 2; ++dy) {
+                        for (int dx = 0; dx < 2; ++dx) {
+                            const size_t index =
+                                (size_t(y * 2 + dy) * width + size_t(x * 2 + dx)) * 4 +
+                                size_t(channel);
+                            sum += src[index];
+                        }
+                    }
+                    const size_t index =
+                        (size_t(y) * nextWidth + size_t(x)) * 4 + size_t(channel);
+                    next[index] = uint8_t(sum / 4);
+                }
+            }
+        }
+        levels.push_back(std::move(next));
+        width = nextWidth;
+    }
+
+    D3D11_TEXTURE2D_DESC desc{};
+    desc.Width = kSize;
+    desc.Height = kSize;
+    desc.MipLevels = UINT(levels.size());
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    std::vector<D3D11_SUBRESOURCE_DATA> subresources(levels.size());
+    int levelWidth = kSize;
+    for (size_t level = 0; level < levels.size(); ++level) {
+        subresources[level].pSysMem = levels[level].data();
+        subresources[level].SysMemPitch = UINT(levelWidth * 4);
+        subresources[level].SysMemSlicePitch = 0;
+        levelWidth = std::max(1, levelWidth / 2);
+    }
+    if (FAILED(device->CreateTexture2D(&desc, subresources.data(),
+                                       &surfaceDetailTexture_))) {
+        return false;
+    }
+    return SUCCEEDED(device->CreateShaderResourceView(
+        surfaceDetailTexture_.Get(), nullptr, &surfaceDetailSRV_));
 }
 
 bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
@@ -447,6 +570,8 @@ bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
 void SceneRenderer::Shutdown() {
     shadowCascadeBuffer_.Reset();
     shadowSampler_.Reset();
+    surfaceDetailSRV_.Reset();
+    surfaceDetailTexture_.Reset();
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
         shadowSRV_[cascade].Reset();
         shadowDSV_[cascade].Reset();
@@ -1270,7 +1395,7 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
 void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene& scene,
                                 ID3D11RenderTargetView* hdrRTV,
                                 ID3D11DepthStencilView* depthDSV, int width,
-                                int height) {
+                                int height, ID3D11SamplerState* surfaceSampler) {
     if (!device_ || !context || !hdrRTV || !depthDSV) {
         return;
     }
@@ -1297,6 +1422,13 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
     ID3D11SamplerState* shadowSampler = shadowSampler_.Get();
     context->PSSetSamplers(2, 1, &shadowSampler);
 
+    // Tiling grain for the procedural materials. The sampler is chosen by the
+    // anisotropic-filtering setting, so objects benefit from it as well.
+    ID3D11ShaderResourceView* surfaceDetail = surfaceDetailSRV_.Get();
+    context->PSSetShaderResources(6, 1, &surfaceDetail);
+    ID3D11SamplerState* detailSampler = surfaceSampler;
+    context->PSSetSamplers(3, 1, &detailSampler);
+
     for (Mesh& mesh : meshes_) {
         if (mesh.instances.empty() || !mesh.instanceBuffer) {
             continue;
@@ -1319,8 +1451,11 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
     ID3D11ShaderResourceView* nullShadow[4] = {nullptr, nullptr, nullptr,
                                                nullptr};
     context->PSSetShaderResources(2, 4, nullShadow);
+    ID3D11ShaderResourceView* nullDetail = nullptr;
+    context->PSSetShaderResources(6, 1, &nullDetail);
     ID3D11SamplerState* nullSampler = nullptr;
     context->PSSetSamplers(2, 1, &nullSampler);
+    context->PSSetSamplers(3, 1, &nullSampler);
     context->VSSetShaderResources(0, 1, &nullSrv);
     context->IASetInputLayout(nullptr);
 }

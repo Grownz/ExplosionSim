@@ -90,7 +90,8 @@ The volume is drawn before the smoke particles so soot composites over the fireb
 Fire billboards use `PSFire`: two fbm lookups shape a rising flame silhouette and a
 red-orange-white heat ramp, and the result is additively blended with a soft depth fade.
 The CPU only advances the emitter positions, so the whole fire pass is one instanced
-draw call.
+draw call. Burning objects spawn their emitters on the visible canopy rim or roof
+surface and follow the current rigid-body pose, so flames are not hidden inside the mesh.
 
 ### Volume texture
 
@@ -107,7 +108,8 @@ draw call.
   position (filaments) and to modulate density at sub-voxel scale
 - updated with `UpdateSubresource` when the baker publishes a new version
 - linear clamp sampler by default; *Rendering > Anisotropic filtering* selects a
-  2x/4x/8x anisotropic clamp sampler for the raymarch instead
+  2x/4x/8x anisotropic clamp sampler for the raymarch and a wrap variant for the
+  procedural surface grain
 - no mipmaps
 - the shader jitters ray start positions to hide slice banding and adds procedural noise
   for sub-voxel detail
@@ -287,7 +289,10 @@ meshes (box buildings with shader-generated windows, low-poly vehicles and trees
 use a chamfered box mesh and carry a per-instance texture origin and scale; the shader
 maps the mesh-local position back into the original building space, so each fragment
 keeps the facade it broke off from. Blast damage is a procedural char and crack overlay
-on that facade rather than a flat recolour. With `scene.voronoiChunks` (the default) the
+on that facade rather than a flat recolour. The facade pattern is supersampled along the
+major screen-space footprint axis (2 taps for 2x, 4 taps for 8x) and a tiling grain
+texture is sampled with the matching anisotropic sampler, so the filtering setting also
+applies to the procedural objects. With `scene.voronoiChunks` (the default) the
 rubble is a convex hull instead: all hulls live in one vertex/index buffer, each vertex
 names its chunk, and a per-chunk structured buffer supplies the rigid transform, so a
 whole building is one draw call. The renderer is

@@ -25,7 +25,8 @@ start-up at 0.4 m above the ground**.
   volume baking; the render thread always participates in the work.
 - **Cinematic particles** – instanced billboards for glowing debris, sparks,
   soot and shock-driven ground dust. Fire is rendered by a GPU flame shader that adds
-  fbm turbulence, a heat ramp and soft depth fading in one instanced draw call.
+  fbm turbulence, a heat ramp and soft depth fading in one instanced draw call; burning
+  objects spawn their flames on the visible canopy or roof surface.
 - **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
   1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
   pressure waveform.
@@ -51,8 +52,9 @@ start-up at 0.4 m above the ground**.
   foliage variation.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
-- **Anisotropic filtering** - Off, 2x, 4x or 8x for the volumetric raymarch sampler
-  under *Rendering > Anisotropic filtering*.
+- **Anisotropic filtering** - Off, 2x, 4x or 8x under *Rendering > Anisotropic
+  filtering*. It filters the volumetric raymarch, the procedural surface grain and
+  supersamples facade patterns along the major footprint axis.
 - **Frame-rate cap** – limit the interactive renderer to 30, 60, 90, 120 or 144 fps
   under *Performance → Max FPS*.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,

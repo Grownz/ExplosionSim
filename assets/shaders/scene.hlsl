@@ -35,6 +35,12 @@ Texture2D<float> ShadowMap2 : register(t4);
 Texture2D<float> StaticShadowMap : register(t5);
 SamplerComparisonState ShadowSampler : register(s2);
 
+// Tiling high-frequency grain for the procedural materials. It is sampled with
+// the anisotropic sampler selected in the rendering settings, so the surface
+// detail stays sharp at grazing angles.
+Texture2D<float4> SurfaceDetail : register(t6);
+SamplerState SurfaceSampler : register(s3);
+
 struct VSInput
 {
     float3 Position : POSITION;
@@ -230,31 +236,21 @@ float SampleShadow(float3 worldPosition, float3 normal)
                SampleStaticShadow(worldPosition, normal));
 }
 
-float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
-                      inout float sunAmount)
+// High-frequency surface grain. Facades use the building-space facade
+// coordinates so rubble keeps the same grain while it tumbles; vehicles and
+// trees use their mesh-local coordinates.
+float SurfaceGrain(float3 p, float3 n)
 {
-    const float3 n = normalize(input.Normal);
-    const float3 p = input.TextureOrigin.xyz + input.LocalPosition * input.TextureScale.xyz;
-    const int style = int(input.TextureScale.w + 0.5) % 4;
+    const float2 uv = abs(n.y) > 0.5
+                          ? p.xz
+                          : float2(abs(n.x) > 0.5 ? p.z : p.x, p.y);
+    return SurfaceDetail.Sample(SurfaceSampler, uv * 0.9).r;
+}
 
-    if (n.y > 0.5)
-    {
-        const float gravel = Fbm3(p * 1.7);
-        baseColor *= 0.52 + 0.14 * gravel;
-        const float vent = smoothstep(0.72, 0.92, Fbm3(p * 0.55 + 7.1));
-        baseColor = lerp(baseColor, float3(0.30, 0.31, 0.33), vent * detailFade * 0.7);
-        return baseColor;
-    }
-    if (n.y < -0.5)
-    {
-        return baseColor * 0.45;
-    }
-
-    const float u = abs(n.x) > 0.5 ? p.z : p.x;
-    const float v = p.y;
-    const float2 uv = float2(u, v);
+float3 FacadeWall(int style, float2 uv, float3 baseColor, float detailFade,
+                  float3 n, float3 worldPosition, inout float sunAmount)
+{
     float3 color = baseColor;
-
     if (style == 0)
     {
         // Glass curtain wall with mullions and lit offices.
@@ -266,7 +262,7 @@ float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
             (1.0 - smoothstep(0.0, 0.07, min(f.y, 1.0 - f.y))));
         const float glass = step(0.08, f.x) * step(f.x, 0.92) *
                             step(0.18, f.y) * step(f.y, 0.88);
-        const float3 view = normalize(CameraPosition.xyz - input.WorldPosition);
+        const float3 view = normalize(CameraPosition.xyz - worldPosition);
         const float3 sky = SkyColor(reflect(-view, n));
         const float lit = step(0.72, Hash12(cell + style * 13.0));
         float3 glassColor = lerp(float3(0.035, 0.075, 0.13), sky * 0.55, 0.55);
@@ -309,7 +305,7 @@ float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
         const float2 pf = frac(uv / panel);
         const float seam = step(pf.x, 0.035) + step(0.965, pf.x) +
                            step(pf.y, 0.04) + step(0.96, pf.y);
-        const float stain = Fbm3(float3(u * 0.35, v * 0.12, 1.7));
+        const float stain = Fbm3(float3(uv.x * 0.35, uv.y * 0.12, 1.7));
         color = baseColor * (0.82 + 0.20 * stain);
         color = lerp(color, color * 0.62, saturate(seam) * 0.8);
         const float2 wf = frac(uv / float2(2.4, 3.1));
@@ -321,11 +317,12 @@ float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
     else
     {
         // Industrial: corrugated metal, rust streaks and high windows.
-        const float corrugation = frac(u / 0.16);
+        const float corrugation = frac(uv.x / 0.16);
         const float rib = 1.0 - smoothstep(0.0, 0.16,
                                            min(corrugation, 1.0 - corrugation));
         color = baseColor * (0.72 + 0.22 * rib);
-        const float rust = smoothstep(0.55, 0.85, Fbm3(float3(u * 0.9, v * 0.22, 5.2)));
+        const float rust =
+            smoothstep(0.55, 0.85, Fbm3(float3(uv.x * 0.9, uv.y * 0.22, 5.2)));
         color = lerp(color, float3(0.28, 0.13, 0.06), rust * 0.55);
         const float2 wf = frac(uv / float2(3.2, 2.4));
         const float window = step(0.30, wf.x) * step(wf.x, 0.70) *
@@ -333,6 +330,68 @@ float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
         color = lerp(color, float3(0.05, 0.08, 0.11), window * detailFade);
         sunAmount *= lerp(1.0, 0.55, window * detailFade);
     }
+    return color;
+}
+
+float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
+                      inout float sunAmount)
+{
+    const float3 n = normalize(input.Normal);
+    const float3 p = input.TextureOrigin.xyz + input.LocalPosition * input.TextureScale.xyz;
+    const int style = int(input.TextureScale.w + 0.5) % 4;
+
+    // Fine grain sampled with the selected anisotropic filter.
+    baseColor *= 0.88 + 0.24 * SurfaceGrain(p, n);
+
+    if (n.y > 0.5)
+    {
+        const float gravel = Fbm3(p * 1.7);
+        baseColor *= 0.52 + 0.14 * gravel;
+        const float vent = smoothstep(0.72, 0.92, Fbm3(p * 0.55 + 7.1));
+        baseColor = lerp(baseColor, float3(0.30, 0.31, 0.33), vent * detailFade * 0.7);
+        return baseColor;
+    }
+    if (n.y < -0.5)
+    {
+        return baseColor * 0.45;
+    }
+
+    const float u = abs(n.x) > 0.5 ? p.z : p.x;
+    const float v = p.y;
+    const float2 uv = float2(u, v);
+
+    // Anisotropic supersampling along the major footprint axis. The number of
+    // taps follows the anisotropic-filtering setting, so grazing-angle facades
+    // keep their window and brick detail instead of collapsing into a blur.
+    const float2 dx = ddx(uv);
+    const float2 dy = ddy(uv);
+    const float2 major = length(dx) > length(dy) ? dx : dy;
+    int taps = 1;
+    if (VolumeParams2.w >= 8.0)
+    {
+        taps = 4;
+    }
+    else if (VolumeParams2.w >= 2.0)
+    {
+        taps = 2;
+    }
+
+    float3 color = float3(0.0, 0.0, 0.0);
+    float sunMultiplier = 0.0;
+    [unroll]
+    for (int i = 0; i < 4; ++i)
+    {
+        if (i < taps)
+        {
+            const float t = taps > 1 ? (float(i) / float(taps - 1) - 0.5) : 0.0;
+            float tapSun = 1.0;
+            color += FacadeWall(style, uv + major * t, baseColor, detailFade, n,
+                                input.WorldPosition, tapSun);
+            sunMultiplier += tapSun;
+        }
+    }
+    color /= float(taps);
+    sunAmount *= sunMultiplier / float(taps);
     return lerp(baseColor, color, detailFade);
 }
 
@@ -343,6 +402,7 @@ float3 VehicleMaterial(VSOutput input, float3 baseColor, float detailFade)
     const int style = int(input.TextureScale.w + 0.5) % 3;
     const float paintNoise = Fbm3(lp * 3.5 + float3(style * 5.0, 0.0, 0.0));
     float3 color = baseColor * (0.82 + 0.28 * paintNoise);
+    color *= 0.88 + 0.24 * SurfaceGrain(lp, n);
     color = lerp(color, color * 1.25, saturate(n.y) * 0.35);
 
     const float side = step(abs(n.y), 0.55);
@@ -397,17 +457,18 @@ float3 TreeMaterial(VSOutput input, float3 baseColor, float detailFade)
     const float3 n = normalize(input.Normal);
     const float radial = length(lp.xz);
     const int style = int(input.TextureScale.w + 0.5) % 3;
+    const float grain = 0.82 + 0.36 * SurfaceGrain(lp, n);
     const float trunk = step(lp.y, 0.42) * step(radial, 0.10);
     const float barkNoise = Fbm3(float3(lp.x * 24.0, lp.y * 5.0, lp.z * 24.0));
     const float3 bark = lerp(float3(0.16, 0.10, 0.055),
-                             float3(0.28, 0.19, 0.11), barkNoise);
+                             float3(0.28, 0.19, 0.11), barkNoise) * grain;
 
     const float canopy = step(0.30, lp.y);
     const float clump = Fbm3(lp * 7.0 + float3(style * 4.0, 0.0, style * 2.0));
     const float3 leafA = baseColor * (0.72 + 0.42 * clump);
     const float3 leafB = float3(0.10, 0.24, 0.07) * (0.8 + 0.5 * clump);
     float3 leaves = lerp(leafA, leafB, 0.35 + 0.2 * style);
-    leaves *= 0.75 + 0.35 * saturate(n.y);
+    leaves *= grain * (0.75 + 0.35 * saturate(n.y));
     float3 color = lerp(baseColor, leaves, canopy * detailFade);
     color = lerp(color, bark, trunk * detailFade);
     return color;

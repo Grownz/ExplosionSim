@@ -57,7 +57,8 @@ public:
     // depth snapshot / volumetric pass.
     void RenderScene(ID3D11DeviceContext* context, const scene::Scene& scene,
                      ID3D11RenderTargetView* hdrRTV,
-                     ID3D11DepthStencilView* depthDSV, int width, int height);
+                     ID3D11DepthStencilView* depthDSV, int width, int height,
+                     ID3D11SamplerState* surfaceSampler);
 
     ID3D11ShaderResourceView* ShadowSRV(int cascade) const {
         return shadowSRV_[cascade].Get();
@@ -69,6 +70,7 @@ public:
 
 private:
     bool CreateShadowResources(ID3D11Device* device);
+    bool CreateSurfaceDetailTexture(ID3D11Device* device);
     struct Instance {
         DirectX::XMFLOAT4X4 transform;
         DirectX::XMFLOAT4 color;
@@ -134,6 +136,9 @@ private:
     ComPtr<ID3D11ShaderResourceView> shadowSRV_[kShadowCascades];
     ComPtr<ID3D11Buffer> shadowCascadeBuffer_;
     ComPtr<ID3D11SamplerState> shadowSampler_;
+    // Tiling high-frequency grain sampled with the selected anisotropic filter.
+    ComPtr<ID3D11Texture2D> surfaceDetailTexture_;
+    ComPtr<ID3D11ShaderResourceView> surfaceDetailSRV_;
     std::vector<Mesh> meshes_;
 
     // Cached static-caster shadow map (intact buildings, world space).

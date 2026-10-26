@@ -618,8 +618,9 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
         render.anisotropicFiltering = kAnisoValues[anisoIndex];
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Anisotropic sampling for the volumetric raymarch. The scene "
-                          "materials are procedural and do not use texture filtering.");
+        ImGui::SetTooltip("Anisotropic sampling for the volumetric raymarch and the "
+                          "procedural surfaces. Higher settings keep facades sharp at "
+                          "grazing angles.");
     }
 
     const int resolutions[] = {64, 96, 128, 160, 192, 256, 512, 1024};

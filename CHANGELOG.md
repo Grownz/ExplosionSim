@@ -14,8 +14,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A continuous **Chunk size** slider in *Environment* (0.25x to 2x, default 1x) that
   scales the average Voronoi cell volume. The per-building cell count is capped, so the
   smallest sizes saturate on large buildings.
-- An **Anisotropic filtering** dropdown in *Rendering* (Off, 2x, 4x, 8x) for the
-  volumetric raymarch sampler.
+- An **Anisotropic filtering** dropdown in *Rendering* (Off, 2x, 4x, 8x). It selects
+  the anisotropic sampler for the volumetric raymarch and for the procedural surface
+  detail, and supersamples the facade patterns along the major footprint axis, so
+  windows and bricks stay sharp at grazing angles.
 - The application starts in the armed/ready state and waits for **Detonate** (or **D**)
   instead of auto-detonating after the fuse.
 - **D** triggers Detonate; **H** cycles the UI: collapse the side panel, hide the
@@ -32,6 +34,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   coordinates, and only the semi-transparent fire effects overlay it.
 - The Pause/Rearm/Frame row at the top of the panel was removed. Pause and Frame now sit
   below the main Detonate/Rearm button in the same style.
+
+### Fixed
+
+- Burning trees and vehicles now show flames. Fire is spawned on the visible canopy rim
+  or roof surface instead of inside the mesh, where the soft depth fade hid it, and the
+  spawn point follows the current rigid-body pose of thrown objects.
 
 ## [0.5.5] - 2026-10-26
 

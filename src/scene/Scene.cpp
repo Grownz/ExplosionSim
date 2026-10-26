@@ -757,21 +757,46 @@ void Scene::Update(const sim::BlastModel&, float dtSim) {
         if (object.burnTimer >= 0.25f) {
             object.burnTimer -= 0.25f;
             SceneFireSpawn spawn;
-            if (object.type == SceneObjectType::Building) {
-                // Building fires start near the roof rim so the flames are not
-                // buried inside the facade. The offset is deterministic.
-                const float phase = float(object.id) * 1.7f + float(time_) * 2.3f;
-                spawn.position = DirectX::XMFLOAT3(
-                    object.position.x + std::cos(phase) * object.size.x * 0.30f,
-                    object.size.y * 0.88f,
-                    object.position.z + std::sin(phase) * object.size.z * 0.30f);
+            // Spawn on the visible surface, not at the object centre: a flame
+            // billboard buried inside the mesh is fully hidden by the soft
+            // depth fade. Trees use the canopy rim, vehicles the roof and
+            // buildings the roof rim.
+            const float phase = float(object.id) * 1.7f + float(time_) * 2.3f;
+            DirectX::XMFLOAT3 offset{};
+            if (object.type == SceneObjectType::Tree) {
+                offset = DirectX::XMFLOAT3(std::cos(phase) * object.size.x * 0.62f,
+                                           object.size.y * 0.16f,
+                                           std::sin(phase) * object.size.x * 0.62f);
+                spawn.scale = 0.8f;
+            } else if (object.type == SceneObjectType::Vehicle) {
+                offset = DirectX::XMFLOAT3(std::cos(phase) * object.size.x * 0.30f,
+                                           object.size.y * 0.28f,
+                                           std::sin(phase) * object.size.z * 0.30f);
+                spawn.scale = 0.5f;
             } else {
-                spawn.position = DirectX::XMFLOAT3(object.position.x,
-                                                   object.size.y * 0.5f,
-                                                   object.position.z);
+                offset = DirectX::XMFLOAT3(std::cos(phase) * object.size.x * 0.30f,
+                                           object.size.y * 0.38f,
+                                           std::sin(phase) * object.size.z * 0.30f);
+                spawn.scale = 0.5f;
             }
+
+            DirectX::XMFLOAT3 center(object.position.x, object.size.y * 0.5f,
+                                     object.position.z);
+            if (object.bodyIndex >= 0 &&
+                object.bodyIndex < int(physics_.Bodies().size())) {
+                // Burning trees and vehicles may have been thrown by the
+                // blast; follow their current rigid-body pose.
+                const RigidBody& body = physics_.Bodies()[object.bodyIndex];
+                const DirectX::XMVECTOR rotated = DirectX::XMVector3Rotate(
+                    DirectX::XMLoadFloat3(&offset),
+                    DirectX::XMLoadFloat4(&body.orientation));
+                DirectX::XMStoreFloat3(&offset, rotated);
+                center = body.position;
+            }
+            spawn.position = DirectX::XMFLOAT3(center.x + offset.x,
+                                               center.y + offset.y,
+                                               center.z + offset.z);
             spawn.count = object.type == SceneObjectType::Tree ? 3 : 2;
-            spawn.scale = object.type == SceneObjectType::Tree ? 0.8f : 0.5f;
             fireSpawns_.push_back(spawn);
         }
     }
