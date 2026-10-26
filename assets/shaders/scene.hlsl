@@ -230,6 +230,189 @@ float SampleShadow(float3 worldPosition, float3 normal)
                SampleStaticShadow(worldPosition, normal));
 }
 
+float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
+                      inout float sunAmount)
+{
+    const float3 n = normalize(input.Normal);
+    const float3 p = input.TextureOrigin.xyz + input.LocalPosition * input.TextureScale.xyz;
+    const int style = int(input.TextureScale.w + 0.5) % 4;
+
+    if (n.y > 0.5)
+    {
+        const float gravel = Fbm3(p * 1.7);
+        baseColor *= 0.52 + 0.14 * gravel;
+        const float vent = smoothstep(0.72, 0.92, Fbm3(p * 0.55 + 7.1));
+        baseColor = lerp(baseColor, float3(0.30, 0.31, 0.33), vent * detailFade * 0.7);
+        return baseColor;
+    }
+    if (n.y < -0.5)
+    {
+        return baseColor * 0.45;
+    }
+
+    const float u = abs(n.x) > 0.5 ? p.z : p.x;
+    const float v = p.y;
+    const float2 uv = float2(u, v);
+    float3 color = baseColor;
+
+    if (style == 0)
+    {
+        // Glass curtain wall with mullions and lit offices.
+        const float2 cellSize = float2(2.2, 3.4);
+        const float2 cell = floor(uv / cellSize);
+        const float2 f = frac(uv / cellSize);
+        const float frame = saturate(
+            (1.0 - smoothstep(0.0, 0.05, min(f.x, 1.0 - f.x))) +
+            (1.0 - smoothstep(0.0, 0.07, min(f.y, 1.0 - f.y))));
+        const float glass = step(0.08, f.x) * step(f.x, 0.92) *
+                            step(0.18, f.y) * step(f.y, 0.88);
+        const float3 view = normalize(CameraPosition.xyz - input.WorldPosition);
+        const float3 sky = SkyColor(reflect(-view, n));
+        const float lit = step(0.72, Hash12(cell + style * 13.0));
+        float3 glassColor = lerp(float3(0.035, 0.075, 0.13), sky * 0.55, 0.55);
+        glassColor = lerp(glassColor, float3(1.0, 0.72, 0.38) * 1.6, lit * 0.55);
+        color = lerp(baseColor, glassColor, glass * detailFade);
+        color = lerp(color, float3(0.55, 0.56, 0.58), frame * detailFade);
+        sunAmount *= lerp(1.0, 0.35, glass * detailFade);
+    }
+    else if (style == 1)
+    {
+        // Brick facade with mortar, punched windows and sills.
+        const float2 brickSize = float2(0.26, 0.085);
+        const float2 brick = floor(uv / brickSize);
+        const float2 bf = frac(uv / brickSize);
+        const float mortar = step(bf.x, 0.06) + step(0.94, bf.x) +
+                             step(bf.y, 0.10) + step(0.90, bf.y);
+        const float shade = 0.78 + 0.35 * Hash12(brick + style * 7.0);
+        float3 brickColor = baseColor * shade;
+        brickColor = lerp(brickColor, float3(0.42, 0.40, 0.36),
+                          saturate(mortar) * 0.65);
+        const float2 winSize = float2(2.8, 3.3);
+        const float2 wcell = floor(uv / winSize);
+        const float2 wf = frac(uv / winSize);
+        const float window = step(0.30, wf.x) * step(wf.x, 0.78) *
+                             step(0.28, wf.y) * step(wf.y, 0.76);
+        const float frame = saturate(
+            (1.0 - smoothstep(0.0, 0.055, min(abs(wf.x - 0.30), abs(wf.x - 0.78)))) +
+            (1.0 - smoothstep(0.0, 0.055, min(abs(wf.y - 0.28), abs(wf.y - 0.76)))));
+        const float lit = step(0.78, Hash12(wcell + 3.0));
+        const float3 windowColor =
+            lerp(float3(0.04, 0.07, 0.10), float3(1.0, 0.70, 0.35) * 1.4, lit);
+        color = lerp(brickColor, windowColor, window * detailFade);
+        color = lerp(color, float3(0.68, 0.66, 0.60), frame * detailFade * 0.8);
+        sunAmount *= lerp(1.0, 0.45, window * detailFade);
+    }
+    else if (style == 2)
+    {
+        // Concrete office: panel seams, stains and narrow windows.
+        const float2 panel = float2(1.35, 1.15);
+        const float2 pf = frac(uv / panel);
+        const float seam = step(pf.x, 0.035) + step(0.965, pf.x) +
+                           step(pf.y, 0.04) + step(0.96, pf.y);
+        const float stain = Fbm3(float3(u * 0.35, v * 0.12, 1.7));
+        color = baseColor * (0.82 + 0.20 * stain);
+        color = lerp(color, color * 0.62, saturate(seam) * 0.8);
+        const float2 wf = frac(uv / float2(2.4, 3.1));
+        const float window = step(0.36, wf.x) * step(wf.x, 0.64) *
+                             step(0.26, wf.y) * step(wf.y, 0.72);
+        color = lerp(color, float3(0.045, 0.075, 0.10), window * detailFade);
+        sunAmount *= lerp(1.0, 0.5, window * detailFade);
+    }
+    else
+    {
+        // Industrial: corrugated metal, rust streaks and high windows.
+        const float corrugation = frac(u / 0.16);
+        const float rib = 1.0 - smoothstep(0.0, 0.16,
+                                           min(corrugation, 1.0 - corrugation));
+        color = baseColor * (0.72 + 0.22 * rib);
+        const float rust = smoothstep(0.55, 0.85, Fbm3(float3(u * 0.9, v * 0.22, 5.2)));
+        color = lerp(color, float3(0.28, 0.13, 0.06), rust * 0.55);
+        const float2 wf = frac(uv / float2(3.2, 2.4));
+        const float window = step(0.30, wf.x) * step(wf.x, 0.70) *
+                             step(0.62, wf.y) * step(wf.y, 0.86);
+        color = lerp(color, float3(0.05, 0.08, 0.11), window * detailFade);
+        sunAmount *= lerp(1.0, 0.55, window * detailFade);
+    }
+    return lerp(baseColor, color, detailFade);
+}
+
+float3 VehicleMaterial(VSOutput input, float3 baseColor, float detailFade)
+{
+    const float3 n = normalize(input.Normal);
+    const float3 lp = input.LocalPosition;
+    const int style = int(input.TextureScale.w + 0.5) % 3;
+    const float paintNoise = Fbm3(lp * 3.5 + float3(style * 5.0, 0.0, 0.0));
+    float3 color = baseColor * (0.82 + 0.28 * paintNoise);
+    color = lerp(color, color * 1.25, saturate(n.y) * 0.35);
+
+    const float side = step(abs(n.y), 0.55);
+    float glass = 0.0;
+    if (style == 0)
+    {
+        glass = step(0.58, lp.y) * step(lp.y, 0.98) * side * step(abs(lp.x), 0.82);
+        glass = max(glass, step(0.62, lp.y) * step(lp.y, 1.0) *
+                            step(0.55, abs(n.z)) * step(abs(lp.x), 0.75));
+    }
+    else if (style == 1)
+    {
+        glass = step(0.95, lp.y) * step(lp.y, 1.30) * side * step(0.8, lp.z);
+        glass = max(glass, step(1.0, lp.y) * step(lp.y, 1.3) *
+                            step(0.55, abs(n.z)) * step(abs(lp.x), 0.8));
+    }
+    else
+    {
+        glass = step(0.78, lp.y) * step(lp.y, 1.22) *
+                step(0.55, abs(n.z)) * step(0.8, lp.z);
+        glass = max(glass, step(0.8, lp.y) * step(lp.y, 1.2) * side *
+                            step(0.8, lp.z));
+    }
+    const float3 view = normalize(CameraPosition.xyz - input.WorldPosition);
+    const float3 glassColor = lerp(float3(0.025, 0.045, 0.07),
+                                  SkyColor(reflect(-view, n)) * 0.5, 0.45);
+    color = lerp(color, glassColor, glass * detailFade);
+
+    // Lower body, bumpers and tires.
+    color = lerp(color, color * 0.45, step(lp.y, 0.32) * detailFade);
+    const float wheel = step(0.72, abs(lp.x)) * step(lp.y, 0.48) *
+                        step(1.0, abs(lp.z));
+    const float tread = 0.75 + 0.25 * step(0.5, frac(lp.z * 8.0));
+    color = lerp(color, float3(0.035, 0.035, 0.04) * tread, wheel * detailFade);
+
+    // Headlights and taillights on the front/rear faces.
+    const float frontZ = style == 0 ? 1.9 : (style == 1 ? 2.2 : 2.0);
+    const float rearZ = style == 0 ? 1.9 : (style == 1 ? 2.2 : 2.4);
+    const float lampY = step(0.38, lp.y) * step(lp.y, 0.62);
+    const float lampX = step(0.35, abs(lp.x)) * step(abs(lp.x), 0.80);
+    const float lampFace = step(0.5, abs(n.z));
+    const float head = step(frontZ, lp.z) * lampY * lampX * lampFace;
+    const float tail = step(rearZ, -lp.z) * lampY * lampX * lampFace;
+    color = lerp(color, float3(1.0, 0.92, 0.72) * 2.5, head * detailFade);
+    color = lerp(color, float3(0.9, 0.06, 0.03) * 2.0, tail * detailFade);
+    return color;
+}
+
+float3 TreeMaterial(VSOutput input, float3 baseColor, float detailFade)
+{
+    const float3 lp = input.LocalPosition;
+    const float3 n = normalize(input.Normal);
+    const float radial = length(lp.xz);
+    const int style = int(input.TextureScale.w + 0.5) % 3;
+    const float trunk = step(lp.y, 0.42) * step(radial, 0.10);
+    const float barkNoise = Fbm3(float3(lp.x * 24.0, lp.y * 5.0, lp.z * 24.0));
+    const float3 bark = lerp(float3(0.16, 0.10, 0.055),
+                             float3(0.28, 0.19, 0.11), barkNoise);
+
+    const float canopy = step(0.30, lp.y);
+    const float clump = Fbm3(lp * 7.0 + float3(style * 4.0, 0.0, style * 2.0));
+    const float3 leafA = baseColor * (0.72 + 0.42 * clump);
+    const float3 leafB = float3(0.10, 0.24, 0.07) * (0.8 + 0.5 * clump);
+    float3 leaves = lerp(leafA, leafB, 0.35 + 0.2 * style);
+    leaves *= 0.75 + 0.35 * saturate(n.y);
+    float3 color = lerp(baseColor, leaves, canopy * detailFade);
+    color = lerp(color, bark, trunk * detailFade);
+    return color;
+}
+
 float4 PSScene(VSOutput input) : SV_Target
 {
     float3 normal = normalize(input.Normal);
@@ -249,25 +432,19 @@ float4 PSScene(VSOutput input) : SV_Target
     // rubble keeps the facade of the part it broke off from.
     const float3 facadePos = input.TextureOrigin.xyz + input.LocalPosition * input.TextureScale.xyz;
 
-    // Procedural facade: windows on the vertical faces, darker roof on top.
-    // Buildings (0) and rubble (3) share it; vehicles and trees do not.
+    // High-resolution procedural materials. Buildings and rubble share the
+    // facade styles; vehicles and trees have their own detail.
     if (input.Params.w < 0.5 || input.Params.w > 2.5)
     {
-        if (abs(normal.y) < 0.5)
-        {
-            float horizontal = abs(normal.x) > 0.5 ? facadePos.z : facadePos.x;
-            float floorCell = frac(facadePos.y / 3.2);
-            float bayCell = frac(horizontal / 2.6);
-            if (floorCell > 0.22 && floorCell < 0.82 && bayCell > 0.18 && bayCell < 0.82)
-            {
-                baseColor = lerp(baseColor, float3(0.06, 0.10, 0.16), detailFade);
-                sunAmount = lerp(sunAmount, 0.12, detailFade);
-            }
-        }
-        else if (normal.y > 0.5)
-        {
-            baseColor *= 0.62;
-        }
+        baseColor = FacadeMaterial(input, baseColor, detailFade, sunAmount);
+    }
+    else if (input.Params.w < 1.5)
+    {
+        baseColor = VehicleMaterial(input, baseColor, detailFade);
+    }
+    else
+    {
+        baseColor = TreeMaterial(input, baseColor, detailFade);
     }
 
     sunAmount *= SampleShadow(input.WorldPosition, normal);

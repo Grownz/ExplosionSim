@@ -122,7 +122,7 @@ int App::Run(const LaunchOptions& options) {
     // The interactive app generates the town on a worker thread so the loading
     // bar can animate; headless captures and tests stay synchronous.
     simulation_.SetAsyncSceneGeneration(!options_.headless);
-    simulation_.Initialize(settings_.simulation, *pool_);
+    simulation_.Initialize(settings_.simulation, *pool_, !options_.headless);
     FrameCamera();
 
     LogInfo("Simulation ready: %.4g kg TNT, %.2f m burst height, %d workers",
@@ -417,11 +417,17 @@ int App::RunInteractive() {
 
         bool forceRestart = false;
         bool forceRearm = false;
+        bool forceDetonate = false;
         bool stepOnce = false;
         bool captureNow = false;
         if (!io.WantCaptureKeyboard) {
             if (ImGui::IsKeyPressed(ImGuiKey_Space)) {
                 settings_.paused = !settings_.paused;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_D)) {
+                if (simulation_.IsArmed()) {
+                    forceDetonate = true;
+                }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_R)) {
                 forceRearm = true;
@@ -430,7 +436,14 @@ int App::RunInteractive() {
                 FrameCamera();
             }
             if (ImGui::IsKeyPressed(ImGuiKey_H)) {
-                settings_.showUi = !settings_.showUi;
+                if (settings_.showUi && settings_.showOverlays) {
+                    settings_.showUi = false;
+                } else if (!settings_.showUi && settings_.showOverlays) {
+                    settings_.showOverlays = false;
+                } else {
+                    settings_.showUi = true;
+                    settings_.showOverlays = true;
+                }
             }
             if (ImGui::IsKeyPressed(ImGuiKey_F12)) {
                 captureNow = true;
@@ -472,13 +485,13 @@ int App::RunInteractive() {
         if (actions.frameCamera) {
             FrameCamera();
         }
-        if (actions.detonateNow) {
+        if (actions.detonateNow || forceDetonate) {
             if (simulation_.IsArmed()) {
                 simulation_.DetonateNow();
-            } else {
+                simulation_.FinishPendingVolumeWork();
+            } else if (actions.detonateNow) {
                 forceRearm = true;
             }
-            simulation_.FinishPendingVolumeWork();
         }
         if (actions.applySimulationSettings) {
             ApplySimulationSettings();

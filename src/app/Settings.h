@@ -12,6 +12,7 @@ struct AppSettings {
     gfx::RenderSettings render{};
     bool paused = false;
     bool showUi = true;
+    bool showOverlays = true;
     int maxFps = 144;
     double observerDistanceM = 6.0;
 };

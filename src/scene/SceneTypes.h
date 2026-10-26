@@ -28,7 +28,7 @@ enum class DamageState : uint8_t {
 
 struct SceneSettings {
     bool enabled = true;
-    uint32_t seed = 1337;
+    uint32_t seed = 69707;
     float density = 1.0f;
     bool buildings = true;
     bool vehicles = true;

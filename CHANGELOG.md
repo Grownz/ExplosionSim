@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- The application starts in the armed/ready state and waits for **Detonate** (or **D**)
+  instead of auto-detonating after the fuse.
+- **D** triggers Detonate; **H** cycles the UI: collapse the side panel, hide the
+  left-side overlays, then restore both.
+- The control panel has an animated right-edge handle for collapsing and reopening it.
+- High-resolution procedural materials: four building facade styles (glass, brick,
+  concrete, industrial), vehicle paint, glass, lights and tires, and tree bark/foliage
+  variation.
+- The default procedural scene seed is **69707**.
+
+### Changed
+
+- The Pause/Rearm/Frame row at the top of the panel was removed. Pause and Frame now sit
+  below the main Detonate/Rearm button in the same style.
+
 ## [0.5.5] - 2026-10-26
 
 This maintenance release keeps the high-fidelity solver responsive on small charges and

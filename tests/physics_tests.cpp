@@ -562,6 +562,7 @@ void TestSettingsRoundTrip() {
 
     original.paused = true;
     original.showUi = false;
+    original.showOverlays = false;
     original.maxFps = 30;
     original.observerDistanceM = 42.0;
 
@@ -614,6 +615,7 @@ void TestSettingsRoundTrip() {
 
     CHECK(loaded.paused);
     CHECK(!loaded.showUi);
+    CHECK(!loaded.showOverlays);
     CHECK(loaded.maxFps == 30);
     CHECK_NEAR(loaded.observerDistanceM, 42.0, 1e-4);
 }

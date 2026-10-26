@@ -234,6 +234,24 @@ void DrawDetonation(app::AppSettings& settings, const sim::Simulation& simulatio
         }
     }
     ImGui::PopStyleColor(3);
+
+    // Pause and frame controls live below the main action, in the same style.
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Button, kAccentDim);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kAccent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, kAccent);
+    const float actionHeight = ImGui::GetFontSize() * 2.2f;
+    const float halfWidth = (ImGui::GetContentRegionAvail().x - 8.0f) * 0.5f;
+    if (ImGui::Button(settings.paused ? "RESUME##main_pause" : "PAUSE##main_pause",
+                      ImVec2(halfWidth, actionHeight))) {
+        settings.paused = !settings.paused;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("FRAME##main_frame", ImVec2(halfWidth, actionHeight))) {
+        actions.frameCamera = true;
+    }
+    ImGui::PopStyleColor(3);
+
     if (rendering) {
         Hint("Stops the current solver and resets the scene. The next click starts "
              "the new explosion.");
@@ -727,26 +745,44 @@ void LoadFonts(float dpiScale) {
 
 UiActions Draw(UiContext& context) {
     UiActions actions;
-    if (!context.settings.showUi) {
-        return actions;
-    }
 
     app::AppSettings& settings = context.settings;
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float panelWidth = ImGui::GetFontSize() * 25.0f;
     const float margin = ImGui::GetFontSize() * 0.85f;
 
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - panelWidth - margin,
-                                   viewport->WorkPos.y + margin));
-    ImGui::SetNextWindowSize(ImVec2(panelWidth, viewport->WorkSize.y - margin * 2.0f));
+    // Animate the control panel to the right when it is collapsed. The handle
+    // stays at the window edge, so the panel can be reopened with a click.
+    static bool panelSlideInitialized = false;
+    static float panelSlide = 0.0f;
+    if (!panelSlideInitialized) {
+        panelSlide = settings.showUi ? 0.0f : 1.0f;
+        panelSlideInitialized = true;
+    }
+    const float targetSlide = settings.showUi ? 0.0f : 1.0f;
+    const float slideSpeed = std::min(1.0f, ImGui::GetIO().DeltaTime * 12.0f);
+    panelSlide += (targetSlide - panelSlide) * slideSpeed;
+    if (std::abs(targetSlide - panelSlide) < 0.001f) {
+        panelSlide = targetSlide;
+    }
+    const float panelOffset = panelSlide * (panelWidth + margin);
+    const bool drawPanel = settings.showUi || panelSlide < 0.999f;
 
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                                   ImGuiWindowFlags_NoSavedSettings;
+    if (drawPanel) {
+        ImGui::SetNextWindowPos(
+            ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - panelWidth - margin +
+                       panelOffset,
+                   viewport->WorkPos.y + margin),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(panelWidth, viewport->WorkSize.y - margin * 2.0f));
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
-    ImGui::Begin("##control_panel", nullptr, flags);
-    ImGui::PopStyleVar();
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                       ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                                       ImGuiWindowFlags_NoSavedSettings;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16.0f, 14.0f));
+        ImGui::Begin("##control_panel", nullptr, flags);
+        ImGui::PopStyleVar();
 
     ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
     ImGui::TextUnformatted("EXPLOSION SIMULATOR");
@@ -756,26 +792,6 @@ UiActions Draw(UiContext& context) {
     ImGui::PopStyleColor();
 
     ImGui::Spacing();
-
-    if (ImGui::Button(settings.paused ? "Resume##top_pause" : "Pause##top_pause",
-                      ImVec2(panelWidth * 0.30f, 0))) {
-        settings.paused = !settings.paused;
-    }
-    ImGui::SameLine();
-    const bool topRendering = !context.simulation.IsArmed();
-    if (ImGui::Button(topRendering ? "Rearm##top_detonate" : "Detonate##top_detonate",
-                      ImVec2(panelWidth * 0.30f, 0))) {
-        if (topRendering) {
-            actions.rearm = true;
-        } else {
-            actions.detonateNow = true;
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Frame##top_frame", ImVec2(panelWidth * 0.24f, 0))) {
-        actions.frameCamera = true;
-    }
-
     ImGui::Separator();
 
     if (ImGui::CollapsingHeader("Detonation", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -802,10 +818,50 @@ UiActions Draw(UiContext& context) {
 
     ImGui::Spacing();
     ImGui::Separator();
-    Hint("Space pause · R rearm · F frame · H hide UI");
+    Hint("Space pause | D detonate | R rearm | F frame | H cycle UI");
     ImGui::End();
+    }
 
-    if (settings.render.showGrid) {
+    // --- Panel handle ------------------------------------------------------
+    const float handleWidth = ImGui::GetFontSize() * 1.15f;
+    const float handleHeight = ImGui::GetFontSize() * 5.2f;
+    const ImVec2 handlePos(viewport->WorkPos.x + viewport->WorkSize.x - handleWidth,
+                           viewport->WorkPos.y + viewport->WorkSize.y * 0.5f -
+                               handleHeight * 0.5f);
+    ImGui::SetNextWindowPos(handlePos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(handleWidth, handleHeight), ImGuiCond_Always);
+    const ImGuiWindowFlags handleFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::Begin("##panel_handle", nullptr, handleFlags);
+    ImGui::InvisibleButton("##panel_handle_click", ImVec2(handleWidth, handleHeight));
+    const bool handleHovered = ImGui::IsItemHovered();
+    if (ImGui::IsItemClicked()) {
+        settings.showUi = !settings.showUi;
+    }
+    if (handleHovered) {
+        ImGui::SetTooltip(settings.showUi ? "Collapse menu" : "Open menu");
+    }
+    ImDrawList* handleDraw = ImGui::GetWindowDrawList();
+    const ImVec2 handleMax(handlePos.x + handleWidth, handlePos.y + handleHeight);
+    handleDraw->AddRectFilled(handlePos, handleMax, IM_COL32(28, 30, 36, 235), 6.0f);
+    if (handleHovered) {
+        handleDraw->AddRect(handlePos, handleMax, IM_COL32(255, 132, 40, 210), 6.0f,
+                            0, 1.5f);
+    }
+    const float gripX = handlePos.x + handleWidth * 0.5f;
+    const float gripY = handlePos.y + handleHeight * 0.5f;
+    for (int i = -1; i <= 1; ++i) {
+        const float y = gripY + float(i) * ImGui::GetFontSize() * 0.5f;
+        handleDraw->AddLine(ImVec2(gripX - ImGui::GetFontSize() * 0.28f, y),
+                            ImVec2(gripX + ImGui::GetFontSize() * 0.28f, y),
+                            IM_COL32(220, 226, 236, 230), 1.5f);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
+
+    if (settings.showOverlays && settings.render.showGrid) {
         DrawScaleBar(context.camera, ImGui::GetIO().DisplaySize);
     }
 
@@ -815,6 +871,7 @@ UiActions Draw(UiContext& context) {
         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings |
         ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoMove;
 
+    if (settings.showOverlays) {
     if (context.simulation.IsArmed()) {
         ImGui::SetNextWindowPos(
             ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
@@ -839,8 +896,8 @@ UiActions Draw(UiContext& context) {
         ImGui::End();
     }
 
-    // Keep the data box visible in every state so the frame rate can always be
-    // read; the countdown is a separate centred overlay above.
+    // Data box while overlays are enabled; the countdown is a separate centred
+    // overlay above.
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + margin, viewport->WorkPos.y + margin),
                             ImGuiCond_Always);
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.11f, 0.115f, 0.125f, 0.88f));
@@ -875,6 +932,7 @@ UiActions Draw(UiContext& context) {
     ImGui::PopStyleVar(3);
     ImGui::PopStyleColor();
     ImGui::End();
+    }
 
     // Scene generation is synchronous on the worker thread; keep the window
     // responsive and show a full-width progress strip along the bottom edge.

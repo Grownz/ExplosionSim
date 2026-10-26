@@ -44,6 +44,9 @@ start-up at 0.4 m above the ground**.
   directional shadow map lets the town cast shadows on the terrain. Seed, density and
   chunk quality are configurable; *Environment > Voronoi chunks* switches between
   convex Voronoi cells (default) and the jittered grid; `--no-scene` disables the scene.
+  Facades use four high-resolution procedural styles (glass, brick, concrete,
+  industrial); vehicles get paint, glass, lamp and tire detail, and trees get bark and
+  foliage variation.
 - **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
   sequence and keeps a readable size while zooming.
 - **Frame-rate cap** – limit the interactive renderer to 30, 60, 90, 120 or 144 fps
@@ -51,9 +54,9 @@ start-up at 0.4 m above the ground**.
 - **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
   MUSCL reconstruction, CFL-adaptive time step) runs on the GPU at 64³–128³ and drives
   the volumetric field. Selectable under *Physics & Effects → Simulation model* in cube or hemisphere mode.
-- **2 s fuse** – the charge is armed on start-up, a countdown is shown, then the
-  detonation is simulated in adjustable slow motion (time scale; 1.0 = real time). The
-  high-fidelity solver follows the same playback scale.
+- **Manual detonation** - the charge starts armed and waits for **Detonate** (or **D**).
+  The fuse setting still applies to automatic restarts; playback uses the adjustable time
+  scale (1.0 = real time), and the high-fidelity solver follows the same scale.
 - **Headless capture** - reproducible PNG screenshots and a benchmark mode without a
   window, ideal for CI and documentation. Scene generation and rendering are deterministic;
   the multithreaded physics solver can vary the exact debris layout between runs.
@@ -99,7 +102,8 @@ it).
 .\build\Release\ExplosionSim.exe
 ```
 
-The application opens a window, arms the 200 g charge and detonates after two seconds.
+The application opens a window and arms the 200 g charge. It waits in the ready state
+until you press **Detonate** (or **D**).
 
 ### Controls
 
@@ -109,9 +113,10 @@ The application opens a window, arms the 200 g charge and detonates after two se
 | Right / middle mouse drag | Pan camera |
 | Mouse wheel | Zoom |
 | Space | Pause / resume |
+| D | Detonate (when armed) |
 | R | Rearm (hold the fuse; Detonate starts the next explosion) |
 | F | Frame the blast |
-| H | Hide / show the interface |
+| H | Collapse panel, hide overlays, restore (cycles) |
 | F12 | Save a PNG screenshot next to the executable |
 
 The orbit and pan controls stop at the ground plane: the camera stays at least 0.4 m above
@@ -166,8 +171,9 @@ Examples:
 |---|---|
 | Charge | 200 g TNT equivalent (837 kJ) |
 | Height of burst | 0.4 m |
-| Fuse | 2.0 s |
+| Fuse | 2.0 s (held until Detonate) |
 | Ambient conditions | 15 °C, 1013 hPa, 1 m/s wind |
+| Scene seed | 69707 |
 | Time scale | 0.06 (slow motion; 1.0 = real time) |
 | Loop | off |
 | Grid overlay | on |

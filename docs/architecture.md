@@ -222,6 +222,10 @@ intact objects always exist outside the destruction radius even for a 100 kt cha
 budget grows with the circle area (π/2 relative to the old square, capped at 3200) and
 blocks are sampled uniformly when the grid is larger than the budget; objects outside the
 disc or inside the destruction radius are rejected before their chunks are generated.
+The default seed is 69707. Buildings select one of four procedural facade styles
+(glass, brick, concrete, industrial); vehicles and trees add high-frequency paint, glass,
+lamp, bark and foliage detail in the scene pixel shader.
+
 Each object stores
 the free-air arrival time (`BlastModel::EstimateArrivalTimeS`), peak overpressure,
 Friedlander impulse (`OverpressureImpulsePaS`) and thermal fluence evaluated at

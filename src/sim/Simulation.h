@@ -61,7 +61,8 @@ public:
     Simulation(const Simulation&) = delete;
     Simulation& operator=(const Simulation&) = delete;
 
-    bool Initialize(const SimulationSettings& settings, core::ThreadPool& pool);
+    bool Initialize(const SimulationSettings& settings, core::ThreadPool& pool,
+                    bool holdFuse = false);
     void Shutdown();
 
     // Restarts the detonation with the current settings.

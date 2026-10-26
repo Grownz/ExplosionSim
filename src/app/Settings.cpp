@@ -180,6 +180,7 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
 
     settings.paused = ParseBool(values, "paused", settings.paused);
     settings.showUi = ParseBool(values, "showUi", settings.showUi);
+    settings.showOverlays = ParseBool(values, "showOverlays", settings.showOverlays);
     const int maxFps = ParseInt(values, "maxFps", settings.maxFps);
     settings.maxFps = (maxFps == 30 || maxFps == 60 || maxFps == 90 ||
                        maxFps == 120 || maxFps == 144)
@@ -245,6 +246,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "[ui]\n";
     stream << "paused=" << (settings.paused ? "true" : "false") << "\n";
     stream << "showUi=" << (settings.showUi ? "true" : "false") << "\n";
+    stream << "showOverlays=" << (settings.showOverlays ? "true" : "false") << "\n";
     stream << "maxFps=" << settings.maxFps << "\n";
     stream << "observerDistanceM=" << settings.observerDistanceM << "\n";
 }

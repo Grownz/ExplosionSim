@@ -841,7 +841,8 @@ void SceneRenderer::UpdateChunkInstances(ID3D11DeviceContext* context,
             instance.state = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
             // The vertices are already in building space.
             instance.textureOrigin = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
-            instance.textureScale = XMFLOAT4(1.0f, 1.0f, 1.0f, 0.0f);
+            instance.textureScale = XMFLOAT4(1.0f, 1.0f, 1.0f,
+                                             float(object.meshVariant & 3));
         }
     }
     if (index == 0) {
@@ -1116,7 +1117,8 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         instance.textureOrigin =
             XMFLOAT4(object.position.x, 0.0f, object.position.z, 0.0f);
         instance.textureScale =
-            XMFLOAT4(object.size.x, object.size.y, object.size.z, 0.0f);
+            XMFLOAT4(object.size.x, object.size.y, object.size.z,
+                     float(object.meshVariant & 3));
         meshes_[meshIndex].instances.push_back(instance);
     }
 
@@ -1176,11 +1178,11 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             instance.params =
                 XMFLOAT4(object.damageAmount * 0.7f, 0.0f, 0.0f, 3.0f);
             instance.state = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
-            // Map the chunk mesh back to the original building space.
-            instance.textureOrigin =
-                XMFLOAT4(chunk.center.x, chunk.center.y, chunk.center.z, 0.0f);
-            instance.textureScale = XMFLOAT4(chunk.half.x * 2.0f, chunk.half.y * 2.0f,
-                                             chunk.half.z * 2.0f, 0.0f);
+            // The hull vertices are already in building space, so keep the
+            // original facade coordinates and style.
+            instance.textureOrigin = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+            instance.textureScale = XMFLOAT4(1.0f, 1.0f, 1.0f,
+                                             float(object.meshVariant & 3));
             meshes_[7].instances.push_back(instance);
         }
     }

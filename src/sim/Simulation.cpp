@@ -30,13 +30,14 @@ bool SceneChanged(const SimulationSettings& a, const SimulationSettings& b) {
 
 } // namespace
 
-bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool& pool) {
+bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool& pool,
+                            bool holdFuse) {
     pool_ = &pool;
     settings_ = settings;
     particles_.Initialize(settings.particleBudget);
     volume_.Initialize(pool_, settings.volumeResolution);
     initialized_ = true;
-    Reset();
+    ResetInternal(holdFuse);
     return true;
 }
 
