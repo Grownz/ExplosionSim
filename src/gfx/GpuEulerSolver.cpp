@@ -135,9 +135,11 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     cbDesc.Usage = D3D11_USAGE_DYNAMIC;
     cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    if (FAILED(device_->CreateBuffer(&cbDesc, nullptr, &constantBuffer_))) {
-        LogError("High-fidelity solver: constant buffer creation failed.");
-        return false;
+    for (auto& buffer : constantBuffers_) {
+        if (FAILED(device_->CreateBuffer(&cbDesc, nullptr, buffer.GetAddressOf()))) {
+            LogError("High-fidelity solver: constant buffer creation failed.");
+            return false;
+        }
     }
 
     D3D11_BUFFER_DESC bufferDesc{};
@@ -250,7 +252,9 @@ void GpuEulerSolver::Shutdown() {
     reduceQuery_.Reset();
     maxSpeedUAV_.Reset();
     maxSpeedBuffer_.Reset();
-    constantBuffer_.Reset();
+    for (auto& buffer : constantBuffers_) {
+        buffer.Reset();
+    }
     linearSampler_.Reset();
     rescaleShader_.Reset();
     renderShader_.Reset();
@@ -283,13 +287,14 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
         XMFLOAT4(oldBounds_.max.x, oldBounds_.max.y, oldBounds_.max.z, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (SUCCEEDED(context_->Map(constantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+    ID3D11Buffer* buffer = constantBuffers_[constantBufferIndex_].Get();
+    constantBufferIndex_ = (constantBufferIndex_ + 1) % kConstantBufferCount;
+    if (SUCCEEDED(context_->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         memcpy(mapped.pData, &constants_, sizeof(constants_));
-        context_->Unmap(constantBuffer_.Get(), 0);
+        context_->Unmap(buffer, 0);
     }
 
-    ID3D11Buffer* buffers[1] = {constantBuffer_.Get()};
-    context_->CSSetConstantBuffers(0, 1, buffers);
+    context_->CSSetConstantBuffers(0, 1, &buffer);
 }
 
 void GpuEulerSolver::BindStateSRV(int index) {
@@ -300,6 +305,11 @@ void GpuEulerSolver::BindStateSRV(int index) {
 void GpuEulerSolver::BindStateUAV(int index) {
     ID3D11UnorderedAccessView* views[2] = {stateA_[index].uav.Get(), stateB_[index].uav.Get()};
     context_->CSSetUnorderedAccessViews(0, 2, views, nullptr);
+}
+
+void GpuEulerSolver::UnbindStateUAVs() {
+    ID3D11UnorderedAccessView* nullUAVs[2] = {nullptr, nullptr};
+    context_->CSSetUnorderedAccessViews(0, 2, nullUAVs, nullptr);
 }
 
 void GpuEulerSolver::UnbindAll() {
@@ -315,15 +325,16 @@ void GpuEulerSolver::DispatchGrid() {
                        UINT((resolution_ + kThreadGroupZ - 1) / kThreadGroupZ));
 }
 
-void GpuEulerSolver::DispatchSweep(int direction, float dt) {
+void GpuEulerSolver::DispatchSweep(int direction) {
     context_->CSSetShader(sweepShaders_[direction].Get(), nullptr, 0);
-    UpdateConstants(direction, dt);
     BindStateSRV(stateIndex_);
     BindStateUAV(1 - stateIndex_);
     BeginPass(SolverPass(int(SolverPass::SweepX) + direction));
     DispatchGrid();
     EndPass();
-    UnbindAll();
+    // Only the state UAVs need unbinding: the next pass reads the other
+    // ping-pong set, and leaving them bound would overlap SRV and UAV slots.
+    UnbindStateUAVs();
     stateIndex_ = 1 - stateIndex_;
 }
 
@@ -439,7 +450,6 @@ void GpuEulerSolver::DispatchReduce() {
     const UINT zeros[4] = {0, 0, 0, 0};
     context_->ClearUnorderedAccessViewUint(maxSpeedUAV_.Get(), zeros);
     context_->CSSetShader(reduceShader_.Get(), nullptr, 0);
-    UpdateConstants(0, 0.0f);
     BindStateSRV(stateIndex_);
 
     ID3D11UnorderedAccessView* uavs[1] = {maxSpeedUAV_.Get()};
@@ -448,7 +458,11 @@ void GpuEulerSolver::DispatchReduce() {
     BeginPass(SolverPass::Reduce);
     DispatchGrid();
     EndPass();
-    UnbindAll();
+
+    // The reduction buffer must not be bound as a UAV while it is copied to the
+    // staging buffer.
+    ID3D11UnorderedAccessView* nullUAV = nullptr;
+    context_->CSSetUnorderedAccessViews(2, 1, &nullUAV, nullptr);
 
     context_->CopyResource(maxSpeedStaging_.Get(), maxSpeedBuffer_.Get());
     if (deterministic_) {
@@ -466,6 +480,8 @@ void GpuEulerSolver::DispatchRender() {
     }
 
     context_->CSSetShader(renderShader_.Get(), nullptr, 0);
+    // The render pass reads Physics.w (simulation time), which has advanced
+    // since the step constants were written. Update once per frame.
     UpdateConstants(0, 0.0f);
     BindStateSRV(stateIndex_);
 
@@ -617,9 +633,13 @@ void GpuEulerSolver::Step(int steps) {
         const float dt = std::clamp(kCfl * dx_ / lastSpeed, 1e-7f, 1.0e-3f);
         const int batch = std::min(remaining, kMaxBatchSteps);
 
+        // The sweep and source constants only change when dt changes, so one
+        // update per sub-batch covers all three sweeps and the reduction.
+        UpdateConstants(0, dt);
+
         for (int step = 0; step < batch; ++step) {
             for (int direction = 0; direction < 3; ++direction) {
-                DispatchSweep(direction, dt);
+                DispatchSweep(direction);
             }
 
             time_ += double(dt);

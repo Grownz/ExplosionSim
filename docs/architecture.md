@@ -182,6 +182,13 @@ step. All passes use `4x4x4` thread groups (the group size is compiled in throug
 10³ 153 ms at 128³/256 steps). The sweep loads the centre cell once and reuses its
 conserved and primitive forms for the update.
 
+The solver keeps a ring of four constant buffers. The sweep/source constants change only
+when `dt` changes, so they are written once per 8-step sub-batch; the render pass refreshes
+them once per frame for its time-based incandescence. Only the two state UAVs are unbound
+between passes. `--solver-benchmark` reports the CPU submission time separately: on the
+reference machine it is ~1.1 ms for 256 steps, far below the GPU time, so the frame time is
+GPU-bound.
+
 ### Solver-only benchmark
 
 `--solver-benchmark` runs the solver without the scene or the raymarcher and reports

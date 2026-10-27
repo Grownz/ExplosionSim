@@ -157,9 +157,10 @@ private:
     void UpdateConstants(int direction, float dt);
     void BindStateSRV(int index);
     void BindStateUAV(int index);
+    void UnbindStateUAVs();
     void UnbindAll();
     void DispatchGrid();
-    void DispatchSweep(int direction, float dt);
+    void DispatchSweep(int direction);
     void DispatchReduce();
     void DispatchRender();
     void BeginPass(SolverPass pass);
@@ -168,6 +169,9 @@ private:
 
     static constexpr float kBoundScale = 512.0f; // must match euler_reduce.hlsl
     static constexpr int kMaxBatchSteps = 8;
+    // Ring of constant buffers so the CPU can submit ahead without overwriting
+    // a buffer the GPU is still reading. Constants change once per sub-batch.
+    static constexpr int kConstantBufferCount = 4;
 
     ID3D11Device* device_ = nullptr;
     ID3D11DeviceContext* context_ = nullptr;
@@ -179,7 +183,8 @@ private:
     ComPtr<ID3D11ComputeShader> renderShader_;
     ComPtr<ID3D11ComputeShader> rescaleShader_;
 
-    ComPtr<ID3D11Buffer> constantBuffer_;
+    ComPtr<ID3D11Buffer> constantBuffers_[kConstantBufferCount];
+    int constantBufferIndex_ = 0;
     Constants constants_{};
     ComPtr<ID3D11SamplerState> linearSampler_;
 

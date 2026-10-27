@@ -1056,6 +1056,7 @@ SolverBenchmarkResult Renderer::BenchmarkSolver(sim::Simulation& simulation,
     }
 
     const auto start = std::chrono::steady_clock::now();
+    double submissionMs = 0.0;
     long long done = 0;
     for (int frame = 0; frame < frames; ++frame) {
         // Mirror Renderer::AdvanceSolver: up to 64 steps per Step() call and
@@ -1065,7 +1066,11 @@ SolverBenchmarkResult Renderer::BenchmarkSolver(sim::Simulation& simulation,
             const int batch = std::min(remaining, 64);
             solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius),
                                   float(simulation.Blast().State().cloudCenterY));
+            const auto submitStart = std::chrono::steady_clock::now();
             solver_.Step(batch);
+            submissionMs += std::chrono::duration<double, std::milli>(
+                                std::chrono::steady_clock::now() - submitStart)
+                                .count();
             remaining -= batch;
             const double advance = solver_.ConsumeAdvance();
             if (advance > 0.0) {
@@ -1073,7 +1078,11 @@ SolverBenchmarkResult Renderer::BenchmarkSolver(sim::Simulation& simulation,
             }
         }
         // Once per frame, and consume the reduction at the frame boundary.
+        const auto renderStart = std::chrono::steady_clock::now();
         solver_.UpdateRenderVolume();
+        submissionMs += std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - renderStart)
+                            .count();
         solver_.WaitForReduction();
         done += std::min<long long>(stepsPerFrame, steps - done);
     }
@@ -1081,6 +1090,7 @@ SolverBenchmarkResult Renderer::BenchmarkSolver(sim::Simulation& simulation,
     result.wallMs = std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - start)
                         .count();
+    result.submissionMs = submissionMs;
 
     result.valid = result.timing.valid;
     result.resolution = solver_.Stats().resolution;

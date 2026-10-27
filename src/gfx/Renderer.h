@@ -48,6 +48,8 @@ struct SolverBenchmarkResult {
     int stepsPerFrame = 0;
     int frames = 0;
     double wallMs = 0.0;
+    // CPU time spent submitting solver work, excluding reduction waits.
+    double submissionMs = 0.0;
     double msPerStep = 0.0;
     double msPerFrame = 0.0;
     float domainHalfExtent = 0.0f;

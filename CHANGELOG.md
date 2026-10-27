@@ -23,6 +23,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **High-fidelity solver submission cleanup** - the constant buffer is a four-slot ring
+  written once per 8-step sub-batch instead of once per dispatch, and the redundant
+  `UnbindAll` after every sweep is reduced to unbinding the two state UAVs.
+  `--solver-benchmark` now reports the CPU submission time separately. On the reference
+  RTX 3090 the submission is ~1.1 ms for 256 steps at 128³/192³, so this is a cleanup
+  without a measurable frame-time change (<1 %); it was kept because it removes redundant
+  API calls and the result is byte-identical.
 - **High-fidelity solver sweep tuning** - each sweep direction has its own entry point
   (the direction constant folds the HLLC selects and keeps the fused source out of the
   X/Y shaders), the middle MUSCL stencil is shared between the two faces, and the thread

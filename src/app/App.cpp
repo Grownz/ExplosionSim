@@ -588,8 +588,10 @@ int App::RunSolverBenchmark() {
             "voxel %.1f mm",
             result.resolution, result.steps, result.frames, result.stepsPerFrame,
             result.domainHalfExtent, result.voxelSize * 1000.0f);
-    LogInfo("  GPU total %.2f ms (%.3f ms/step, %.3f ms/frame), wall %.2f ms",
-            result.timing.totalMs, result.msPerStep, result.msPerFrame, result.wallMs);
+    LogInfo("  GPU total %.2f ms (%.3f ms/step, %.3f ms/frame), CPU submit %.2f ms, "
+            "wall %.2f ms",
+            result.timing.totalMs, result.msPerStep, result.msPerFrame, result.submissionMs,
+            result.wallMs);
     LogInfo("  sweeps %.2f ms (X %.2f, Y %.2f, Z+source %.2f), reduce %.2f ms (%d passes), "
             "render %.2f ms (%d passes)",
             sweepMs, passMs(gfx::SolverPass::SweepX), passMs(gfx::SolverPass::SweepY),
