@@ -13,6 +13,19 @@
 
 static const float PI = 3.14159265359;
 
+// Thread-group size, overridable from the C++ side so the occupancy can be
+// tuned without editing every shader. The reduce pass derives its linear
+// thread index from these values.
+#ifndef EULER_GROUP_X
+#define EULER_GROUP_X 8
+#endif
+#ifndef EULER_GROUP_Y
+#define EULER_GROUP_Y 8
+#endif
+#ifndef EULER_GROUP_Z
+#define EULER_GROUP_Z 8
+#endif
+
 cbuffer SolverConstants : register(b0)
 {
     int4 Grid;          // xyz = resolution, w = sweep direction
@@ -180,25 +193,45 @@ float Minmod(float a, float b)
     return (a * b <= 0.0) ? 0.0 : (abs(a) < abs(b) ? a : b);
 }
 
-// MUSCL reconstruction with minmod limiting. Falls back to the cell-centred
-// state if the reconstructed density or pressure becomes non-physical.
-Primitive Reconstruct(Primitive left, Primitive center, Primitive right, float sign,
-                      Primitive fallback)
+// MUSCL slope (0.5 * minmod) of a three-cell stencil. The middle stencil is
+// shared by the left and right face reconstructions of the same cell.
+Primitive Slope(Primitive left, Primitive center, Primitive right)
+{
+    Primitive s;
+    s.rho = 0.5 * Minmod(center.rho - left.rho, right.rho - center.rho);
+    s.u = 0.5 * Minmod(center.u - left.u, right.u - center.u);
+    s.v = 0.5 * Minmod(center.v - left.v, right.v - center.v);
+    s.w = 0.5 * Minmod(center.w - left.w, right.w - center.w);
+    s.p = 0.5 * Minmod(center.p - left.p, right.p - center.p);
+    s.y = 0.5 * Minmod(center.y - left.y, right.y - center.y);
+    return s;
+}
+
+// Applies a precomputed slope with the given sign. Falls back to the
+// cell-centred state if the reconstructed density or pressure becomes
+// non-physical.
+Primitive ApplySlope(Primitive center, Primitive slope, float sign, Primitive fallback)
 {
     Primitive r;
-    r.rho = center.rho + sign * 0.5 * Minmod(center.rho - left.rho, right.rho - center.rho);
-    r.u = center.u + sign * 0.5 * Minmod(center.u - left.u, right.u - center.u);
-    r.v = center.v + sign * 0.5 * Minmod(center.v - left.v, right.v - center.v);
-    r.w = center.w + sign * 0.5 * Minmod(center.w - left.w, right.w - center.w);
-    r.p = center.p + sign * 0.5 * Minmod(center.p - left.p, right.p - center.p);
-    r.y = saturate(center.y + sign * 0.5 * Minmod(center.y - left.y, right.y - center.y));
+    r.rho = center.rho + sign * slope.rho;
+    r.u = center.u + sign * slope.u;
+    r.v = center.v + sign * slope.v;
+    r.w = center.w + sign * slope.w;
+    r.p = center.p + sign * slope.p;
+    r.y = saturate(center.y + sign * slope.y);
 
-    bool invalid = r.rho <= 1e-6 || r.p <= 1e-3 || !isfinite(r.rho) || !isfinite(r.p);
-    if (invalid)
+    if (!all(isfinite(float2(r.rho, r.p))) || r.rho <= 1e-6 || r.p <= 1e-3)
     {
         return fallback;
     }
     return r;
+}
+
+// MUSCL reconstruction with minmod limiting.
+Primitive Reconstruct(Primitive left, Primitive center, Primitive right, float sign,
+                      Primitive fallback)
+{
+    return ApplySlope(center, Slope(left, center, right), sign, fallback);
 }
 
 float NormalVelocity(Primitive s, int dir)
@@ -207,51 +240,64 @@ float NormalVelocity(Primitive s, int dir)
 }
 
 // HLLC approximate Riemann solver. Returns the fluxes for the (rho,momentum)
-// and (energy, soot) groups.
+// and (energy, soot) groups. The direction selects fold away in the
+// direction-specific sweep entry points, and the repeated products/energies are
+// hoisted so each is evaluated once per face.
 void HllcFlux(Primitive L, Primitive R, int dir, out float4 fluxA, out float2 fluxB)
 {
     const float gamma = Ambient.w;
 
-    float unL = NormalVelocity(L, dir);
-    float unR = NormalVelocity(R, dir);
+    const float unL = NormalVelocity(L, dir);
+    const float unR = NormalVelocity(R, dir);
 
-    float cL = sqrt(gamma * L.p / L.rho);
-    float cR = sqrt(gamma * R.p / R.rho);
+    const float cL = sqrt(gamma * L.p / L.rho);
+    const float cR = sqrt(gamma * R.p / R.rho);
 
-    float SL = min(unL - cL, unR - cR);
-    float SR = max(unL + cL, unR + cR);
+    const float SL = min(unL - cL, unR - cR);
+    const float SR = max(unL + cL, unR + cR);
 
-    float EL = L.p / (gamma - 1.0) + 0.5 * L.rho * (L.u * L.u + L.v * L.v + L.w * L.w);
-    float ER = R.p / (gamma - 1.0) + 0.5 * R.rho * (R.u * R.u + R.v * R.v + R.w * R.w);
+    const float vvL = L.u * L.u + L.v * L.v + L.w * L.w;
+    const float vvR = R.u * R.u + R.v * R.v + R.w * R.w;
+    const float EL = L.p / (gamma - 1.0) + 0.5 * L.rho * vvL;
+    const float ER = R.p / (gamma - 1.0) + 0.5 * R.rho * vvR;
 
-    float4 ULA = float4(L.rho, L.rho * L.u, L.rho * L.v, L.rho * L.w);
-    float4 URA = float4(R.rho, R.rho * R.u, R.rho * R.v, R.rho * R.w);
-    float2 ULB = float2(EL, L.rho * L.y);
-    float2 URB = float2(ER, R.rho * R.y);
+    const float mxL = L.rho * L.u;
+    const float myL = L.rho * L.v;
+    const float mzL = L.rho * L.w;
+    const float mxR = R.rho * R.u;
+    const float myR = R.rho * R.v;
+    const float mzR = R.rho * R.w;
 
-    float4 FLA = float4(L.rho * unL, L.rho * L.u * unL, L.rho * L.v * unL, L.rho * L.w * unL);
+    const float4 ULA = float4(L.rho, mxL, myL, mzL);
+    const float4 URA = float4(R.rho, mxR, myR, mzR);
+    const float2 ULB = float2(EL, L.rho * L.y);
+    const float2 URB = float2(ER, R.rho * R.y);
+
+    float4 FLA = float4(L.rho * unL, mxL * unL, myL * unL, mzL * unL);
     FLA.y += (dir == 0) ? L.p : 0.0;
     FLA.z += (dir == 1) ? L.p : 0.0;
     FLA.w += (dir == 2) ? L.p : 0.0;
-    float2 FLB = float2((EL + L.p) * unL, L.rho * L.y * unL);
+    const float2 FLB = float2((EL + L.p) * unL, L.rho * L.y * unL);
 
-    float4 FRA = float4(R.rho * unR, R.rho * R.u * unR, R.rho * R.v * unR, R.rho * R.w * unR);
+    float4 FRA = float4(R.rho * unR, mxR * unR, myR * unR, mzR * unR);
     FRA.y += (dir == 0) ? R.p : 0.0;
     FRA.z += (dir == 1) ? R.p : 0.0;
     FRA.w += (dir == 2) ? R.p : 0.0;
-    float2 FRB = float2((ER + R.p) * unR, R.rho * R.y * unR);
+    const float2 FRB = float2((ER + R.p) * unR, R.rho * R.y * unR);
 
-    float denom = L.rho * (SL - unL) - R.rho * (SR - unR);
+    const float SLm = SL - unL;
+    const float SRm = SR - unR;
+    const float denom = L.rho * SLm - R.rho * SRm;
     if (abs(denom) < 1e-8)
     {
         // Degenerate star region: fall back to a Rusanov flux.
-        float amax = max(abs(unL) + cL, abs(unR) + cR);
+        const float amax = max(abs(unL) + cL, abs(unR) + cR);
         fluxA = 0.5 * (FLA + FRA) - 0.5 * amax * (URA - ULA);
         fluxB = 0.5 * (FLB + FRB) - 0.5 * amax * (URB - ULB);
         return;
     }
 
-    float SM = (R.p - L.p + L.rho * unL * (SL - unL) - R.rho * unR * (SR - unR)) / denom;
+    const float SM = (R.p - L.p + L.rho * unL * SLm - R.rho * unR * SRm) / denom;
 
     if (SL >= 0.0)
     {
@@ -262,7 +308,7 @@ void HllcFlux(Primitive L, Primitive R, int dir, out float4 fluxA, out float2 fl
 
     if (SM >= 0.0)
     {
-        float starDenom = SL - SM;
+        const float starDenom = SL - SM;
         if (abs(starDenom) < 1e-8)
         {
             fluxA = FLA;
@@ -270,13 +316,13 @@ void HllcFlux(Primitive L, Primitive R, int dir, out float4 fluxA, out float2 fl
             return;
         }
 
-        float rhoStar = L.rho * (SL - unL) / starDenom;
-        float eStar = EL / L.rho + (SM - unL) * (SM + L.p / (L.rho * (SL - unL)));
-        float4 UAstar = float4(rhoStar,
-                               rhoStar * (dir == 0 ? SM : L.u),
-                               rhoStar * (dir == 1 ? SM : L.v),
-                               rhoStar * (dir == 2 ? SM : L.w));
-        float2 UBstar = float2(rhoStar * eStar, rhoStar * L.y);
+        const float rhoStar = L.rho * SLm / starDenom;
+        const float eStar = EL / L.rho + (SM - unL) * (SM + L.p / (L.rho * SLm));
+        const float4 UAstar = float4(rhoStar,
+                                     rhoStar * (dir == 0 ? SM : L.u),
+                                     rhoStar * (dir == 1 ? SM : L.v),
+                                     rhoStar * (dir == 2 ? SM : L.w));
+        const float2 UBstar = float2(rhoStar * eStar, rhoStar * L.y);
         fluxA = FLA + SL * (UAstar - ULA);
         fluxB = FLB + SL * (UBstar - ULB);
         return;
@@ -284,7 +330,7 @@ void HllcFlux(Primitive L, Primitive R, int dir, out float4 fluxA, out float2 fl
 
     if (SR > 0.0)
     {
-        float starDenom = SR - SM;
+        const float starDenom = SR - SM;
         if (abs(starDenom) < 1e-8)
         {
             fluxA = FRA;
@@ -292,13 +338,13 @@ void HllcFlux(Primitive L, Primitive R, int dir, out float4 fluxA, out float2 fl
             return;
         }
 
-        float rhoStar = R.rho * (SR - unR) / starDenom;
-        float eStar = ER / R.rho + (SM - unR) * (SM + R.p / (R.rho * (SR - unR)));
-        float4 UAstar = float4(rhoStar,
-                               rhoStar * (dir == 0 ? SM : R.u),
-                               rhoStar * (dir == 1 ? SM : R.v),
-                               rhoStar * (dir == 2 ? SM : R.w));
-        float2 UBstar = float2(rhoStar * eStar, rhoStar * R.y);
+        const float rhoStar = R.rho * SRm / starDenom;
+        const float eStar = ER / R.rho + (SM - unR) * (SM + R.p / (R.rho * SRm));
+        const float4 UAstar = float4(rhoStar,
+                                     rhoStar * (dir == 0 ? SM : R.u),
+                                     rhoStar * (dir == 1 ? SM : R.v),
+                                     rhoStar * (dir == 2 ? SM : R.w));
+        const float2 UBstar = float2(rhoStar * eStar, rhoStar * R.y);
         fluxA = FRA + SR * (UAstar - URA);
         fluxB = FRB + SR * (UBstar - URB);
         return;
@@ -311,8 +357,7 @@ void HllcFlux(Primitive L, Primitive R, int dir, out float4 fluxA, out float2 fl
 // Restores positivity and protects against non-finite values.
 void Sanitise(inout float4 a, inout float2 b)
 {
-    if (!isfinite(a.x) || !isfinite(a.y) || !isfinite(a.z) || !isfinite(a.w) ||
-        !isfinite(b.x) || !isfinite(b.y))
+    if (!all(isfinite(a)) || !all(isfinite(b)))
     {
         a = float4(Ambient.x, 0.0, 0.0, 0.0);
         b = float2(Ambient.y / (Ambient.w - 1.0), 0.0);
@@ -320,8 +365,8 @@ void Sanitise(inout float4 a, inout float2 b)
     }
 
     a.x = max(a.x, 1e-6);
-    float3 velocity = a.yzw / a.x;
-    float kinetic = 0.5 * a.x * dot(velocity, velocity);
+    const float3 velocity = a.yzw / a.x;
+    const float kinetic = 0.5 * a.x * dot(velocity, velocity);
     b.x = max(b.x, kinetic + 1e-3);
     b.y = max(b.y, 0.0);
 }
@@ -341,14 +386,15 @@ static const float kSpongeRate = 45.0;
 
 void ApplySource(inout float4 a, inout float2 b, int3 cell)
 {
-    float rho = max(a.x, 1e-6);
-    float3 velocity = a.yzw / rho;
+    const float rho = max(a.x, 1e-6);
+    const float3 velocity = a.yzw / rho;
     float energy = b.x;
     float soot = b.y;
 
-    float pressure = max((Ambient.w - 1.0) * (energy - 0.5 * rho * dot(velocity, velocity)), 1e-3);
-    float temperature = AmbientTemperature(rho, pressure);
-    float3 world = DomainMin.xyz + (float3(cell) + 0.5) * DomainMin.w;
+    const float pressure =
+        max((Ambient.w - 1.0) * (energy - 0.5 * rho * dot(velocity, velocity)), 1e-3);
+    const float temperature = AmbientTemperature(rho, pressure);
+    const float3 world = DomainMin.xyz + (float3(cell) + 0.5) * DomainMin.w;
 
     // Net buoyancy (only the density difference relative to the ambient air).
     float excess = rho - Ambient.x;

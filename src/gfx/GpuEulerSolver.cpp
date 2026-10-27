@@ -15,7 +15,9 @@ namespace ex::gfx {
 
 namespace {
 
-constexpr int kThreadGroupSize = 8;
+constexpr int kThreadGroupX = 4;
+constexpr int kThreadGroupY = 4;
+constexpr int kThreadGroupZ = 4;
 constexpr float kCooling = 2.0e4f;
 constexpr float kCfl = 0.20f;
 
@@ -73,25 +75,38 @@ bool GpuEulerSolver::Initialize(ID3D11Device* device, ID3D11DeviceContext* conte
 }
 
 bool GpuEulerSolver::CreateComputeShaders() {
-    auto compile = [](const wchar_t* relativePath, const char* entry) {
+    // The group size is compiled into every solver shader. Keeping it in one
+    // place makes occupancy experiments a one-line change.
+    const std::string groupX = std::to_string(kThreadGroupX);
+    const std::string groupY = std::to_string(kThreadGroupY);
+    const std::string groupZ = std::to_string(kThreadGroupZ);
+    const D3D_SHADER_MACRO defines[] = {
+        {"EULER_GROUP_X", groupX.c_str()},
+        {"EULER_GROUP_Y", groupY.c_str()},
+        {"EULER_GROUP_Z", groupZ.c_str()},
+        {nullptr, nullptr},
+    };
+
+    auto compile = [&defines](const wchar_t* relativePath, const char* entry) {
         const std::wstring path = ResolveAssetPath(relativePath);
         if (path.empty()) {
             LogError("Compute shader not found: %ls", relativePath);
             return ComPtr<ID3DBlob>{};
         }
         std::string errors;
-        return CompileShaderFile(path, entry, "cs_5_0", errors);
+        return CompileShaderFile(path, entry, "cs_5_0", errors, defines);
     };
 
     auto initBlob = compile(L"assets\\shaders\\euler_init.hlsl", "CSInit");
-    auto sweepBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweep");
+    auto sweepXBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepX");
+    auto sweepYBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepY");
     auto sweepZBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepZ");
     auto reduceBlob = compile(L"assets\\shaders\\euler_reduce.hlsl", "CSReduce");
     auto renderBlob = compile(L"assets\\shaders\\euler_render.hlsl", "CSRender");
     auto rescaleBlob = compile(L"assets\\shaders\\euler_rescale.hlsl", "CSRescale");
 
-    if (!initBlob || !sweepBlob || !sweepZBlob || !reduceBlob || !renderBlob ||
-        !rescaleBlob) {
+    if (!initBlob || !sweepXBlob || !sweepYBlob || !sweepZBlob || !reduceBlob ||
+        !renderBlob || !rescaleBlob) {
         LogError("High-fidelity solver: shader compilation failed.");
         return false;
     }
@@ -102,8 +117,10 @@ bool GpuEulerSolver::CreateComputeShaders() {
                                                              &shader));
     };
 
-    if (!create(initBlob.Get(), initShader_) || !create(sweepBlob.Get(), sweepShader_) ||
-        !create(sweepZBlob.Get(), sweepZShader_) ||
+    if (!create(initBlob.Get(), initShader_) ||
+        !create(sweepXBlob.Get(), sweepShaders_[0]) ||
+        !create(sweepYBlob.Get(), sweepShaders_[1]) ||
+        !create(sweepZBlob.Get(), sweepShaders_[2]) ||
         !create(reduceBlob.Get(), reduceShader_) ||
         !create(renderBlob.Get(), renderShader_) || !create(rescaleBlob.Get(), rescaleShader_)) {
         LogError("High-fidelity solver: failed to create compute shader objects.");
@@ -238,8 +255,9 @@ void GpuEulerSolver::Shutdown() {
     rescaleShader_.Reset();
     renderShader_.Reset();
     reduceShader_.Reset();
-    sweepZShader_.Reset();
-    sweepShader_.Reset();
+    for (auto& shader : sweepShaders_) {
+        shader.Reset();
+    }
     initShader_.Reset();
     device_ = nullptr;
     context_ = nullptr;
@@ -291,18 +309,19 @@ void GpuEulerSolver::UnbindAll() {
     context_->CSSetUnorderedAccessViews(0, 3, nullUAVs, nullptr);
 }
 
-void GpuEulerSolver::Dispatch(int groups) {
-    context_->Dispatch(UINT(groups), UINT(groups), UINT(groups));
+void GpuEulerSolver::DispatchGrid() {
+    context_->Dispatch(UINT((resolution_ + kThreadGroupX - 1) / kThreadGroupX),
+                       UINT((resolution_ + kThreadGroupY - 1) / kThreadGroupY),
+                       UINT((resolution_ + kThreadGroupZ - 1) / kThreadGroupZ));
 }
 
 void GpuEulerSolver::DispatchSweep(int direction, float dt) {
-    context_->CSSetShader(direction == 2 ? sweepZShader_.Get() : sweepShader_.Get(),
-                          nullptr, 0);
+    context_->CSSetShader(sweepShaders_[direction].Get(), nullptr, 0);
     UpdateConstants(direction, dt);
     BindStateSRV(stateIndex_);
     BindStateUAV(1 - stateIndex_);
     BeginPass(SolverPass(int(SolverPass::SweepX) + direction));
-    Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    DispatchGrid();
     EndPass();
     UnbindAll();
     stateIndex_ = 1 - stateIndex_;
@@ -427,7 +446,7 @@ void GpuEulerSolver::DispatchReduce() {
     context_->CSSetUnorderedAccessViews(2, 1, uavs, nullptr);
 
     BeginPass(SolverPass::Reduce);
-    Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    DispatchGrid();
     EndPass();
     UnbindAll();
 
@@ -454,7 +473,7 @@ void GpuEulerSolver::DispatchRender() {
     context_->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
     BeginPass(SolverPass::Render);
-    Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    DispatchGrid();
     EndPass();
     UnbindAll();
 }
@@ -562,7 +581,7 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     context_->CSSetShader(initShader_.Get(), nullptr, 0);
     UpdateConstants(0, 0.0f);
     BindStateUAV(0);
-    Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    DispatchGrid();
     UnbindAll();
 
     UpdateRenderVolume();
@@ -663,7 +682,7 @@ bool GpuEulerSolver::RescaleDomain(float factor) {
     BindStateUAV(1 - stateIndex_);
     ID3D11SamplerState* sampler = linearSampler_.Get();
     context_->CSSetSamplers(0, 1, &sampler);
-    Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    DispatchGrid();
     UnbindAll();
     ID3D11SamplerState* nullSampler = nullptr;
     context_->CSSetSamplers(0, 1, &nullSampler);

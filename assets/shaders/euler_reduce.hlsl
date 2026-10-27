@@ -32,10 +32,10 @@ uint Quantize(float value)
 // Reduces the maximum signal speed (|v| + c) plus the visible product bounds.
 // The bounds feed the auto-scale trigger so it reacts to the plume the solver
 // actually produced instead of the analytic estimate.
-[numthreads(8, 8, 8)]
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
 void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThreadID)
 {
-    uint localIndex = groupThread.x + groupThread.y * 8 + groupThread.z * 64;
+    uint localIndex = groupThread.x + groupThread.y * EULER_GROUP_X + groupThread.z * EULER_GROUP_X * EULER_GROUP_Y;
     if (localIndex == 0)
     {
         gMaxSpeed = 0;

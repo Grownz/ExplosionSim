@@ -23,6 +23,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **High-fidelity solver sweep tuning** - each sweep direction has its own entry point
+  (the direction constant folds the HLLC selects and keeps the fused source out of the
+  X/Y shaders), the middle MUSCL stencil is shared between the two faces, and the thread
+  groups are `4x4x4` instead of `8x8x8`. Measured on an RTX 3090 with 256 steps: 128³
+  144.5 -> 121.0 ms (-16 %), 192³ 494.6 -> 420.7 ms (-15 %). The rendered frame is still
+  byte-identical. Branchless HLLC, `rsqrt` and reciprocal hoisting were measured and
+  rejected (10 % slower or no measurable gain).
 - **High-fidelity solver P0 bundle** - the buoyancy/radiation source terms are fused into
   the Z sweep, the sweep reuses the centre cell's conserved state, `StateB` is packed as
   RG32F and the render volume updates once per frame instead of after every sub-batch. A

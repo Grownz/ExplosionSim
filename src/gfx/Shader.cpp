@@ -107,7 +107,8 @@ std::wstring ShaderDirectory() {
 }
 
 ComPtr<ID3DBlob> CompileShaderFile(const std::wstring& path, const char* entryPoint,
-                                   const char* profile, std::string& errors) {
+                                   const char* profile, std::string& errors,
+                                   const D3D_SHADER_MACRO* defines) {
     const std::wstring shaderDir = ShaderDirectory();
     IncludeHandler includeHandler(shaderDir.empty() ? L".\\" : shaderDir);
 
@@ -118,7 +119,7 @@ ComPtr<ID3DBlob> CompileShaderFile(const std::wstring& path, const char* entryPo
 
     ComPtr<ID3DBlob> code;
     ComPtr<ID3DBlob> messages;
-    const HRESULT hr = D3DCompileFromFile(path.c_str(), nullptr, &includeHandler, entryPoint, profile,
+    const HRESULT hr = D3DCompileFromFile(path.c_str(), defines, &includeHandler, entryPoint, profile,
                                           flags, 0, &code, &messages);
     if (FAILED(hr)) {
         if (messages) {

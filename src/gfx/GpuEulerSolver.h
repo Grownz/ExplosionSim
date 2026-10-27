@@ -158,7 +158,7 @@ private:
     void BindStateSRV(int index);
     void BindStateUAV(int index);
     void UnbindAll();
-    void Dispatch(int groups);
+    void DispatchGrid();
     void DispatchSweep(int direction, float dt);
     void DispatchReduce();
     void DispatchRender();
@@ -174,8 +174,7 @@ private:
     uint64_t videoMemoryBytes_ = 0;
 
     ComPtr<ID3D11ComputeShader> initShader_;
-    ComPtr<ID3D11ComputeShader> sweepShader_;
-    ComPtr<ID3D11ComputeShader> sweepZShader_;
+    ComPtr<ID3D11ComputeShader> sweepShaders_[3];
     ComPtr<ID3D11ComputeShader> reduceShader_;
     ComPtr<ID3D11ComputeShader> renderShader_;
     ComPtr<ID3D11ComputeShader> rescaleShader_;

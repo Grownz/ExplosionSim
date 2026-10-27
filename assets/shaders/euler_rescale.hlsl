@@ -4,7 +4,7 @@
 // count. Cells outside the old domain are filled with ambient air. Used for the
 // high-fidelity auto-scale: the box grows, dx grows, the CFL step grows and the
 // effective accuracy drops while the cost per step stays constant.
-[numthreads(8, 8, 8)]
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
 void CSRescale(uint3 id : SV_DispatchThreadID)
 {
     if (any(id >= (uint3)Grid.xyz))

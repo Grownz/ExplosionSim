@@ -3,17 +3,19 @@
 // One directional finite-volume sweep with MUSCL reconstruction and HLLC fluxes.
 // The Z sweep also applies the source terms, so a step is three dispatches
 // instead of four and the state never round-trips through memory between the Z
-// update and the source terms. X/Y and Z use separate entry points: the fused
-// source code raises the temp-register count, and compiling it into the X/Y
-// sweep would reduce occupancy for all three passes.
-void SweepBody(uint3 id, bool applySource)
+// update and the source terms.
+//
+// Each direction has its own entry point. `dir` is then a compile-time constant,
+// which folds the direction selects in HLLC and keeps the X/Y shaders free of the
+// fused source code (the source raises the temp-register count and would reduce
+// occupancy for all three passes).
+void SweepBody(uint3 id, int dir, bool applySource)
 {
     if (any(id >= (uint3)Grid.xyz))
     {
         return;
     }
 
-    const int dir = Grid.w;
     const int3 offset = dir == 0 ? int3(1, 0, 0) : (dir == 1 ? int3(0, 1, 0) : int3(0, 0, 1));
     const int3 cell = int3(id);
 
@@ -33,11 +35,13 @@ void SweepBody(uint3 id, bool applySource)
     Primitive wp1 = LoadPrimitive(cell + offset);
     Primitive wp2 = LoadPrimitive(cell + 2 * offset);
 
-    // Faces i-1/2 and i+1/2.
+    // Faces i-1/2 and i+1/2. The middle stencil (wm1, w0, wp1) feeds both
+    // faces, so its MUSCL slope is computed once instead of twice.
     Primitive leftMinus = Reconstruct(wm2, wm1, w0, 1.0, wm1);
-    Primitive rightMinus = Reconstruct(wm1, w0, wp1, -1.0, w0);
-    Primitive leftPlus = Reconstruct(wm1, w0, wp1, 1.0, w0);
     Primitive rightPlus = Reconstruct(w0, wp1, wp2, -1.0, wp1);
+    Primitive midSlope = Slope(wm1, w0, wp1);
+    Primitive rightMinus = ApplySlope(w0, midSlope, -1.0, w0);
+    Primitive leftPlus = ApplySlope(w0, midSlope, 1.0, w0);
 
     float4 fluxMinusA;
     float4 fluxPlusA;
@@ -67,14 +71,20 @@ void SweepBody(uint3 id, bool applySource)
     OutB[id] = b;
 }
 
-[numthreads(8, 8, 8)]
-void CSSweep(uint3 id : SV_DispatchThreadID)
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
+void CSSweepX(uint3 id : SV_DispatchThreadID)
 {
-    SweepBody(id, false);
+    SweepBody(id, 0, false);
 }
 
-[numthreads(8, 8, 8)]
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
+void CSSweepY(uint3 id : SV_DispatchThreadID)
+{
+    SweepBody(id, 1, false);
+}
+
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
 void CSSweepZ(uint3 id : SV_DispatchThreadID)
 {
-    SweepBody(id, true);
+    SweepBody(id, 2, true);
 }

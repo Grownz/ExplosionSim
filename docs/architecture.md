@@ -165,9 +165,11 @@ volume raymarcher.
    The Z sweep also applies the source terms (buoyancy, entrainment drag, cap closure,
    soot cooling, absorbing sponge) to the state it just produced, so the state does not
    round-trip through memory. The order is still X, Y, Z, Source and the equations are
-   unchanged. X/Y and Z use separate entry points (`CSSweep` / `CSSweepZ`): compiling the
-   fused source code into the X/Y sweep raises its temp-register count from 22 to 24 and
-   would cost about 12 % of the total solver time (17 % of the X/Y pass time).
+   unchanged. Each direction has its own entry point (`CSSweepX` / `CSSweepY` /
+   `CSSweepZ`): the direction constant folds the HLLC selects, and the fused source code
+   stays out of the X/Y shaders (it raises their temp-register count from 22 to 24 and
+   would cost about 12 % of the total solver time). The middle MUSCL stencil is shared by
+   both faces of a cell, so 18 minmods are evaluated instead of 24.
 3. **Reduce** – group-shared maximum of the signal speed `|v| + c`, written to a
    one-element structured buffer.
 4. **Render** – converts the state into the render volume (soot incandescence, shock
@@ -175,8 +177,10 @@ volume raymarcher.
    every sub-batch.
 
 Three sweeps per step mean the ping-pong index returns to its starting value after each
-step. All passes are dispatched with `8x8x8` thread groups. The sweep loads the centre
-cell once and reuses its conserved and primitive forms for the update.
+step. All passes use `4x4x4` thread groups (the group size is compiled in through
+`EULER_GROUP_X/Y/Z` and was tuned on an RTX 3090: 4³ 121 ms, 8³ 137 ms, 16×8×8 146 ms and
+10³ 153 ms at 128³/256 steps). The sweep loads the centre cell once and reuses its
+conserved and primitive forms for the update.
 
 ### Solver-only benchmark
 

@@ -8,7 +8,7 @@
 // the grid. The density and energy density are therefore scaled by the ratio of
 // the full sphere volume to the above-ground volume, so the total mass and
 // energy of the charge are preserved instead of being silently truncated.
-[numthreads(8, 8, 8)]
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
 void CSInit(uint3 id : SV_DispatchThreadID)
 {
     if (any(id >= (uint3)Grid.xyz))
