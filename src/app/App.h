@@ -26,6 +26,7 @@ struct LaunchOptions {
     bool debugLayer = false;
     bool benchmark = false;
     int benchmarkFrames = 120;
+    bool solverBenchmark = false;
     bool headless = false;
     bool highFidelity = false;
     bool reducedOrder = false;
@@ -61,6 +62,7 @@ private:
 
     int RunInteractive();
     int RunHeadless();
+    int RunSolverBenchmark();
 
     void HandleCameraInput(float dt);
     void FrameCamera();

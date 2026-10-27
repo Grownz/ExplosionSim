@@ -39,6 +39,22 @@ struct FrameInfo {
     float cpuRenderMs = 0.0f;
 };
 
+// Result of the solver-only benchmark: GPU pass timings from timestamp queries
+// plus the wall-clock time of the measured loop.
+struct SolverBenchmarkResult {
+    bool valid = false;
+    int resolution = 0;
+    long long steps = 0;
+    int stepsPerFrame = 0;
+    int frames = 0;
+    double wallMs = 0.0;
+    double msPerStep = 0.0;
+    double msPerFrame = 0.0;
+    float domainHalfExtent = 0.0f;
+    float voxelSize = 0.0f;
+    SolverTiming timing;
+};
+
 class Renderer {
 public:
     bool Initialize(GfxDevice& device);
@@ -61,6 +77,12 @@ public:
     // Simulated time advanced by the solver during the last frame.
     double ConsumeSolverAdvance();
     void StepSolverOnce(int steps = 8);
+
+    // Solver-only benchmark: steps the GPU solver without rendering the scene
+    // and returns per-pass GPU timings. Uses the non-blocking reduction path so
+    // the numbers match interactive use.
+    SolverBenchmarkResult BenchmarkSolver(sim::Simulation& simulation, long long steps,
+                                          int stepsPerFrame);
     const SolverStats& Solver() const { return solver_.Stats(); }
     bool SolverBudgetHit() const { return solverBudgetHit_; }
 

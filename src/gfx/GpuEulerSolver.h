@@ -4,6 +4,7 @@
 #include <d3d11.h>
 
 #include <cstdint>
+#include <vector>
 
 #include "gfx/GfxDevice.h"
 #include "sim/VolumeBaker.h"
@@ -47,10 +48,28 @@ struct SolverStats {
     bool fieldBoundsValid = false;
 };
 
+// GPU passes the solver can time with D3D11 timestamp queries.
+enum class SolverPass : int {
+    SweepX = 0,
+    SweepY,
+    SweepZ,   // includes the fused source terms
+    Reduce,
+    Render,   // render-volume update
+    Count
+};
+
+// Per-pass GPU timings from one BeginTiming/ResolveTiming window.
+struct SolverTiming {
+    bool valid = false;
+    double totalMs = 0.0;
+    double passMs[int(SolverPass::Count)] = {};
+    int passCount[int(SolverPass::Count)] = {};
+};
+
 // Finite-volume compressible Euler solver running on the GPU (D3D11 compute).
-// HLLC Riemann solver, MUSCL/minmod reconstruction, dimensional splitting,
-// buoyancy and soot cooling. The state is converted into the volume field used
-// by the existing raymarcher.
+// HLLC Riemann solver, MUSCL/minmod reconstruction, dimensional splitting, and
+// buoyancy/soot cooling fused into the Z sweep. The state is converted into the
+// volume field used by the existing raymarcher.
 class GpuEulerSolver {
 public:
     bool Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
@@ -65,6 +84,22 @@ public:
     // Headless captures wait for the reduction so the time step sequence is
     // reproducible; the interactive path keeps the non-blocking pipeline.
     void SetDeterministic(bool deterministic) { deterministic_ = deterministic; }
+
+    // GPU timestamp timing for the solver-only benchmark. BeginTiming allocates
+    // queries for at most `maxPasses` passes, ResolveTiming blocks once to read
+    // the results. Outside the benchmark no queries are created or recorded.
+    bool BeginTiming(int maxPasses);
+    void EndTiming();
+    SolverTiming ResolveTiming();
+
+    // Consumes a finished reduction without blocking. Step() polls it once per
+    // sub-batch; the solver benchmark also uses it at frame boundaries.
+    bool PollReduction();
+
+    // Benchmark helper: waits (bounded) for the in-flight reduction. Used at
+    // frame boundaries so the benchmark's maximum speed tracks the flow like
+    // the interactive path, which polls once per frame.
+    bool WaitForReduction();
 
     // Analytic cloud radius and centre used by the sub-grid entrainment/cap
     // closure. Call before stepping with the current reduced-order cloud state.
@@ -125,10 +160,10 @@ private:
     void UnbindAll();
     void Dispatch(int groups);
     void DispatchSweep(int direction, float dt);
-    void DispatchSource(float dt);
     void DispatchReduce();
     void DispatchRender();
-    bool PollReduction();
+    void BeginPass(SolverPass pass);
+    void EndPass();
     void ConsumeStaging();
 
     static constexpr float kBoundScale = 512.0f; // must match euler_reduce.hlsl
@@ -140,7 +175,7 @@ private:
 
     ComPtr<ID3D11ComputeShader> initShader_;
     ComPtr<ID3D11ComputeShader> sweepShader_;
-    ComPtr<ID3D11ComputeShader> sourceShader_;
+    ComPtr<ID3D11ComputeShader> sweepZShader_;
     ComPtr<ID3D11ComputeShader> reduceShader_;
     ComPtr<ID3D11ComputeShader> renderShader_;
     ComPtr<ID3D11ComputeShader> rescaleShader_;
@@ -161,6 +196,15 @@ private:
     ComPtr<ID3D11Query> reduceQuery_;
     bool reducePending_ = false;
     bool deterministic_ = false;
+
+    // GPU timestamp pool, allocated lazily by BeginTiming.
+    ComPtr<ID3D11Query> timingDisjoint_;
+    std::vector<ComPtr<ID3D11Query>> timingQueries_;
+    std::vector<uint8_t> timingLabels_;
+    int timingQueryLimit_ = 0;
+    int timingIndex_ = 0;
+    int timingOpenPass_ = -1;
+    bool timingActive_ = false;
 
     EulerConfig config_{};
     sim::VolumeBounds bounds_{};

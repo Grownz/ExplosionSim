@@ -4,8 +4,10 @@
 #include "gfx/Shader.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
+#include <thread>
 
 using namespace DirectX;
 
@@ -41,6 +43,24 @@ bool CreateVolumeTexture(ID3D11Device* device, int resolution, DXGI_FORMAT forma
     return true;
 }
 
+// D3D11 returns S_FALSE from GetData while a query is still in flight. The
+// benchmark resolves its timings once, after all work was submitted, so polling
+// until the GPU catches up is fine here.
+template <typename T>
+bool ReadQueryBlocking(ID3D11DeviceContext* context, ID3D11Query* query, T& data) {
+    for (int attempt = 0; attempt < 10000; ++attempt) {
+        const HRESULT result = context->GetData(query, &data, sizeof(T), 0);
+        if (result == S_OK) {
+            return true;
+        }
+        if (result != S_FALSE) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
+}
+
 } // namespace
 
 bool GpuEulerSolver::Initialize(ID3D11Device* device, ID3D11DeviceContext* context,
@@ -65,12 +85,12 @@ bool GpuEulerSolver::CreateComputeShaders() {
 
     auto initBlob = compile(L"assets\\shaders\\euler_init.hlsl", "CSInit");
     auto sweepBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweep");
-    auto sourceBlob = compile(L"assets\\shaders\\euler_source.hlsl", "CSSource");
+    auto sweepZBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepZ");
     auto reduceBlob = compile(L"assets\\shaders\\euler_reduce.hlsl", "CSReduce");
     auto renderBlob = compile(L"assets\\shaders\\euler_render.hlsl", "CSRender");
     auto rescaleBlob = compile(L"assets\\shaders\\euler_rescale.hlsl", "CSRescale");
 
-    if (!initBlob || !sweepBlob || !sourceBlob || !reduceBlob || !renderBlob ||
+    if (!initBlob || !sweepBlob || !sweepZBlob || !reduceBlob || !renderBlob ||
         !rescaleBlob) {
         LogError("High-fidelity solver: shader compilation failed.");
         return false;
@@ -83,7 +103,8 @@ bool GpuEulerSolver::CreateComputeShaders() {
     };
 
     if (!create(initBlob.Get(), initShader_) || !create(sweepBlob.Get(), sweepShader_) ||
-        !create(sourceBlob.Get(), sourceShader_) || !create(reduceBlob.Get(), reduceShader_) ||
+        !create(sweepZBlob.Get(), sweepZShader_) ||
+        !create(reduceBlob.Get(), reduceShader_) ||
         !create(renderBlob.Get(), renderShader_) || !create(rescaleBlob.Get(), rescaleShader_)) {
         LogError("High-fidelity solver: failed to create compute shader objects.");
         return false;
@@ -159,9 +180,11 @@ bool GpuEulerSolver::CreateTextures(int resolution) {
     ReleaseVolumeResources();
     resolution_ = std::clamp(resolution, 32, 512);
 
-    // 4 state textures (two ping-pong sets, RGBA32F) + render volume (RGBA16F).
+    // 4 state textures (two ping-pong sets: A RGBA32F, B RG32F) + render
+    // volume (RGBA16F).
     const uint64_t voxels = uint64_t(resolution_) * resolution_ * resolution_;
-    const uint64_t requiredBytes = voxels * 16ull * 4ull + voxels * 8ull;
+    const uint64_t requiredBytes = voxels * 16ull * 2ull + voxels * 8ull * 2ull +
+                                   voxels * 8ull;
     if (videoMemoryBytes_ > 0 && requiredBytes > videoMemoryBytes_ * 3ull / 4ull) {
         LogError("High-fidelity solver: %d^3 needs %.2f GB of VRAM, but only %.2f GB are "
                  "available. Reduce the solver grid.",
@@ -173,7 +196,7 @@ bool GpuEulerSolver::CreateTextures(int resolution) {
     for (int i = 0; i < 2; ++i) {
         if (!CreateVolumeTexture(device_, resolution_, DXGI_FORMAT_R32G32B32A32_FLOAT,
                                  &stateA_[i].texture, &stateA_[i].srv, &stateA_[i].uav) ||
-            !CreateVolumeTexture(device_, resolution_, DXGI_FORMAT_R32G32B32A32_FLOAT,
+            !CreateVolumeTexture(device_, resolution_, DXGI_FORMAT_R32G32_FLOAT,
                                  &stateB_[i].texture, &stateB_[i].srv, &stateB_[i].uav)) {
             LogError("High-fidelity solver: state texture creation failed.");
             return false;
@@ -204,6 +227,8 @@ void GpuEulerSolver::ReleaseVolumeResources() {
 
 void GpuEulerSolver::Shutdown() {
     ReleaseVolumeResources();
+    timingQueries_.clear();
+    timingDisjoint_.Reset();
     maxSpeedStaging_.Reset();
     reduceQuery_.Reset();
     maxSpeedUAV_.Reset();
@@ -213,7 +238,7 @@ void GpuEulerSolver::Shutdown() {
     rescaleShader_.Reset();
     renderShader_.Reset();
     reduceShader_.Reset();
-    sourceShader_.Reset();
+    sweepZShader_.Reset();
     sweepShader_.Reset();
     initShader_.Reset();
     device_ = nullptr;
@@ -271,23 +296,124 @@ void GpuEulerSolver::Dispatch(int groups) {
 }
 
 void GpuEulerSolver::DispatchSweep(int direction, float dt) {
-    context_->CSSetShader(sweepShader_.Get(), nullptr, 0);
+    context_->CSSetShader(direction == 2 ? sweepZShader_.Get() : sweepShader_.Get(),
+                          nullptr, 0);
     UpdateConstants(direction, dt);
     BindStateSRV(stateIndex_);
     BindStateUAV(1 - stateIndex_);
+    BeginPass(SolverPass(int(SolverPass::SweepX) + direction));
     Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    EndPass();
     UnbindAll();
     stateIndex_ = 1 - stateIndex_;
 }
 
-void GpuEulerSolver::DispatchSource(float dt) {
-    context_->CSSetShader(sourceShader_.Get(), nullptr, 0);
-    UpdateConstants(0, dt);
-    BindStateSRV(stateIndex_);
-    BindStateUAV(1 - stateIndex_);
-    Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
-    UnbindAll();
-    stateIndex_ = 1 - stateIndex_;
+void GpuEulerSolver::BeginPass(SolverPass pass) {
+    if (!timingActive_ || timingIndex_ + 1 >= timingQueryLimit_) {
+        return;
+    }
+    timingLabels_.push_back(uint8_t(pass));
+    context_->End(timingQueries_[timingIndex_++].Get());
+    timingOpenPass_ = int(timingLabels_.size()) - 1;
+}
+
+void GpuEulerSolver::EndPass() {
+    if (!timingActive_ || timingOpenPass_ < 0) {
+        return;
+    }
+    context_->End(timingQueries_[timingIndex_++].Get());
+    timingOpenPass_ = -1;
+}
+
+bool GpuEulerSolver::BeginTiming(int maxPasses) {
+    if (!initialized_ || !context_ || maxPasses <= 0) {
+        return false;
+    }
+    EndTiming();
+
+    const int queryCount = maxPasses * 2;
+    if (int(timingQueries_.size()) < queryCount) {
+        timingQueries_.clear();
+        timingQueries_.resize(size_t(queryCount));
+        D3D11_QUERY_DESC desc{};
+        desc.Query = D3D11_QUERY_TIMESTAMP;
+        for (auto& query : timingQueries_) {
+            if (FAILED(device_->CreateQuery(&desc, &query))) {
+                timingQueries_.clear();
+                return false;
+            }
+        }
+    }
+
+    if (!timingDisjoint_) {
+        D3D11_QUERY_DESC desc{};
+        desc.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+        if (FAILED(device_->CreateQuery(&desc, &timingDisjoint_))) {
+            return false;
+        }
+    }
+
+    timingLabels_.clear();
+    timingLabels_.reserve(size_t(maxPasses));
+    timingQueryLimit_ = queryCount;
+    timingIndex_ = 0;
+    timingOpenPass_ = -1;
+    timingActive_ = true;
+    context_->Begin(timingDisjoint_.Get());
+    return true;
+}
+
+void GpuEulerSolver::EndTiming() {
+    if (!timingActive_) {
+        return;
+    }
+    context_->End(timingDisjoint_.Get());
+    timingActive_ = false;
+    timingOpenPass_ = -1;
+}
+
+SolverTiming GpuEulerSolver::ResolveTiming() {
+    SolverTiming timing;
+    EndTiming();
+    if (timingIndex_ < 2 || timingLabels_.empty() || !timingDisjoint_) {
+        return timing;
+    }
+
+    // This is the only blocking readback in the benchmark; it happens once after
+    // all steps have been submitted.
+    D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint{};
+    if (!ReadQueryBlocking(context_, timingDisjoint_.Get(), disjoint) ||
+        disjoint.Disjoint || disjoint.Frequency == 0) {
+        LogWarn("Solver timing: disjoint readback failed (disjoint=%d, frequency=%llu, "
+                "passes=%zu, index=%d).",
+                int(disjoint.Disjoint), static_cast<unsigned long long>(disjoint.Frequency),
+                timingLabels_.size(), timingIndex_);
+        return timing;
+    }
+
+    std::vector<uint64_t> stamps;
+    stamps.resize(size_t(timingIndex_));
+    for (int i = 0; i < timingIndex_; ++i) {
+        if (!ReadQueryBlocking(context_, timingQueries_[size_t(i)].Get(),
+                               stamps[size_t(i)])) {
+            LogWarn("Solver timing: timestamp %d readback failed.", i);
+            return timing;
+        }
+    }
+
+    const double toMs = 1000.0 / double(disjoint.Frequency);
+    timing.valid = true;
+    timing.totalMs = double(stamps[size_t(timingIndex_ - 1)] - stamps[0]) * toMs;
+    for (size_t pass = 0; pass < timingLabels_.size(); ++pass) {
+        const size_t index = pass * 2;
+        if (index + 1 >= size_t(timingIndex_)) {
+            break;
+        }
+        const int label = timingLabels_[pass];
+        timing.passMs[label] += double(stamps[index + 1] - stamps[index]) * toMs;
+        ++timing.passCount[label];
+    }
+    return timing;
 }
 
 void GpuEulerSolver::DispatchReduce() {
@@ -300,7 +426,9 @@ void GpuEulerSolver::DispatchReduce() {
     ID3D11UnorderedAccessView* uavs[1] = {maxSpeedUAV_.Get()};
     context_->CSSetUnorderedAccessViews(2, 1, uavs, nullptr);
 
+    BeginPass(SolverPass::Reduce);
     Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    EndPass();
     UnbindAll();
 
     context_->CopyResource(maxSpeedStaging_.Get(), maxSpeedBuffer_.Get());
@@ -325,7 +453,9 @@ void GpuEulerSolver::DispatchRender() {
     ID3D11UnorderedAccessView* uavs[1] = {renderVolume_.uav.Get()};
     context_->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
+    BeginPass(SolverPass::Render);
     Dispatch((resolution_ + kThreadGroupSize - 1) / kThreadGroupSize);
+    EndPass();
     UnbindAll();
 }
 
@@ -348,6 +478,19 @@ bool GpuEulerSolver::PollReduction() {
     ConsumeStaging();
     reducePending_ = false;
     return true;
+}
+
+bool GpuEulerSolver::WaitForReduction() {
+    if (!reducePending_ || !reduceQuery_) {
+        return false;
+    }
+    for (int attempt = 0; attempt < 10000; ++attempt) {
+        if (PollReduction()) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return false;
 }
 
 void GpuEulerSolver::ConsumeStaging() {
@@ -459,7 +602,6 @@ void GpuEulerSolver::Step(int steps) {
             for (int direction = 0; direction < 3; ++direction) {
                 DispatchSweep(direction, dt);
             }
-            DispatchSource(dt);
 
             time_ += double(dt);
             ++totalSteps_;
@@ -475,8 +617,6 @@ void GpuEulerSolver::Step(int steps) {
             DispatchReduce();
         }
     }
-
-    UpdateRenderVolume();
 
     stats_.active = true;
     stats_.resolution = resolution_;
@@ -532,7 +672,6 @@ bool GpuEulerSolver::RescaleDomain(float factor) {
     oldBounds_ = bounds_;
     oldDx_ = dx_;
     ++expansions_;
-    UpdateRenderVolume();
 
     stats_.domainHalfExtent = newHalf;
     stats_.domainTop = newTop;

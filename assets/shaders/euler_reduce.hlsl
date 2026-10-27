@@ -57,7 +57,7 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
     if (all(id < (uint3)Grid.xyz) && IsActiveCell(int3(id)))
     {
         float4 a = StateA.Load(int4(id, 0));
-        float4 b = StateB.Load(int4(id, 0));
+        float2 b = StateB.Load(int4(id, 0));
         float rho = max(a.x, 1e-6);
         float3 velocity = a.yzw / rho;
         float pressure =

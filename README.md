@@ -151,6 +151,7 @@ terrain.
                       ground clearance, like the interactive orbit)
 --benchmark           render frames offscreen and print timing
 --frames <count>      number of benchmark frames (default 120)
+--solver-benchmark    step the GPU solver only and print per-pass GPU timings
 --high-fidelity       use the GPU Euler solver for the volume
 --solver-resolution   solver grid resolution (64, 96 or 128)
 --solver-steps        max solver steps per frame (default 96)
@@ -250,8 +251,8 @@ High-fidelity settings (Physics & Effects panel):
   the mushroom head. A drag term (`0.6 v|v| / 2R`) and a toroidal force around the
   analytic cloud radius spin the rising plume into a cap; the render uses a separate low
   soot threshold for the diluted smoke, and the camera frames the analytic cloud.
-- 1024³ is not available for the solver: four RGBA32F ping-pong state volumes plus the
-  render volume would need about 76 GB of VRAM
+- 1024³ is not available for the solver: two RGBA32F and two RG32F ping-pong state
+  volumes plus the render volume would need about 60 GB of VRAM
 
 ## Physics
 

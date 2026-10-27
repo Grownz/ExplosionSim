@@ -15,7 +15,7 @@ void CSRescale(uint3 id : SV_DispatchThreadID)
     if (!IsActiveCell(int3(id)))
     {
         OutA[id] = float4(Ambient.x, 0.0, 0.0, 0.0);
-        OutB[id] = float4(Ambient.y / (Ambient.w - 1.0), 0.0, 0.0, 1.0);
+        OutB[id] = float2(Ambient.y / (Ambient.w - 1.0), 0.0);
         return;
     }
 
@@ -29,7 +29,7 @@ void CSRescale(uint3 id : SV_DispatchThreadID)
     if (all(uv >= 0.0) && all(uv <= 1.0))
     {
         a = StateA.SampleLevel(LinearSampler, uv, 0);
-        b = StateB.SampleLevel(LinearSampler, uv, 0).xy;
+        b = StateB.SampleLevel(LinearSampler, uv, 0);
     }
     else
     {
@@ -40,5 +40,5 @@ void CSRescale(uint3 id : SV_DispatchThreadID)
     Sanitise(a, b);
 
     OutA[id] = a;
-    OutB[id] = float4(b, 0.0, 1.0);
+    OutB[id] = b;
 }

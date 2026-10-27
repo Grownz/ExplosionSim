@@ -36,6 +36,7 @@ void PrintUsage() {
     LogInfo("  --distance-scale <x>  Multiplier for the framing distance.");
     LogInfo("  --benchmark           Render frames offscreen and print timing.");
     LogInfo("  --frames <count>      Number of benchmark frames (default 120).");
+    LogInfo("  --solver-benchmark    Step the GPU solver only and print per-pass GPU timings.");
     LogInfo("  --high-fidelity       Use the GPU Euler solver for the volume.");
     LogInfo("  --reduced-order       Force the reduced-order blast model (overrides settings.ini).");
     LogInfo("  --solver-resolution <n>  Solver grid resolution (64, 96, 128, 192, 256, 512).");
@@ -135,6 +136,9 @@ ParsedArguments ParseCommandLine() {
             result.options.headless = true;
         } else if (argument == L"--frames") {
             parseInt(result.options.benchmarkFrames);
+        } else if (argument == L"--solver-benchmark") {
+            result.options.solverBenchmark = true;
+            result.options.headless = true;
         } else if (argument == L"--high-fidelity") {
             result.options.highFidelity = true;
         } else if (argument == L"--reduced-order") {

@@ -105,6 +105,13 @@ int App::Run(const LaunchOptions& options) {
         settings_.simulation.scene.density =
             std::clamp(options_.sceneDensity, 0.0f, 4.0f);
     }
+    if (options_.solverBenchmark) {
+        // Solver-only: no town generation, no CPU volume bakes and a fixed grid.
+        settings_.simulation.mode = sim::SimulationMode::HighFidelity;
+        settings_.simulation.scene.enabled = false;
+        settings_.simulation.bakeVolume = false;
+        settings_.simulation.solverAutoScale = false;
+    }
 
     if (!options_.headless && !CreateMainWindow()) {
         return 1;
@@ -554,7 +561,49 @@ int App::RunInteractive() {
     return 0;
 }
 
+int App::RunSolverBenchmark() {
+    const long long steps = options_.solverStepCount > 0 ? options_.solverStepCount : 256;
+    const int stepsPerFrame = options_.solverSteps > 0
+                                  ? options_.solverSteps
+                                  : simulation_.Settings().solverStepsPerFrame;
+
+    const gfx::SolverBenchmarkResult result =
+        renderer_.BenchmarkSolver(simulation_, steps, stepsPerFrame);
+    if (!result.valid) {
+        LogError("Solver benchmark failed.");
+        return 1;
+    }
+
+    const auto passMs = [&result](gfx::SolverPass pass) {
+        return result.timing.passMs[int(pass)];
+    };
+    const auto passCount = [&result](gfx::SolverPass pass) {
+        return result.timing.passCount[int(pass)];
+    };
+    const double sweepMs = passMs(gfx::SolverPass::SweepX) +
+                           passMs(gfx::SolverPass::SweepY) +
+                           passMs(gfx::SolverPass::SweepZ);
+
+    LogInfo("Solver benchmark: %d^3, %lld steps in %d frames of %d, domain half %.2f m, "
+            "voxel %.1f mm",
+            result.resolution, result.steps, result.frames, result.stepsPerFrame,
+            result.domainHalfExtent, result.voxelSize * 1000.0f);
+    LogInfo("  GPU total %.2f ms (%.3f ms/step, %.3f ms/frame), wall %.2f ms",
+            result.timing.totalMs, result.msPerStep, result.msPerFrame, result.wallMs);
+    LogInfo("  sweeps %.2f ms (X %.2f, Y %.2f, Z+source %.2f), reduce %.2f ms (%d passes), "
+            "render %.2f ms (%d passes)",
+            sweepMs, passMs(gfx::SolverPass::SweepX), passMs(gfx::SolverPass::SweepY),
+            passMs(gfx::SolverPass::SweepZ), passMs(gfx::SolverPass::Reduce),
+            passCount(gfx::SolverPass::Reduce), passMs(gfx::SolverPass::Render),
+            passCount(gfx::SolverPass::Render));
+    return 0;
+}
+
 int App::RunHeadless() {
+    if (options_.solverBenchmark) {
+        return RunSolverBenchmark();
+    }
+
     Clock clock;
 
     // Screenshots are specified in post-detonation simulation time.

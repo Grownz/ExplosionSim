@@ -38,5 +38,5 @@ void CSInit(uint3 id : SV_DispatchThreadID)
     }
 
     OutA[id] = float4(rho, 0.0, 0.0, 0.0);
-    OutB[id] = float4(energy, sootDensity, 0.0, 1.0);
+    OutB[id] = float2(energy, sootDensity);
 }

@@ -144,29 +144,54 @@ directory.
 
 ### State layout
 
-Two RGBA32F 3D textures hold the conserved variables:
+Two 3D textures hold the conserved variables:
 
-| Texture | Contents |
-|---|---|
-| `StateA` | `(rho, rho*u, rho*v, rho*w)` |
-| `StateB` | `(E, rho*Y, 0, 1)` |
+| Texture | Format | Contents |
+|---|---|---|
+| `StateA` | RGBA32F | `(rho, rho*u, rho*v, rho*w)` |
+| `StateB` | RG32F | `(E, rho*Y)` |
 
-Each variable has two textures for ping-pong updates. A render texture (RGBA16F) stores
-`(density, temperature/12kK, dust, 1)` and is sampled by the existing volume raymarcher.
+`StateB` only carries the total energy and the detonation-product mass, so packing it into
+two channels removes 25 % of the state memory and state bandwidth without touching the
+physical precision. Each variable has two textures for ping-pong updates. A render texture
+(RGBA16F) stores `(density, temperature/12kK, dust, 1)` and is sampled by the existing
+volume raymarcher.
 
 ### Passes
 
 1. **Init** – fills the domain with ambient air and deposits the charge as a sphere of
    detonation products.
 2. **Sweep x / y / z** – finite-volume update with MUSCL reconstruction and HLLC fluxes.
-3. **Source** – buoyancy relative to the ambient density and soot cooling.
-4. **Reduce** – group-shared maximum of the signal speed `|v| + c`, written to a
+   The Z sweep also applies the source terms (buoyancy, entrainment drag, cap closure,
+   soot cooling, absorbing sponge) to the state it just produced, so the state does not
+   round-trip through memory. The order is still X, Y, Z, Source and the equations are
+   unchanged. X/Y and Z use separate entry points (`CSSweep` / `CSSweepZ`): compiling the
+   fused source code into the X/Y sweep raises its temp-register count from 22 to 24 and
+   would cost about 12 % of the total solver time (17 % of the X/Y pass time).
+3. **Reduce** – group-shared maximum of the signal speed `|v| + c`, written to a
    one-element structured buffer.
-5. **Render** – converts the state into the render volume (soot incandescence, shock
-   gradient, compression).
+4. **Render** – converts the state into the render volume (soot incandescence, shock
+   gradient, compression). It runs once per frame, after all solver steps, not after
+   every sub-batch.
 
-Three sweeps plus one source pass per step means the ping-pong index returns to its
-starting value after each step. All passes are dispatched with `8x8x8` thread groups.
+Three sweeps per step mean the ping-pong index returns to its starting value after each
+step. All passes are dispatched with `8x8x8` thread groups. The sweep loads the centre
+cell once and reuses its conserved and primitive forms for the update.
+
+### Solver-only benchmark
+
+`--solver-benchmark` runs the solver without the scene or the raymarcher and reports
+per-pass GPU times from `D3D11_QUERY_TIMESTAMP` / `D3D11_QUERY_TIMESTAMP_DISJOINT`:
+
+```
+ExplosionSim.exe --solver-benchmark --solver-resolution 128 --solver-step-count 256
+```
+
+The benchmark uses the non-blocking reduction path and consumes the reduction at frame
+boundaries, so the numbers match the interactive pipeline instead of a readback-bound
+headless capture. `--solver-steps` sets the steps per frame (default: the configured
+`solverStepsPerFrame`). The domain is fixed, because auto-scale would change the grid
+between resolutions.
 
 ### Adaptive time step
 

@@ -19,7 +19,7 @@ void CSRender(uint3 id : SV_DispatchThreadID)
     }
 
     float4 a = StateA.Load(int4(id, 0));
-    float4 b = StateB.Load(int4(id, 0));
+    float2 b = StateB.Load(int4(id, 0));
 
     float rho = max(a.x, 1e-6);
     float3 velocity = a.yzw / rho;

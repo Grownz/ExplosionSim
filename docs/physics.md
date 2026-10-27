@@ -231,8 +231,9 @@ with the ideal-gas equation of state `p = (gamma - 1)(E - 0.5 rho |v|^2)` and
 - **Riemann solver** – HLLC with the Davis wave-speed estimates
   `S_L = min(u_L - c_L, u_R - c_R)`, `S_R = max(u_L + c_L, u_R + c_R)`. A Rusanov flux is
   used if the star region is degenerate.
-- **Splitting** – three directional sweeps followed by a source pass per time step, run
-  in sub-batches of 8 steps.
+- **Splitting** – three directional sweeps per time step, run in sub-batches of 8 steps.
+  The Z sweep also applies the source terms, so the order is X, Y, Z, Source without an
+  extra full-grid dispatch or a state round-trip.
 - **Time step** – CFL-limited with `dt = 0.20 dx / max(|v| + c)`. The maximum is computed
   on the GPU; interactive runs poll it without blocking, captures wait for it.
 
@@ -266,8 +267,8 @@ back.
 
 - The grid is Cartesian and uniform; 128³ is a compromise between resolution and
   real-time performance. 256³ and 512³ are available for stills or very slow motion
-  (the four RGBA32F state volumes plus the render volume need about 1.2 GB at 256³ and
-  9.7 GB at 512³; 1024³ would need about 76 GB and is therefore not offered).
+  (two RGBA32F and two RG32F state volumes plus the render volume need about 0.94 GB at
+  256³ and 7.5 GB at 512³; 1024³ would need about 60 GB and is therefore not offered).
 - Auto-scale expands the domain in discrete 1.3× steps and resamples the state, which
   slightly diffuses the shock and contact surface at each expansion. The analytic cloud
   drives the growth timing at 70 % of the domain; the measured product bounds are a hard

@@ -8,6 +8,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Solver-only benchmark** - `--solver-benchmark` steps the GPU solver without the scene
+  or raymarcher and reports per-pass GPU times from `D3D11_QUERY_TIMESTAMP` queries. It
+  uses the non-blocking reduction path, so the numbers reflect interactive use instead of
+  the readback-bound headless capture.
 - **Early scene preview** - asynchronous generation publishes the intact object layout in
   ~10 ms while the Voronoi chunks are fractured in the background. The previous town stays
   visible during regeneration, the camera frames the preview, and gameplay actions are
@@ -16,6 +20,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   vertices, AABB early-outs for distant bisectors and direct face-adjacency construction.
   The default 20 t town (9,595 chunks) generates in ~147 ms (from ~171-188 ms); the
   32k-chunk budget takes ~766 ms (from ~866-961 ms).
+
+### Changed
+
+- **High-fidelity solver P0 bundle** - the buoyancy/radiation source terms are fused into
+  the Z sweep, the sweep reuses the centre cell's conserved state, `StateB` is packed as
+  RG32F and the render volume updates once per frame instead of after every sub-batch. A
+  step is three dispatches instead of four, and the state memory drops from 72 to 56
+  bytes per voxel (about 0.94 GB instead of 1.2 GB at 256³). The Z sweep has its own
+  entry point (24 -> 22 temp registers); compiling the source into the X/Y sweep cost
+  12 % of the total solver time. Measured on an RTX 3090 with a fixed 20 t domain and
+  256 steps: 96³ 91.6 -> 65.7 ms (-28 %), 128³ 205.9 -> 144.5 ms (-30 %), 192³ 679.5 ->
+  494.6 ms (-27 %). The rendered frame is byte-identical to the previous pipeline at the
+  same solver step count.
 
 ## [0.6.0] - 2026-10-27
 

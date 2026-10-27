@@ -1,8 +1,12 @@
 #include "euler_common.hlsli"
 
 // One directional finite-volume sweep with MUSCL reconstruction and HLLC fluxes.
-[numthreads(8, 8, 8)]
-void CSSweep(uint3 id : SV_DispatchThreadID)
+// The Z sweep also applies the source terms, so a step is three dispatches
+// instead of four and the state never round-trips through memory between the Z
+// update and the source terms. X/Y and Z use separate entry points: the fused
+// source code raises the temp-register count, and compiling it into the X/Y
+// sweep would reduce occupancy for all three passes.
+void SweepBody(uint3 id, bool applySource)
 {
     if (any(id >= (uint3)Grid.xyz))
     {
@@ -16,13 +20,16 @@ void CSSweep(uint3 id : SV_DispatchThreadID)
     if (!IsActiveCell(cell))
     {
         OutA[id] = float4(Ambient.x, 0.0, 0.0, 0.0);
-        OutB[id] = float4(Ambient.y / (Ambient.w - 1.0), 0.0, 0.0, 1.0);
+        OutB[id] = float2(Ambient.y / (Ambient.w - 1.0), 0.0);
         return;
     }
 
+    // The centre cell is needed both as a primitive (reconstruction) and as the
+    // conserved state (update), so load and decode it once.
+    CellState center = LoadCell(cell);
+    Primitive w0 = center.prim;
     Primitive wm2 = LoadPrimitive(cell - 2 * offset);
     Primitive wm1 = LoadPrimitive(cell - offset);
-    Primitive w0 = LoadPrimitive(cell);
     Primitive wp1 = LoadPrimitive(cell + offset);
     Primitive wp2 = LoadPrimitive(cell + 2 * offset);
 
@@ -40,8 +47,8 @@ void CSSweep(uint3 id : SV_DispatchThreadID)
     HllcFlux(leftMinus, rightMinus, dir, fluxMinusA, fluxMinusB);
     HllcFlux(leftPlus, rightPlus, dir, fluxPlusA, fluxPlusB);
 
-    float4 a = StateA.Load(int4(cell, 0));
-    float2 b = StateB.Load(int4(cell, 0)).xy;
+    float4 a = center.a;
+    float2 b = center.b;
 
     const float scale = DomainMax.w / DomainMin.w;
     a -= scale * (fluxPlusA - fluxMinusA);
@@ -49,6 +56,25 @@ void CSSweep(uint3 id : SV_DispatchThreadID)
 
     Sanitise(a, b);
 
+    // The source terms run after the Z update, exactly as the former separate
+    // pass did (X, Y, Z, Source).
+    if (applySource)
+    {
+        ApplySource(a, b, cell);
+    }
+
     OutA[id] = a;
-    OutB[id] = float4(b, 0.0, 1.0);
+    OutB[id] = b;
+}
+
+[numthreads(8, 8, 8)]
+void CSSweep(uint3 id : SV_DispatchThreadID)
+{
+    SweepBody(id, false);
+}
+
+[numthreads(8, 8, 8)]
+void CSSweepZ(uint3 id : SV_DispatchThreadID)
+{
+    SweepBody(id, true);
 }

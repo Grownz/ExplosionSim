@@ -3,12 +3,13 @@
 
 // Shared definitions for the GPU compressible Euler solver.
 //
-// Conserved variables are split over two RGBA32F volumes:
-//   StateA = (rho, rho*u, rho*v, rho*w)   (u = x, v = y/up, w = z)
-//   StateB = (E, rho*Y, 0, 1)             (Y = detonation-product mass fraction)
+// Conserved variables are split over two volumes:
+//   StateA = (rho, rho*u, rho*v, rho*w)   RGBA32F (u = x, v = y/up, w = z)
+//   StateB = (E, rho*Y)                   RG32F   (Y = detonation-product mass)
 //
 // The solver uses a finite-volume update with HLLC fluxes and MUSCL/minmod
-// reconstruction, dimensional splitting and a buoyancy/radiation source pass.
+// reconstruction and dimensional splitting. The buoyancy/radiation source terms
+// are fused into the Z sweep, so a step is three dispatches.
 
 static const float PI = 3.14159265359;
 
@@ -28,10 +29,10 @@ cbuffer SolverConstants : register(b0)
 SamplerState LinearSampler : register(s0);
 
 Texture3D<float4> StateA : register(t0);
-Texture3D<float4> StateB : register(t1);
+Texture3D<float2> StateB : register(t1);
 
 RWTexture3D<float4> OutA : register(u0);
-RWTexture3D<float4> OutB : register(u1);
+RWTexture3D<float2> OutB : register(u1);
 
 struct Primitive
 {
@@ -122,7 +123,7 @@ float4 LoadA(int3 p)
     return state;
 }
 
-float4 LoadB(int3 p)
+float2 LoadB(int3 p)
 {
     if (p.y < 0)
     {
@@ -131,16 +132,13 @@ float4 LoadB(int3 p)
     const int3 cell = ClampCell(p);
     if (!IsActiveCell(cell))
     {
-        return float4(Ambient.y / (Ambient.w - 1.0), 0.0, 0.0, 1.0);
+        return float2(Ambient.y / (Ambient.w - 1.0), 0.0);
     }
     return StateB.Load(int4(cell, 0));
 }
 
-Primitive LoadPrimitive(int3 p)
+Primitive MakePrimitive(float4 a, float2 b)
 {
-    float4 a = LoadA(p);
-    float4 b = LoadB(p);
-
     Primitive s;
     s.rho = max(a.x, 1e-6);
     s.u = a.y / s.rho;
@@ -151,6 +149,30 @@ Primitive LoadPrimitive(int3 p)
     s.p = max((Ambient.w - 1.0) * (b.x - kinetic), 1e-3);
     s.y = saturate(b.y / s.rho);
     return s;
+}
+
+// Conserved state plus its primitive form. The sweep needs both for the centre
+// cell, so they are loaded and decoded together.
+struct CellState
+{
+    float4 a;
+    float2 b;
+    Primitive prim;
+};
+
+CellState LoadCell(int3 p)
+{
+    CellState c;
+    c.a = LoadA(p);
+    c.b = LoadB(p);
+    c.prim = MakePrimitive(c.a, c.b);
+    return c;
+}
+
+Primitive LoadPrimitive(int3 p)
+{
+    CellState c = LoadCell(p);
+    return c.prim;
 }
 
 float Minmod(float a, float b)
@@ -307,6 +329,108 @@ void Sanitise(inout float4 a, inout float2 b)
 float AmbientTemperature(float rho, float p)
 {
     return p / max(rho * Physics.y, 1e-3);
+}
+
+// --- Source terms -------------------------------------------------------
+// Buoyancy, sub-grid entrainment drag, cap closure, radiative cooling and the
+// open-boundary sponge. Fused into the Z sweep: the caller passes the state it
+// has just updated, which is exactly what the old separate source pass loaded
+// back from the Z output.
+static const float kSpongeWidth = 0.06;
+static const float kSpongeRate = 45.0;
+
+void ApplySource(inout float4 a, inout float2 b, int3 cell)
+{
+    float rho = max(a.x, 1e-6);
+    float3 velocity = a.yzw / rho;
+    float energy = b.x;
+    float soot = b.y;
+
+    float pressure = max((Ambient.w - 1.0) * (energy - 0.5 * rho * dot(velocity, velocity)), 1e-3);
+    float temperature = AmbientTemperature(rho, pressure);
+    float3 world = DomainMin.xyz + (float3(cell) + 0.5) * DomainMin.w;
+
+    // Net buoyancy (only the density difference relative to the ambient air).
+    float excess = rho - Ambient.x;
+    a.z -= excess * Physics.x * DomainMax.w;
+    energy -= excess * Physics.x * velocity.y * DomainMax.w;
+
+    // Sub-grid entrainment drag. The unresolved mixing slows the buoyant plume;
+    // without it the coarse grid lets the hot products rise as a narrow jet.
+    // The analytic cloud model uses the same closure (0.6 * v * |v| / 2R).
+    float plumeRadius = max(Extra.x, 2.0 * DomainMin.w);
+    float thermal = saturate((temperature - Ambient.z) / 300.0);
+    float light = saturate((Ambient.x - rho) / max(Ambient.x, 1e-3));
+    float sootMask = saturate(soot / 0.0005);
+    float plumeMask = saturate(max(max(thermal, light), sootMask));
+    float speed = length(velocity);
+    float drag = 0.6 * speed / (2.0 * plumeRadius);
+    a.yzw -= rho * velocity * drag * plumeMask * DomainMax.w;
+    energy -= rho * dot(velocity, velocity) * drag * plumeMask * DomainMax.w;
+
+    // Sub-grid cap closure. The unresolved vortex ring is replaced by a
+    // toroidal force around the analytic cap: outward at the top, downward
+    // outside, inward at the bottom and upward inside. This spins the cap into
+    // a mushroom instead of letting it rise as a column.
+    float3 radial = float3(world.x, 0.0, world.z);
+    float radialLength = length(radial);
+    float3 radialDirection = radial / max(radialLength, 1e-3);
+    float targetRadius = max(Extra.x, 2.0 * DomainMin.w);
+    float targetCenterY = Extra.y;
+    float dr = radialLength - targetRadius;
+    float dy = world.y - targetCenterY;
+    float ringDistance = sqrt(dr * dr + dy * dy);
+    float ringWidth = max(0.45 * targetRadius, 2.0 * DomainMin.w);
+    float ring = exp(-pow(ringDistance / ringWidth, 2.0));
+    float2 tangent = float2(dy, -dr) / max(ringDistance, 1e-3);
+    float strength = 25.0 * ring * plumeMask;
+    float impulse = rho * strength * DomainMax.w;
+    a.y += radialDirection.x * tangent.x * impulse;
+    a.z += tangent.y * impulse;
+    a.w += radialDirection.z * tangent.x * impulse;
+    energy += impulse * (tangent.x * dot(radialDirection, velocity) +
+                         tangent.y * velocity.y);
+
+    float above =
+        saturate((world.y - (targetCenterY + targetRadius)) / targetRadius);
+    float verticalDamping = 2.0 * above;
+    a.z -= rho * max(velocity.y, 0.0) * verticalDamping * DomainMax.w;
+    energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) *
+              verticalDamping * DomainMax.w;
+
+    // Radiative cooling of hot soot.
+    energy -= Physics.z * soot * max(temperature - Ambient.z, 0.0) * DomainMax.w;
+
+    b.x = energy;
+    b.y = soot;
+
+    // --- Open-boundary sponge --------------------------------------------
+    float blend = 0.0;
+    if (IsHemispherical())
+    {
+        const float q = DomainFraction(world);
+        const float ramp = saturate((q - (1.0 - kSpongeWidth)) / kSpongeWidth);
+        blend = saturate(kSpongeRate * ramp * ramp * DomainMax.w);
+    }
+    else
+    {
+        float3 extent = max(DomainMax.xyz - DomainMin.xyz, 1e-4);
+        float3 rel = (world - DomainMin.xyz) / extent;
+        float lateral = min(min(rel.x, 1.0 - rel.x), min(rel.z, 1.0 - rel.z));
+        float toTop = 1.0 - rel.y;
+        float edge = min(lateral, toTop);
+        float ramp = saturate(1.0 - edge / kSpongeWidth);
+        blend = saturate(kSpongeRate * ramp * ramp * DomainMax.w);
+    }
+
+    if (blend > 1e-5)
+    {
+        float ambientEnergy = Ambient.y / (Ambient.w - 1.0);
+        a = lerp(a, float4(Ambient.x, 0.0, 0.0, 0.0), blend);
+        b = lerp(b, float2(ambientEnergy, 0.0), blend);
+    }
+
+    Sanitise(a, b);
 }
 
 #endif // EXPLOSION_EULER_COMMON_HLSLI

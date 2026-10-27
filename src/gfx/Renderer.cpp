@@ -907,6 +907,11 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
     }
     solverBudgetHit_ = advancedTotal + 1e-9 < target;
     solverPrepared_ = true;
+    if (submitted > 0) {
+        // One render-volume update per frame, after all solver steps. Step() no
+        // longer does this, so several Step() calls share a single pass.
+        solver_.UpdateRenderVolume();
+    }
     return advancedTotal;
 }
 
@@ -945,6 +950,7 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
         }
     }
     solverPrepared_ = true;
+    solver_.UpdateRenderVolume();
 
     LogInfo("High-fidelity: t=%.4f s (analytic %.4f s), %lld steps, %d^3, dt=%.2f us, "
             "maxSpeed=%.0f m/s",
@@ -986,6 +992,7 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
         }
     }
     solverPrepared_ = true;
+    solver_.UpdateRenderVolume();
 
     LogInfo("High-fidelity capture: %lld steps, t=%.4f s (analytic %.4f s), domain half %.2f m, "
             "top %.2f m, accuracy x%.2f, expansions %d, plume top %.2f m, radius %.2f m",
@@ -1000,6 +1007,94 @@ double Renderer::ConsumeSolverAdvance() {    return solver_.ConsumeAdvance();
 
 void Renderer::StepSolverOnce(int steps) {
     solver_.Step(steps);
+    solver_.UpdateRenderVolume();
+}
+
+SolverBenchmarkResult Renderer::BenchmarkSolver(sim::Simulation& simulation,
+                                                long long steps, int stepsPerFrame) {
+    SolverBenchmarkResult result;
+    if (steps <= 0) {
+        return result;
+    }
+    if (!solver_.Reset(MakeEulerConfig(simulation))) {
+        LogError("Solver benchmark: solver could not be initialised.");
+        return result;
+    }
+    solverBlastSerial_ = simulation.BlastSerial();
+    solverCapWarned_ = false;
+    solverPrepared_ = false;
+    solverBudgetHit_ = false;
+
+    // Non-blocking reductions: this is the interactive pipeline. The grid is
+    // fixed (no auto-scale) so the resolutions are directly comparable.
+    solver_.SetDeterministic(false);
+
+    stepsPerFrame = std::clamp(stepsPerFrame, 1, 256);
+    const int frames = int((steps + stepsPerFrame - 1) / stepsPerFrame);
+
+    // Warm-up: lets the GPU clocks ramp and the reduction pipeline settle.
+    const long long warmup = std::min<long long>(steps, std::max(8, stepsPerFrame * 2));
+    for (long long done = 0; done < warmup;) {
+        const int batch = int(std::min<long long>(stepsPerFrame, warmup - done));
+        solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius),
+                              float(simulation.Blast().State().cloudCenterY));
+        solver_.Step(batch);
+        solver_.UpdateRenderVolume();
+        solver_.WaitForReduction();
+        const double advance = solver_.ConsumeAdvance();
+        if (advance > 0.0) {
+            simulation.AdvanceExternal(advance);
+        }
+        done += batch;
+    }
+    device_->Context()->Flush();
+
+    // 3 sweeps + at most one reduction per step, one render pass per frame.
+    // The margin also covers a future separate source pass.
+    if (!solver_.BeginTiming(int(steps * 5 + frames * 3 + 16))) {
+        LogWarn("Solver benchmark: GPU timestamp queries are unavailable.");
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    long long done = 0;
+    for (int frame = 0; frame < frames; ++frame) {
+        // Mirror Renderer::AdvanceSolver: up to 64 steps per Step() call and
+        // several calls per frame when the step budget is larger.
+        int remaining = int(std::min<long long>(stepsPerFrame, steps - done));
+        while (remaining > 0) {
+            const int batch = std::min(remaining, 64);
+            solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius),
+                                  float(simulation.Blast().State().cloudCenterY));
+            solver_.Step(batch);
+            remaining -= batch;
+            const double advance = solver_.ConsumeAdvance();
+            if (advance > 0.0) {
+                simulation.AdvanceExternal(advance);
+            }
+        }
+        // Once per frame, and consume the reduction at the frame boundary.
+        solver_.UpdateRenderVolume();
+        solver_.WaitForReduction();
+        done += std::min<long long>(stepsPerFrame, steps - done);
+    }
+    result.timing = solver_.ResolveTiming();
+    result.wallMs = std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - start)
+                        .count();
+
+    result.valid = result.timing.valid;
+    result.resolution = solver_.Stats().resolution;
+    result.steps = steps;
+    result.stepsPerFrame = stepsPerFrame;
+    result.frames = frames;
+    result.domainHalfExtent = solver_.Stats().domainHalfExtent;
+    result.voxelSize = solver_.Stats().voxelSize;
+    if (result.timing.valid) {
+        result.msPerStep = result.timing.totalMs / double(steps);
+        result.msPerFrame = result.timing.totalMs / double(frames);
+    }
+    solverPrepared_ = true;
+    return result;
 }
 
 void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
