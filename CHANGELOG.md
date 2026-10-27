@@ -4,39 +4,58 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-10-27
+
+This performance release cuts the cost of the two heaviest systems since 0.6.0: the
+procedural town generator and the high-fidelity GPU Euler solver. The default town is
+visible in ~10 ms instead of waiting for the full fracture and generates ~20 % faster;
+the HF solver is ~37-41 % faster at 96³-192³ with a byte-identical rendered frame. A new
+solver-only benchmark makes the solver numbers reproducible.
+
+### Performance
+
+Measured on the reference 8-core/16-thread CPU and an RTX 3090. Solver timings use
+`--solver-benchmark` with a fixed 20 t domain and 256 steps; scene timings use the
+default 20 t town and the 32k-chunk budget.
+
+| Performance fix | Benchmark | Before | After | Gain |
+|---|---|---:|---:|---:|
+| Voronoi fracture micro-optimizations | Default town, 9,595 chunks | 171-188 ms | 135-147 ms | ~20-25 % |
+| | 32k-chunk budget, 31,860 chunks | 866-961 ms | 739-766 ms | ~15-20 % |
+| Early layout preview | Time to first visible town | 135-739 ms | ~10 ms | ~13-74x |
+| HF solver P0 bundle | 96³, 256 steps | 91.6 ms | 65.7 ms | -28 % |
+| | 128³, 256 steps | 205.9 ms | 144.5 ms | -30 % |
+| | 192³, 256 steps | 679.5 ms | 494.6 ms | -27 % |
+| HF sweep tuning | 128³, 256 steps | 144.5 ms | 121.0 ms | -16 % |
+| | 192³, 256 steps | 494.6 ms | 420.7 ms | -15 % |
+| Solver submission cleanup | 128³ / 192³ | - | - | <1 % (noise) |
+| **Total HF solver since 0.6.0** | 96³ | 91.6 ms | ~58 ms | **-37 %** |
+| | 128³ | 205.9 ms | 121.0 ms | **-41 %** |
+| | 192³ | 679.5 ms | 420.7 ms | **-38 %** |
+
+The solver submission cleanup is kept as an API-overhead reduction (four-slot constant
+buffer ring, one update per sub-batch, fewer bindings); the measured CPU submission is
+~1.1 ms for 256 steps, so the frame remains GPU-bound.
 
 ### Added
 
 - **Solver-only benchmark** - `--solver-benchmark` steps the GPU solver without the scene
-  or raymarcher and reports per-pass GPU times from `D3D11_QUERY_TIMESTAMP` queries. It
-  uses the non-blocking reduction path, so the numbers reflect interactive use instead of
-  the readback-bound headless capture.
+  or raymarcher and reports per-pass GPU times from `D3D11_QUERY_TIMESTAMP` queries plus
+  the CPU submission time. It uses the non-blocking reduction path, so the numbers
+  reflect interactive use instead of the readback-bound headless capture.
 - **Early scene preview** - asynchronous generation publishes the intact object layout in
   ~10 ms while the Voronoi chunks are fractured in the background. The previous town stays
   visible during regeneration, the camera frames the preview, and gameplay actions are
-  ignored until the full scene is ready.
-- **Voronoi fracture micro-optimizations** - flat polyhedron storage, hash-welded
-  vertices, AABB early-outs for distant bisectors and direct face-adjacency construction.
-  The default 20 t town (9,595 chunks) generates in ~147 ms (from ~171-188 ms); the
-  32k-chunk budget takes ~766 ms (from ~866-961 ms).
+  ignored until the full scene is ready. The preview carries a layout hash, so the
+  renderer invalidates the static shadow map and chunk buffers between two different
+  towns.
 
 ### Changed
 
-- **High-fidelity solver submission cleanup** - the constant buffer is a four-slot ring
-  written once per 8-step sub-batch instead of once per dispatch, and the redundant
-  `UnbindAll` after every sweep is reduced to unbinding the two state UAVs.
-  `--solver-benchmark` now reports the CPU submission time separately. On the reference
-  RTX 3090 the submission is ~1.1 ms for 256 steps at 128³/192³, so this is a cleanup
-  without a measurable frame-time change (<1 %); it was kept because it removes redundant
-  API calls and the result is byte-identical.
-- **High-fidelity solver sweep tuning** - each sweep direction has its own entry point
-  (the direction constant folds the HLLC selects and keeps the fused source out of the
-  X/Y shaders), the middle MUSCL stencil is shared between the two faces, and the thread
-  groups are `4x4x4` instead of `8x8x8`. Measured on an RTX 3090 with 256 steps: 128³
-  144.5 -> 121.0 ms (-16 %), 192³ 494.6 -> 420.7 ms (-15 %). The rendered frame is still
-  byte-identical. Branchless HLLC, `rsqrt` and reciprocal hoisting were measured and
-  rejected (10 % slower or no measurable gain).
+- **Voronoi fracture micro-optimizations** - flat face-index polyhedron storage,
+  hash-welded vertices, AABB early-outs for distant bisectors and direct face-adjacency
+  construction. The default 20 t town (9,595 chunks) generates in 135-147 ms (from
+  171-188 ms); the 32k-chunk budget takes 739-766 ms (from 866-961 ms).
 - **High-fidelity solver P0 bundle** - the buoyancy/radiation source terms are fused into
   the Z sweep, the sweep reuses the centre cell's conserved state, `StateB` is packed as
   RG32F and the render volume updates once per frame instead of after every sub-batch. A
@@ -47,6 +66,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   256 steps: 96³ 91.6 -> 65.7 ms (-28 %), 128³ 205.9 -> 144.5 ms (-30 %), 192³ 679.5 ->
   494.6 ms (-27 %). The rendered frame is byte-identical to the previous pipeline at the
   same solver step count.
+- **High-fidelity solver sweep tuning** - each sweep direction has its own entry point
+  (the direction constant folds the HLLC selects and keeps the fused source out of the
+  X/Y shaders), the middle MUSCL stencil is shared between the two faces, and the thread
+  groups are `4x4x4` instead of `8x8x8`. Measured on an RTX 3090 with 256 steps: 128³
+  144.5 -> 121.0 ms (-16 %), 192³ 494.6 -> 420.7 ms (-15 %). The rendered frame is still
+  byte-identical. Branchless HLLC, `rsqrt` and reciprocal hoisting were measured and
+  rejected (10 % slower or no measurable gain).
+- **High-fidelity solver submission cleanup** - the constant buffer is a four-slot ring
+  written once per 8-step sub-batch instead of once per dispatch, and the redundant
+  `UnbindAll` after every sweep is reduced to unbinding the two state UAVs.
+  `--solver-benchmark` now reports the CPU submission time separately. On the reference
+  RTX 3090 the submission is ~1.1 ms for 256 steps at 128³/192³, so this is a cleanup
+  without a measurable frame-time change (<1 %); it was kept because it removes redundant
+  API calls and the result is byte-identical.
 
 ## [0.6.0] - 2026-10-27
 
@@ -473,7 +506,7 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.6.0...HEAD
+[0.7.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.6.0
 [0.5.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.5
 [0.5.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.0
