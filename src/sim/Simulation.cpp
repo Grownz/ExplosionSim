@@ -4,6 +4,7 @@
 #include "core/ThreadPool.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
 
@@ -65,25 +66,63 @@ void Simulation::StartSceneGeneration(const scene::SceneSettings& settings,
         sceneThread_.join();
     }
     pendingScene_.reset();
-    // Reset the visible town immediately; the worker fills the replacement.
-    scene_.Clear();
+    pendingPreview_.reset();
+    // Keep the previous town visible until the early layout preview arrives.
     sceneValid_ = false;
     sceneReady_.store(false, std::memory_order_relaxed);
+    previewReady_.store(false, std::memory_order_relaxed);
     sceneCompleted_ = false;
+    scenePreviewCompleted_ = false;
     sceneProgress_.store(0.0f, std::memory_order_relaxed);
     sceneGenerating_.store(true, std::memory_order_release);
 
+    const auto publishProgress = [this](float value) {
+        float previous = sceneProgress_.load(std::memory_order_relaxed);
+        while (value > previous &&
+               !sceneProgress_.compare_exchange_weak(previous, value,
+                                                     std::memory_order_relaxed)) {
+        }
+    };
+
     sceneThread_ = std::jthread(
-        [this, settings, charge, environment](std::stop_token token) {
+        [this, settings, charge, environment, publishProgress](std::stop_token token) {
+            sim::BlastModel localBlast;
+            localBlast.Configure(charge, environment);
+
+            // Early layout preview: the intact town is visible while the
+            // Voronoi chunks are fractured below.
+            auto preview = std::make_unique<scene::Scene>();
+            const auto previewStart = std::chrono::steady_clock::now();
+            bool previewSuccess = false;
+            try {
+                previewSuccess = preview->GenerateLayout(settings, localBlast);
+            } catch (const std::exception& error) {
+                LogError("Scene preview failed: %s", error.what());
+            } catch (...) {
+                LogError("Scene preview failed.");
+            }
+            if (previewSuccess && !token.stop_requested()) {
+                const int previewObjects = int(preview->Objects().size());
+                pendingPreview_ = std::move(preview);
+                previewReady_.store(true, std::memory_order_release);
+                publishProgress(0.05f);
+                LogInfo("Scene layout ready in %.1f ms: %d objects",
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - previewStart)
+                            .count(),
+                        previewObjects);
+            }
+
+            // Full scene with chunks.
             auto scene = std::make_unique<scene::Scene>();
             bool success = false;
             try {
-                sim::BlastModel localBlast;
-                localBlast.Configure(charge, environment);
-                scene->Generate(settings, localBlast, [this, token](float value) {
-                    sceneProgress_.store(value, std::memory_order_relaxed);
-                    return !token.stop_requested();
-                }, pool_);
+                scene->Generate(settings, localBlast,
+                                [this, token, publishProgress](float value) {
+                                    publishProgress(value);
+                                    return !token.stop_requested();
+                                },
+                                pool_);
                 success = !token.stop_requested();
             } catch (const std::exception& error) {
                 LogError("Scene generation failed: %s", error.what());
@@ -99,6 +138,13 @@ void Simulation::StartSceneGeneration(const scene::SceneSettings& settings,
 }
 
 void Simulation::PollSceneGeneration() {
+    if (previewReady_.exchange(false, std::memory_order_acquire)) {
+        if (pendingPreview_) {
+            scene_ = std::move(*pendingPreview_);
+            pendingPreview_.reset();
+            scenePreviewCompleted_ = true;
+        }
+    }
     if (sceneReady_.exchange(false, std::memory_order_acquire)) {
         if (sceneThread_.joinable()) {
             sceneThread_.join();
@@ -120,6 +166,7 @@ void Simulation::PollSceneGeneration() {
         // The job was cancelled or failed; release its resources.
         sceneThread_.join();
         pendingScene_.reset();
+        pendingPreview_.reset();
         sceneValid_ = false;
     }
 }
@@ -129,6 +176,10 @@ void Simulation::WaitForSceneGeneration() {
         sceneThread_.request_stop();
         sceneThread_.join();
     }
+    if (previewReady_.exchange(false, std::memory_order_acquire) && pendingPreview_) {
+        scene_ = std::move(*pendingPreview_);
+    }
+    pendingPreview_.reset();
     if (sceneReady_.exchange(false, std::memory_order_acquire) && pendingScene_) {
         scene_ = std::move(*pendingScene_);
         sceneValid_ = true;
@@ -143,6 +194,12 @@ void Simulation::WaitForSceneGeneration() {
 bool Simulation::ConsumeSceneCompletion() {
     const bool completed = sceneCompleted_;
     sceneCompleted_ = false;
+    return completed;
+}
+
+bool Simulation::ConsumeScenePreview() {
+    const bool completed = scenePreviewCompleted_;
+    scenePreviewCompleted_ = false;
     return completed;
 }
 

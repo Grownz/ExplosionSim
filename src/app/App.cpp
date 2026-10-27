@@ -400,6 +400,11 @@ int App::RunInteractive() {
         frameMs_ = float(smoothedFrameMs);
 
         simulation_.PollSceneGeneration();
+        if (simulation_.ConsumeScenePreview() && !sceneFramed_) {
+            // Show and frame the intact layout while the chunks are fractured.
+            FrameCamera();
+            sceneFramed_ = true;
+        }
         if (simulation_.ConsumeSceneCompletion() && !sceneFramed_) {
             // The first town is ready; frame it once. Later resets keep the
             // camera where the user left it.
@@ -485,36 +490,37 @@ int App::RunInteractive() {
         if (actions.frameCamera) {
             FrameCamera();
         }
-        if (actions.detonateNow || forceDetonate) {
-            if (simulation_.IsArmed()) {
-                simulation_.DetonateNow();
-                simulation_.FinishPendingVolumeWork();
-            } else if (actions.detonateNow) {
-                forceRearm = true;
+        if (!loadingScene) {
+            if (actions.detonateNow || forceDetonate) {
+                if (simulation_.IsArmed()) {
+                    simulation_.DetonateNow();
+                    simulation_.FinishPendingVolumeWork();
+                } else if (actions.detonateNow) {
+                    forceRearm = true;
+                }
+            }
+            if (stepOnce) {
+                if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
+                    if (!simulation_.IsArmed()) {
+                        renderer_.StepSolverOnce(8);
+                        const double advance = renderer_.ConsumeSolverAdvance();
+                        if (advance > 0.0) {
+                            simulation_.AdvanceExternal(advance, frameDt);
+                        }
+                    }
+                } else {
+                    simulation_.StepFixed(1.0 / 60.0);
+                }
+            }
+            if (forceRestart) {
+                RestartSimulation();
+            }
+            if (forceRearm) {
+                RearmSimulation();
             }
         }
         if (actions.applySimulationSettings) {
             ApplySimulationSettings();
-        }
-
-        if (stepOnce) {
-            if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
-                if (!simulation_.IsArmed()) {
-                    renderer_.StepSolverOnce(8);
-                    const double advance = renderer_.ConsumeSolverAdvance();
-                    if (advance > 0.0) {
-                        simulation_.AdvanceExternal(advance, frameDt);
-                    }
-                }
-            } else {
-                simulation_.StepFixed(1.0 / 60.0);
-            }
-        }
-        if (forceRestart) {
-            RestartSimulation();
-        }
-        if (forceRearm) {
-            RearmSimulation();
         }
 
         ImGui::Render();

@@ -347,11 +347,15 @@ void Scene::ResetState() {
     physicsAccumulator_ = 0.0;
 }
 
-void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast,
-                     const std::function<bool(float)>& progress,
-                     core::ThreadPool* pool) {
-    ++generationCount_;
-    const auto generationStart = std::chrono::steady_clock::now();
+bool Scene::GenerateInternal(const SceneSettings& settings,
+                             const sim::BlastModel& blast,
+                             const std::function<bool(float)>& progress,
+                             core::ThreadPool* pool, bool layoutOnly) {
+    std::chrono::steady_clock::time_point generationStart{};
+    if (!layoutOnly) {
+        ++generationCount_;
+        generationStart = std::chrono::steady_clock::now();
+    }
     std::mutex progressMutex;
     float lastProgress = 0.0f;
     const auto report = [&](float value) {
@@ -364,7 +368,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         return progress(std::clamp(value, 0.0f, 1.0f));
     };
     if (!report(0.0f)) {
-        return;
+        return false;
     }
 
     settings_ = settings;
@@ -381,7 +385,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
 
     if (!settings_.enabled) {
         report(1.0f);
-        return;
+        return true;
     }
 
     const sim::Charge& charge = blast.GetCharge();
@@ -413,7 +417,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         maxBudget);
     if (budget == 0) {
         report(1.0f);
-        return;
+        return true;
     }
 
     const int buildingBudget = settings_.buildings ? int(budget * 0.45f) : 0;
@@ -463,7 +467,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
     const float vehicleChance = keepChance(vehicleBudget, 0.45f);
     const float treeChance = keepChance(treeBudget, 0.55f);
     if (!report(0.02f)) {
-        return;
+        return false;
     }
 
     auto addObject = [&](SceneObjectType type, float x, float z, float yaw,
@@ -556,11 +560,11 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         }
         if (!report(0.02f + 0.04f * float(ix + cells + 1) /
                                  float(2 * cells + 1))) {
-            return;
+            return false;
         }
     }
     if (!report(0.06f)) {
-        return;
+        return false;
     }
 
     int vehicles = 0;
@@ -595,11 +599,11 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         }
         if (!report(0.06f + 0.02f * float(ix + cells + 1) /
                                  float(2 * cells + 1))) {
-            return;
+            return false;
         }
     }
     if (!report(0.08f)) {
-        return;
+        return false;
     }
 
     int trees = 0;
@@ -633,11 +637,20 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         }
         if (!report(0.08f + 0.02f * float(ix + cells + 1) /
                                  float(2 * cells + 1))) {
-            return;
+            return false;
         }
     }
     if (!report(0.10f)) {
-        return;
+        return false;
+    }
+    if (layoutOnly) {
+        // A layout hash lets the renderer invalidate the static shadow map and
+        // chunk buffers between two different previews.
+        hash_ = 1469598103934665603ull;
+        for (const SceneObject& object : objects_) {
+            hash_ = HashObject(hash_, object);
+        }
+        return true;
     }
 
     // Global chunk budget. The requested Voronoi count grows quickly at small
@@ -725,17 +738,17 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                     if (!report(0.10f + 0.70f * float(done) /
                                             float(buildingCount))) {
                         cancelled.store(true);
-                        return;
+                        return false;
                     }
                 }
             }
         }
         if (cancelled.load(std::memory_order_relaxed)) {
-            return;
+            return false;
         }
     }
     if (!report(0.80f)) {
-        return;
+        return false;
     }
 
     // Blast shielding: nine rays over the receiver's bounding box, each
@@ -761,7 +774,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         buildingBoxes.push_back(box);
     }
     if (!report(0.82f)) {
-        return;
+        return false;
     }
 
     constexpr float kScreeningLength = 3.0f;   // structural screening length, m
@@ -836,11 +849,11 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
 
         if ((++shielded & 63u) == 0u &&
             !report(0.82f + 0.17f * float(shielded) / objectCount)) {
-            return;
+            return false;
         }
     }
     if (!report(0.99f)) {
-        return;
+        return false;
     }
 
     hash_ = 1469598103934665603ull;
@@ -857,6 +870,19 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 std::chrono::steady_clock::now() - generationStart)
                 .count(),
             int(objects_.size()), chunkCount);
+    return true;
+}
+
+void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast,
+                     const std::function<bool(float)>& progress,
+                     core::ThreadPool* pool) {
+    GenerateInternal(settings, blast, progress, pool, false);
+}
+
+bool Scene::GenerateLayout(const SceneSettings& settings,
+                           const sim::BlastModel& blast,
+                           const std::function<bool(float)>& progress) {
+    return GenerateInternal(settings, blast, progress, nullptr, true);
 }
 
 void Scene::Update(const sim::BlastModel&, float dtSim) {

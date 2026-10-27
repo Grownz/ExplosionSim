@@ -1,7 +1,10 @@
 #include "scene/VoronoiFracture.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <utility>
 
 using namespace DirectX;
@@ -9,10 +12,39 @@ using namespace DirectX;
 namespace ex::scene {
 namespace {
 
+constexpr int kVertexHashSize = 256;
+constexpr float kVertexEpsilonSq = 1e-10f;
+constexpr float kVertexQuantize = 100000.0f; // 1e-5 m
+
+uint64_t HashVertexCell(int64_t x, int64_t y, int64_t z) {
+    uint64_t hash = uint64_t(x) * 0x9E3779B97F4A7C15ull;
+    hash ^= uint64_t(y) * 0xC2B2AE3D27D4EB4Full;
+    hash ^= uint64_t(z) * 0x165667B19E3779F9ull;
+    hash ^= hash >> 29;
+    hash *= 0xBF58476D1CE4E5B9ull;
+    hash ^= hash >> 32;
+    return hash;
+}
+
+// Flat convex polyhedron: face i is the index range
+// [faceStarts[i], faceStarts[i + 1]) in faceIndices. The flat layout avoids a
+// vector allocation per face during every clip.
 struct Polyhedron {
     std::vector<XMFLOAT3> vertices;
-    std::vector<std::vector<int>> faces;
+    std::vector<int> faceIndices;
+    std::vector<int> faceStarts{0};
     std::vector<int> faceSeed; // seed index that produced the face, -1 for the box
+    std::array<int, kVertexHashSize> buckets{};
+    std::vector<int> next; // hash chain, parallel to vertices
+    XMFLOAT3 aabbMin{std::numeric_limits<float>::max(),
+                     std::numeric_limits<float>::max(),
+                     std::numeric_limits<float>::max()};
+    XMFLOAT3 aabbMax{-std::numeric_limits<float>::max(),
+                     -std::numeric_limits<float>::max(),
+                     -std::numeric_limits<float>::max()};
+
+    Polyhedron() { buckets.fill(-1); }
+    int FaceCount() const { return int(faceStarts.size()) - 1; }
 };
 
 struct Rng {
@@ -57,14 +89,45 @@ XMFLOAT3 Lerp(const XMFLOAT3& a, const XMFLOAT3& b, float t) {
     return Add(a, Scale(Sub(b, a), t));
 }
 
+void UpdateBounds(Polyhedron& poly, const XMFLOAT3& point) {
+    poly.aabbMin.x = std::min(poly.aabbMin.x, point.x);
+    poly.aabbMin.y = std::min(poly.aabbMin.y, point.y);
+    poly.aabbMin.z = std::min(poly.aabbMin.z, point.z);
+    poly.aabbMax.x = std::max(poly.aabbMax.x, point.x);
+    poly.aabbMax.y = std::max(poly.aabbMax.y, point.y);
+    poly.aabbMax.z = std::max(poly.aabbMax.z, point.z);
+}
+
+// Welds a vertex against the existing ones with a quantized hash. The 27
+// neighbouring cells are checked because a point within the weld tolerance can
+// fall just across a quantization boundary.
 int AddVertex(Polyhedron& poly, const XMFLOAT3& point) {
-    for (int i = 0; i < int(poly.vertices.size()); ++i) {
-        if (LengthSq(Sub(poly.vertices[i], point)) < 1e-10f) {
-            return i;
+    const int64_t qx = int64_t(std::llround(double(point.x) * kVertexQuantize));
+    const int64_t qy = int64_t(std::llround(double(point.y) * kVertexQuantize));
+    const int64_t qz = int64_t(std::llround(double(point.z) * kVertexQuantize));
+
+    for (int dz = -1; dz <= 1; ++dz) {
+        for (int dy = -1; dy <= 1; ++dy) {
+            for (int dx = -1; dx <= 1; ++dx) {
+                const uint64_t key = HashVertexCell(qx + dx, qy + dy, qz + dz);
+                const int bucket = int(key & (kVertexHashSize - 1));
+                for (int i = poly.buckets[bucket]; i != -1; i = poly.next[i]) {
+                    if (LengthSq(Sub(poly.vertices[i], point)) < kVertexEpsilonSq) {
+                        return i;
+                    }
+                }
+            }
         }
     }
+
+    const int index = int(poly.vertices.size());
     poly.vertices.push_back(point);
-    return int(poly.vertices.size()) - 1;
+    const uint64_t key = HashVertexCell(qx, qy, qz);
+    const int bucket = int(key & (kVertexHashSize - 1));
+    poly.next.push_back(poly.buckets[bucket]);
+    poly.buckets[bucket] = index;
+    UpdateBounds(poly, point);
+    return index;
 }
 
 // Clips the convex polyhedron to the half-space `dot(n, x) <= d`. The cap face
@@ -72,12 +135,33 @@ int AddVertex(Polyhedron& poly, const XMFLOAT3& point) {
 void ClipByPlane(Polyhedron& poly, const XMFLOAT3& normal, float d, int seed) {
     constexpr float kEpsilon = 1e-5f;
 
-    std::vector<float> distance(poly.vertices.size());
+    // AABB early-out: most bisectors from distant seeds do not cut the cell.
+    const XMFLOAT3 aabbCenter = Scale(Add(poly.aabbMin, poly.aabbMax), 0.5f);
+    const XMFLOAT3 aabbExtent = Scale(Sub(poly.aabbMax, poly.aabbMin), 0.5f);
+    const float centerDistance = Dot(normal, aabbCenter) - d;
+    const float radius = std::abs(normal.x) * aabbExtent.x +
+                         std::abs(normal.y) * aabbExtent.y +
+                         std::abs(normal.z) * aabbExtent.z;
+    if (centerDistance + radius <= kEpsilon) {
+        return; // entirely inside
+    }
+    if (centerDistance - radius > kEpsilon) {
+        return; // entirely outside; keep the previous behaviour
+    }
+
+    static thread_local std::vector<float> distanceScratch;
+    static thread_local std::vector<int> clippedScratch;
+    static thread_local std::vector<int> cleanScratch;
+    static thread_local std::vector<int> capScratch;
+    static thread_local std::vector<int> uniqueCapScratch;
+    static thread_local std::vector<std::pair<float, int>> orderedScratch;
+
+    distanceScratch.resize(poly.vertices.size());
     bool anyInside = false;
     bool anyOutside = false;
     for (size_t i = 0; i < poly.vertices.size(); ++i) {
-        distance[i] = Dot(normal, poly.vertices[i]) - d;
-        if (distance[i] <= kEpsilon) {
+        distanceScratch[i] = Dot(normal, poly.vertices[i]) - d;
+        if (distanceScratch[i] <= kEpsilon) {
             anyInside = true;
         } else {
             anyOutside = true;
@@ -88,106 +172,116 @@ void ClipByPlane(Polyhedron& poly, const XMFLOAT3& normal, float d, int seed) {
     }
 
     Polyhedron out;
-    std::vector<int> cap;
-    for (size_t f = 0; f < poly.faces.size(); ++f) {
-        const std::vector<int>& face = poly.faces[f];
-        if (face.size() < 3) {
+    out.vertices.reserve(poly.vertices.size() + 8);
+    out.faceIndices.reserve(poly.faceIndices.size() + 16);
+    out.faceStarts.reserve(poly.faceStarts.size() + 2);
+    out.faceSeed.reserve(poly.faceSeed.size() + 1);
+
+    capScratch.clear();
+    for (int f = 0; f < poly.FaceCount(); ++f) {
+        const int begin = poly.faceStarts[f];
+        const int count = poly.faceStarts[f + 1] - begin;
+        if (count < 3) {
             continue;
         }
-        std::vector<int> clipped;
-        const int count = int(face.size());
+        clippedScratch.clear();
+        clippedScratch.reserve(size_t(count) + 2);
         for (int i = 0; i < count; ++i) {
-            const int ia = face[i];
-            const int ib = face[(i + 1) % count];
-            const bool insideA = distance[ia] <= kEpsilon;
-            const bool insideB = distance[ib] <= kEpsilon;
+            const int ia = poly.faceIndices[begin + i];
+            const int ib = poly.faceIndices[begin + (i + 1) % count];
+            const bool insideA = distanceScratch[ia] <= kEpsilon;
+            const bool insideB = distanceScratch[ib] <= kEpsilon;
             if (insideA) {
-                clipped.push_back(AddVertex(out, poly.vertices[ia]));
+                clippedScratch.push_back(AddVertex(out, poly.vertices[ia]));
             }
             if (insideA != insideB) {
-                const float t = distance[ia] / (distance[ia] - distance[ib]);
-                const int index = AddVertex(out, Lerp(poly.vertices[ia],
-                                                      poly.vertices[ib], t));
-                clipped.push_back(index);
-                cap.push_back(index);
+                const float t =
+                    distanceScratch[ia] / (distanceScratch[ia] - distanceScratch[ib]);
+                const int index = AddVertex(
+                    out, Lerp(poly.vertices[ia], poly.vertices[ib], t));
+                clippedScratch.push_back(index);
+                capScratch.push_back(index);
             }
         }
-        // Remove repeated indices from the clipped polygon (can happen when a
-        // vertex lies exactly on the plane).
-        std::vector<int> clean;
-        for (int index : clipped) {
-            if (clean.empty() || clean.back() != index) {
-                clean.push_back(index);
+
+        cleanScratch.clear();
+        for (int index : clippedScratch) {
+            if (cleanScratch.empty() || cleanScratch.back() != index) {
+                cleanScratch.push_back(index);
             }
         }
-        while (clean.size() > 1 && clean.front() == clean.back()) {
-            clean.pop_back();
+        while (cleanScratch.size() > 1 && cleanScratch.front() == cleanScratch.back()) {
+            cleanScratch.pop_back();
         }
-        if (clean.size() >= 3) {
-            out.faces.push_back(std::move(clean));
+        if (cleanScratch.size() >= 3) {
+            out.faceIndices.insert(out.faceIndices.end(), cleanScratch.begin(),
+                                   cleanScratch.end());
+            out.faceStarts.push_back(int(out.faceIndices.size()));
             out.faceSeed.push_back(poly.faceSeed[f]);
         }
     }
 
-    std::vector<int> uniqueCap;
-    for (int index : cap) {
-        if (std::find(uniqueCap.begin(), uniqueCap.end(), index) ==
-            uniqueCap.end()) {
-            uniqueCap.push_back(index);
+    uniqueCapScratch.clear();
+    for (int index : capScratch) {
+        if (std::find(uniqueCapScratch.begin(), uniqueCapScratch.end(), index) ==
+            uniqueCapScratch.end()) {
+            uniqueCapScratch.push_back(index);
         }
     }
-    if (uniqueCap.size() >= 3) {
+    if (uniqueCapScratch.size() >= 3) {
         XMFLOAT3 centroid(0.0f, 0.0f, 0.0f);
-        for (int index : uniqueCap) {
+        for (int index : uniqueCapScratch) {
             centroid = Add(centroid, out.vertices[index]);
         }
-        centroid = Scale(centroid, 1.0f / float(uniqueCap.size()));
+        centroid = Scale(centroid, 1.0f / float(uniqueCapScratch.size()));
 
         // Build a basis with u x v = normal so that increasing angles are CCW
         // when the face is viewed from outside.
         const XMFLOAT3 reference =
             std::abs(normal.x) < 0.9f ? XMFLOAT3(1.0f, 0.0f, 0.0f)
                                       : XMFLOAT3(0.0f, 1.0f, 0.0f);
-        const XMFLOAT3 u = Normalize(Sub(reference, Scale(normal,
-                                                          Dot(reference, normal))));
+        const XMFLOAT3 u =
+            Normalize(Sub(reference, Scale(normal, Dot(reference, normal))));
         const XMFLOAT3 v = Cross(normal, u);
 
         // Sort the cap polygon by angle around the centroid. The angles are
         // precomputed and the insertion sort is bounded, so the ordering never
-        // depends on std::sort's strict-weak-ordering contract. That contract is
-        // fragile here: /fp:fast + AVX2 codegen could make the inlined angle
-        // comparator read past the cap array and crash for large scenes.
-        std::vector<std::pair<float, int>> ordered;
-        ordered.reserve(uniqueCap.size());
-        for (int index : uniqueCap) {
+        // depends on std::sort's strict-weak-ordering contract.
+        orderedScratch.clear();
+        orderedScratch.reserve(uniqueCapScratch.size());
+        for (int index : uniqueCapScratch) {
             const XMFLOAT3 offset = Sub(out.vertices[index], centroid);
-            ordered.emplace_back(std::atan2(Dot(offset, v), Dot(offset, u)), index);
+            orderedScratch.emplace_back(
+                std::atan2(Dot(offset, v), Dot(offset, u)), index);
         }
-        for (size_t i = 1; i < ordered.size(); ++i) {
-            const std::pair<float, int> value = ordered[i];
+        for (size_t i = 1; i < orderedScratch.size(); ++i) {
+            const std::pair<float, int> value = orderedScratch[i];
             size_t j = i;
-            while (j > 0 && ordered[j - 1].first > value.first) {
-                ordered[j] = ordered[j - 1];
+            while (j > 0 && orderedScratch[j - 1].first > value.first) {
+                orderedScratch[j] = orderedScratch[j - 1];
                 --j;
             }
-            ordered[j] = value;
+            orderedScratch[j] = value;
         }
-        for (size_t i = 0; i < ordered.size(); ++i) {
-            uniqueCap[i] = ordered[i].second;
+        for (size_t i = 0; i < orderedScratch.size(); ++i) {
+            uniqueCapScratch[i] = orderedScratch[i].second;
         }
 
-        out.faces.push_back(std::move(uniqueCap));
+        out.faceIndices.insert(out.faceIndices.end(), uniqueCapScratch.begin(),
+                               uniqueCapScratch.end());
+        out.faceStarts.push_back(int(out.faceIndices.size()));
         out.faceSeed.push_back(seed);
     }
 
     poly = std::move(out);
 }
 
-XMFLOAT3 FaceNormal(const Polyhedron& poly, const std::vector<int>& face) {
+XMFLOAT3 FaceNormal(const Polyhedron& poly, int begin, int count) {
     XMFLOAT3 normal(0.0f, 0.0f, 0.0f);
-    for (size_t i = 0; i < face.size(); ++i) {
-        const XMFLOAT3& current = poly.vertices[face[i]];
-        const XMFLOAT3& next = poly.vertices[face[(i + 1) % face.size()]];
+    for (int i = 0; i < count; ++i) {
+        const XMFLOAT3& current = poly.vertices[poly.faceIndices[begin + i]];
+        const XMFLOAT3& next =
+            poly.vertices[poly.faceIndices[begin + (i + 1) % count]];
         normal.x += (current.y - next.y) * (current.z + next.z);
         normal.y += (current.z - next.z) * (current.x + next.x);
         normal.z += (current.x - next.x) * (current.y + next.y);
@@ -195,12 +289,12 @@ XMFLOAT3 FaceNormal(const Polyhedron& poly, const std::vector<int>& face) {
     return Normalize(normal);
 }
 
-float FaceArea(const Polyhedron& poly, const std::vector<int>& face) {
+float FaceArea(const Polyhedron& poly, int begin, int count) {
     float area = 0.0f;
-    for (size_t i = 1; i + 1 < face.size(); ++i) {
-        const XMFLOAT3& a = poly.vertices[face[0]];
-        const XMFLOAT3& b = poly.vertices[face[i]];
-        const XMFLOAT3& c = poly.vertices[face[i + 1]];
+    const XMFLOAT3& a = poly.vertices[poly.faceIndices[begin]];
+    for (int i = 1; i + 1 < count; ++i) {
+        const XMFLOAT3& b = poly.vertices[poly.faceIndices[begin + i]];
+        const XMFLOAT3& c = poly.vertices[poly.faceIndices[begin + i + 1]];
         area += 0.5f * std::sqrt(LengthSq(Cross(Sub(b, a), Sub(c, a))));
     }
     return area;
@@ -344,44 +438,51 @@ void FitOrientedBox(const std::vector<XMFLOAT3>& points, XMFLOAT3& center,
 
 Polyhedron MakeBox(const XMFLOAT3& center, const XMFLOAT3& half) {
     Polyhedron poly;
+    int index[2][2][2] = {};
     for (int sx = -1; sx <= 1; sx += 2) {
         for (int sy = -1; sy <= 1; sy += 2) {
             for (int sz = -1; sz <= 1; sz += 2) {
-                poly.vertices.push_back(
-                    XMFLOAT3(center.x + float(sx) * half.x,
-                             center.y + float(sy) * half.y,
-                             center.z + float(sz) * half.z));
+                index[(sx + 1) / 2][(sy + 1) / 2][(sz + 1) / 2] = AddVertex(
+                    poly, XMFLOAT3(center.x + float(sx) * half.x,
+                                   center.y + float(sy) * half.y,
+                                   center.z + float(sz) * half.z));
             }
         }
     }
-    auto index = [](int sx, int sy, int sz) {
-        return ((sx + 1) / 2) * 4 + ((sy + 1) / 2) * 2 + (sz + 1) / 2;
+    auto vertex = [&index](int sx, int sy, int sz) {
+        return index[(sx + 1) / 2][(sy + 1) / 2][(sz + 1) / 2];
     };
     // Counter-clockwise when seen from outside.
     const int faces[6][4] = {
-        {index(1, -1, -1), index(1, 1, -1), index(1, 1, 1), index(1, -1, 1)},
-        {index(-1, -1, 1), index(-1, 1, 1), index(-1, 1, -1), index(-1, -1, -1)},
-        {index(-1, 1, -1), index(-1, 1, 1), index(1, 1, 1), index(1, 1, -1)},
-        {index(-1, -1, 1), index(-1, -1, -1), index(1, -1, -1), index(1, -1, 1)},
-        {index(-1, -1, 1), index(1, -1, 1), index(1, 1, 1), index(-1, 1, 1)},
-        {index(1, -1, -1), index(-1, -1, -1), index(-1, 1, -1), index(1, 1, -1)},
+        {vertex(1, -1, -1), vertex(1, 1, -1), vertex(1, 1, 1), vertex(1, -1, 1)},
+        {vertex(-1, -1, 1), vertex(-1, 1, 1), vertex(-1, 1, -1), vertex(-1, -1, -1)},
+        {vertex(-1, 1, -1), vertex(-1, 1, 1), vertex(1, 1, 1), vertex(1, 1, -1)},
+        {vertex(-1, -1, 1), vertex(-1, -1, -1), vertex(1, -1, -1), vertex(1, -1, 1)},
+        {vertex(-1, -1, 1), vertex(1, -1, 1), vertex(1, 1, 1), vertex(-1, 1, 1)},
+        {vertex(1, -1, -1), vertex(-1, -1, -1), vertex(-1, 1, -1), vertex(1, 1, -1)},
     };
     for (const auto& face : faces) {
-        poly.faces.push_back({face[0], face[1], face[2], face[3]});
+        poly.faceIndices.insert(poly.faceIndices.end(), std::begin(face),
+                                std::end(face));
+        poly.faceStarts.push_back(int(poly.faceIndices.size()));
         poly.faceSeed.push_back(-1);
     }
     return poly;
 }
 
+void AddUnique(std::vector<int>& list, int value) {
+    if (std::find(list.begin(), list.end(), value) == list.end()) {
+        list.push_back(value);
+    }
+}
+
 } // namespace
 
 // Clips the box into one Voronoi cell per seed and fills the hull, the fitted
-// collision proxy and the face-seed lists.
+// collision proxy and the face adjacency.
 void BuildCells(const std::vector<XMFLOAT3>& seeds, const Polyhedron& box,
-                std::vector<FractureCell>& cells,
-                std::vector<std::vector<int>>& faceSeeds) {
+                std::vector<FractureCell>& cells) {
     cells.assign(seeds.size(), FractureCell{});
-    faceSeeds.assign(seeds.size(), {});
 
     for (int i = 0; i < int(seeds.size()); ++i) {
         Polyhedron poly = box;
@@ -396,30 +497,38 @@ void BuildCells(const std::vector<XMFLOAT3>& seeds, const Polyhedron& box,
         }
 
         FractureCell& cell = cells[i];
+        cell.positions.reserve(poly.vertices.size());
+        cell.normals.reserve(poly.vertices.size());
+        cell.indices.reserve(poly.faceIndices.size());
+
         float minimumY = 1e30f;
-        for (size_t f = 0; f < poly.faces.size(); ++f) {
-            const std::vector<int>& face = poly.faces[f];
-            if (face.size() < 3) {
+        for (int f = 0; f < poly.FaceCount(); ++f) {
+            const int begin = poly.faceStarts[f];
+            const int count = poly.faceStarts[f + 1] - begin;
+            if (count < 3) {
                 continue;
             }
-            const float area = FaceArea(poly, face);
+            const float area = FaceArea(poly, begin, count);
             if (area < 1e-4f) {
                 continue;
             }
-            const XMFLOAT3 normal = FaceNormal(poly, face);
+            const XMFLOAT3 normal = FaceNormal(poly, begin, count);
             const uint32_t base = uint32_t(cell.positions.size());
-            for (int index : face) {
-                cell.positions.push_back(poly.vertices[index]);
+            for (int k = 0; k < count; ++k) {
+                const XMFLOAT3& point = poly.vertices[poly.faceIndices[begin + k]];
+                cell.positions.push_back(point);
                 cell.normals.push_back(normal);
-                minimumY = std::min(minimumY, poly.vertices[index].y);
+                minimumY = std::min(minimumY, point.y);
             }
-            for (size_t k = 1; k + 1 < face.size(); ++k) {
+            for (int k = 1; k + 1 < count; ++k) {
                 cell.indices.push_back(base);
                 cell.indices.push_back(base + uint32_t(k));
                 cell.indices.push_back(base + uint32_t(k + 1));
             }
-            if (poly.faceSeed[f] >= 0) {
-                faceSeeds[i].push_back(poly.faceSeed[f]);
+            const int neighbor = poly.faceSeed[f];
+            if (neighbor >= 0 && neighbor < int(cells.size()) && neighbor != i) {
+                AddUnique(cells[i].neighbors, neighbor);
+                AddUnique(cells[neighbor].neighbors, i);
             }
             cell.surfaceArea += area;
         }
@@ -481,31 +590,14 @@ void FractureBoxVoronoi(const XMFLOAT3& center, const XMFLOAT3& half,
     }
 
     const Polyhedron box = MakeBox(center, half);
-    std::vector<std::vector<int>> faceSeeds;
 
     // One Lloyd-style relaxation pass removes the worst slivers while keeping
     // the irregular cell shapes.
-    BuildCells(seeds, box, cells, faceSeeds);
+    BuildCells(seeds, box, cells);
     for (int i = 0; i < int(seeds.size()); ++i) {
         seeds[i] = Lerp(seeds[i], cells[i].center, 0.8f);
     }
-    BuildCells(seeds, box, cells, faceSeeds);
-
-    // Face adjacency is symmetric: both cells see the shared bisector face.
-    for (int i = 0; i < int(faceSeeds.size()); ++i) {
-        for (int j : faceSeeds[i]) {
-            if (j < 0 || j >= int(cells.size()) || j == i) {
-                continue;
-            }
-            auto add = [](std::vector<int>& list, int value) {
-                if (std::find(list.begin(), list.end(), value) == list.end()) {
-                    list.push_back(value);
-                }
-            };
-            add(cells[i].neighbors, j);
-            add(cells[j].neighbors, i);
-        }
-    }
+    BuildCells(seeds, box, cells);
 
     // Guarantee at least one grounded cell so the support flood fill has a seed.
     bool anyGrounded = false;

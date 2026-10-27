@@ -146,6 +146,11 @@ public:
     void Generate(const SceneSettings& settings, const sim::BlastModel& blast,
                   const std::function<bool(float)>& progress = {},
                   core::ThreadPool* pool = nullptr);
+    // Generates only the object layout (no Voronoi fracture, shielding or
+    // scene hash). Used for the early preview while the chunks are built in
+    // the background.
+    bool GenerateLayout(const SceneSettings& settings, const sim::BlastModel& blast,
+                        const std::function<bool(float)>& progress = {});
     void Clear();
     // Resets the mutable object/chunk state (damage, burning, bodies, joints)
     // without regenerating the geometry. Used by Rearm/Reset and loop restarts.
@@ -175,6 +180,9 @@ private:
     };
 
     void ActivateBody(SceneObject& object);
+    bool GenerateInternal(const SceneSettings& settings, const sim::BlastModel& blast,
+                          const std::function<bool(float)>& progress,
+                          core::ThreadPool* pool, bool layoutOnly);
     void StartCollapse(SceneObject& object);
     void UpdateSupport(SceneObject& object);
     std::vector<uint8_t> ComputeSupport(const SceneObject& object) const;

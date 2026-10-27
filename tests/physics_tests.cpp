@@ -1083,9 +1083,13 @@ void TestAsyncSceneGeneration() {
     simulation.SetAsyncSceneGeneration(true);
     CHECK(simulation.Initialize(settings, pool));
 
-    const auto waitForScene = [](ex::sim::Simulation& sim) {
+    bool previewSeen = false;
+    const auto waitForScene = [&previewSeen](ex::sim::Simulation& sim) {
         for (int guard = 0; guard < 6000; ++guard) {
             sim.PollSceneGeneration();
+            if (sim.ConsumeScenePreview()) {
+                previewSeen = true;
+            }
             if (sim.ConsumeSceneCompletion()) {
                 return true;
             }
@@ -1095,6 +1099,7 @@ void TestAsyncSceneGeneration() {
     };
 
     CHECK(waitForScene(simulation));
+    CHECK(previewSeen);
     CHECK(!simulation.SceneGenerating());
     CHECK_NEAR(simulation.SceneProgress(), 1.0f, 1e-4);
     CHECK(!simulation.Scene().Empty());
@@ -1110,6 +1115,43 @@ void TestAsyncSceneGeneration() {
     CHECK(!simulation.Scene().Empty());
 
     simulation.Shutdown();
+}
+
+void TestSceneLayoutPreview() {
+    ex::sim::Environment environment{};
+    ex::sim::Charge charge{};
+    charge.tntMassKg = 0.2;
+    charge.heightOfBurstM = 0.4;
+    ex::sim::BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 1234;
+    settings.density = 0.5f;
+    settings.quality = 1;
+    settings.chunkScale = 1.0f;
+    settings.voronoiChunks = true;
+
+    ex::scene::Scene layout;
+    CHECK(layout.GenerateLayout(settings, model));
+    CHECK(!layout.Empty());
+    CHECK(layout.GenerationHash() != 0);
+    CHECK(layout.Extent() > 0.0f);
+    int layoutChunks = 0;
+    for (const ex::scene::SceneObject& object : layout.Objects()) {
+        layoutChunks += int(object.chunks.size());
+    }
+    CHECK(layoutChunks == 0);
+
+    ex::scene::Scene full;
+    full.Generate(settings, model);
+    CHECK(full.Objects().size() == layout.Objects().size());
+    CHECK_NEAR(full.Extent(), layout.Extent(), 1e-4);
+    int fullChunks = 0;
+    for (const ex::scene::SceneObject& object : full.Objects()) {
+        fullChunks += int(object.chunks.size());
+    }
+    CHECK(fullChunks > 0);
 }
 
 void TestParallelSceneGeneration() {
@@ -1246,6 +1288,7 @@ int main() {
     RUN(TestVoronoiCapRegression);
     RUN(TestSceneExtentScalesWithCharge);
     RUN(TestAsyncSceneGeneration);
+    RUN(TestSceneLayoutPreview);
     RUN(TestParallelSceneGeneration);
     RUN(TestSceneReuse);
     RUN(TestSettingsRoundTrip);

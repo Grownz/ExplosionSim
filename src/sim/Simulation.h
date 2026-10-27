@@ -121,6 +121,9 @@ public:
     void WaitForSceneGeneration();
     // True once after a background scene has been adopted.
     bool ConsumeSceneCompletion();
+    // True once after the early layout preview has been adopted. The town is
+    // visible while the chunks are still being fractured.
+    bool ConsumeScenePreview();
 
     double ObserverDistanceM() const { return observerDistance_; }
     void SetObserverDistanceM(double distance) { observerDistance_ = distance; }
@@ -142,11 +145,14 @@ private:
     core::ThreadPool* pool_ = nullptr;
 
     std::unique_ptr<scene::Scene> pendingScene_;
+    std::unique_ptr<scene::Scene> pendingPreview_;
     std::atomic<float> sceneProgress_{1.0f};
     std::atomic<bool> sceneGenerating_{false};
     std::atomic<bool> sceneReady_{false};
+    std::atomic<bool> previewReady_{false};
     bool asyncScene_ = false;
     bool sceneCompleted_ = false;
+    bool scenePreviewCompleted_ = false;
     bool sceneValid_ = false;
     std::jthread sceneThread_;
 

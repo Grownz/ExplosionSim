@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Early scene preview** - asynchronous generation publishes the intact object layout in
+  ~10 ms while the Voronoi chunks are fractured in the background. The previous town stays
+  visible during regeneration, the camera frames the preview, and gameplay actions are
+  ignored until the full scene is ready.
+- **Voronoi fracture micro-optimizations** - flat polyhedron storage, hash-welded
+  vertices, AABB early-outs for distant bisectors and direct face-adjacency construction.
+  The default 20 t town (9,595 chunks) generates in ~147 ms (from ~171-188 ms); the
+  32k-chunk budget takes ~766 ms (from ~866-961 ms).
+
 ## [0.6.0] - 2026-10-27
 
 This feature release turns the procedural town into a more interactive and physical

@@ -42,10 +42,14 @@ currently displayed, so the renderer never samples a partially written volume.
 
 In the interactive app the procedural town is generated on a dedicated `std::jthread`
 into a separate `Scene`. Placement is serial and deterministic; the Voronoi fracture runs
-on the shared thread pool with one RNG per building. A progress callback publishes 0..1
-through an atomic, and the main thread swaps the finished scene into place. The
-simulation is frozen while the town is generated, so the countdown and the solver cannot
-advance into a half-built scene. Headless captures and tests keep the synchronous path.
+on the shared thread pool with one RNG per building. The worker first publishes a
+layout-only preview (no chunks), so the intact town appears in ~10 ms; the previous town
+stays visible until that preview is adopted. The full scene replaces the preview when the
+chunks and shielding are ready. The camera frames the preview, and gameplay actions are
+ignored while loading. A progress callback publishes 0..1 through an atomic, and the
+main thread swaps the finished scene into place. The simulation is frozen while the town
+is generated, so the countdown and the solver cannot advance into a half-built scene.
+Headless captures and tests keep the synchronous path.
 
 Rearm, Reset, loop restarts and non-scene setting changes reuse the deterministic town:
 only the mutable object/chunk state (damage, burning, bodies, joints) is reset. A new
@@ -269,9 +273,11 @@ become 6-DOF rigid bodies, and burning objects emit fire particles.
 `scene.chunkScale` (0.25–2.0, default 1.0) multiplies the target Voronoi cell volume by
 `scale³`; the cell count is clamped to 6..256 per building, so the smallest settings
 saturate on large buildings. A global budget of **32,000 chunks** caps the whole scene:
-the per-building counts are scaled down before the fracture. Measured on the reference
-8-core/16-thread CPU: 16k -> 0.35 s, 24k -> 0.7 s, 32k -> 0.9 s and 40k -> 1.2 s
-generation time; the default 20 t town (9,595 chunks) generates in ~0.17 s. Chunk
+the per-building counts are scaled down before the fracture. The fracture uses a flat
+face-index polyhedron, hash-welded vertices, AABB early-outs for distant bisectors and
+direct face-adjacency construction. Measured on the reference 8-core/16-thread CPU:
+16k -> 0.35 s, 24k -> 0.7 s, 32k -> 0.77 s and 40k -> 1.2 s generation time; the default
+20 t town (9,595 chunks) generates in ~0.15 s. Chunk
 colours are static: every chunk inherits its object's
 colour and keeps the building-space facade coordinates, and only the semi-transparent
 fire effects overlay them.
