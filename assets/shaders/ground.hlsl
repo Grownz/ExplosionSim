@@ -5,7 +5,9 @@ Texture2D<float> ShadowMap0 : register(t2);
 Texture2D<float> ShadowMap1 : register(t3);
 Texture2D<float> ShadowMap2 : register(t4);
 Texture2D<float> StaticShadowMap : register(t5);
+Texture3D<float4> VolumeTexture : register(t6);
 SamplerComparisonState ShadowSampler : register(s2);
+SamplerState VolumeSampler : register(s3);
 
 cbuffer ShadowConstants : register(b2)
 {
@@ -117,6 +119,36 @@ float SampleGroundShadow(float3 worldPosition)
                SampleGroundStatic(worldPosition));
 }
 
+// Volumetric shadow of the smoke/fireball cloud: march towards the sun and
+// accumulate the smoke optical depth. Cheap because most ground pixels miss
+// the volume box entirely.
+float SmokeShadow(float3 worldPosition)
+{
+    const float3 sunDir = normalize(SunDirection.xyz);
+    float2 range = RayBoxRange(worldPosition, sunDir, VolumeMin.xyz, VolumeMax.xyz);
+    range.x = max(range.x, 0.0);
+    if (range.y <= range.x)
+    {
+        return 1.0;
+    }
+
+    const int steps = 8;
+    const float stepSize = (range.y - range.x) / float(steps);
+    float t = range.x + stepSize * 0.5;
+    float opticalDepth = 0.0;
+    [loop]
+    for (int i = 0; i < steps; ++i)
+    {
+        const float3 position = worldPosition + sunDir * t;
+        const float3 uvw = (position - VolumeMin.xyz) /
+                           max(VolumeMax.xyz - VolumeMin.xyz, 1e-4);
+        const float density = VolumeTexture.SampleLevel(VolumeSampler, uvw, 0).r;
+        opticalDepth += density * VolumeMin.w * stepSize;
+        t += stepSize;
+    }
+    return exp(-opticalDepth);
+}
+
 float TerrainHeight(float2 p)
 {
     float detail = Fbm3(float3(p * 0.03, 1.7));
@@ -190,6 +222,7 @@ GroundOutput PSGround(VSOut input)
     float3 normal = float3(0.0, 1.0, 0.0);
     float sunAmount = saturate(dot(normal, SunDirection.xyz));
     sunAmount *= SampleGroundShadow(world);
+    sunAmount *= SmokeShadow(world);
     float3 lighting = SunColor.rgb * sunAmount * 0.35 + float3(0.16, 0.17, 0.20);
     float3 color = earth * lighting;
 

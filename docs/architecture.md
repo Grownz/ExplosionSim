@@ -79,19 +79,21 @@ starts the new explosion immediately.
 | Ground | HDR + depth | fullscreen ray/plane intersection, writes `SV_Depth` |
 | Depth copy | R32F texture | avoids read/write hazards when sampling depth |
 | Debris/sparks | HDR | instanced billboards, additive |
-| Volume | HDR | ray-marched emission/absorption, premultiplied blend |
-| Fire tongues | HDR | instanced billboards, additive |
+| Fire tongues | HDR | instanced billboards, additive, drawn before the volume |
+| Volume | HDR | ray-marched emission/absorption, premultiplied blend, occludes/scatters over the fire |
 | Smoke/dust | HDR | instanced billboards, alpha blend, soft depth fade |
 | Bloom | 5 mip chain | 4-tap downsample, tent upsample, additive |
 | Composite | swap chain / offscreen | ACES, exposure, vignette, dithering |
 
 Opaque geometry writes depth; particles and the volume test against it but do not write.
-The volume is drawn before the smoke particles so soot composites over the fireball.
-Fire billboards use `PSFire`: two fbm lookups shape a rising flame silhouette and a
-red-orange-white heat ramp, and the result is additively blended with a soft depth fade.
-The CPU only advances the emitter positions, so the whole fire pass is one instanced
-draw call. Burning objects spawn their emitters on the visible canopy rim or roof
-surface and follow the current rigid-body pose, so flames are not hidden inside the mesh.
+The flame pass runs before the volume: the smoke's premultiplied transmittance then
+occludes the flames and the volume's scattering composites over them. The volume is
+drawn before the smoke particles so soot composites over the fireball. Fire billboards
+use `PSFire`: two fbm lookups shape a rising flame silhouette and a red-orange-white
+heat ramp, and the result is additively blended with a soft depth fade. The CPU only
+advances the emitter positions, so the whole fire pass is one instanced draw call.
+Burning objects spawn their emitters on the visible canopy rim or roof surface and follow
+the current rigid-body pose, so flames are not hidden inside the mesh.
 
 ### Volume texture
 
@@ -111,6 +113,10 @@ surface and follow the current rigid-body pose, so flames are not hidden inside 
   2x/4x/8x anisotropic clamp sampler for the raymarch and a wrap variant for the
   procedural surface grain
 - no mipmaps
+- the ground and scene shaders march the same volume towards the sun (8 samples) for
+  the smoke shadow; the raymarcher uses a 6-sample sun transmittance for self-shadowing
+- the first 3 m of the volume ray are faded out so flying into the cloud does not leave
+  a screen-filling veil
 - the shader jitters ray start positions to hide slice banding and adds procedural noise
   for sub-voxel detail
 

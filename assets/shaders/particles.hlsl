@@ -25,6 +25,7 @@ struct ParticleOutput
     float viewDistance : TEXCOORD4;
     float size : TEXCOORD5;
     float intensity : TEXCOORD6;
+    float3 worldPosition : TEXCOORD7;
 };
 
 ParticleOutput VSParticle(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
@@ -54,6 +55,8 @@ ParticleOutput VSParticle(uint vertexID : SV_VertexID, uint instanceID : SV_Inst
     output.viewDistance = length(instance.position - CameraPosition.xyz);
     output.size = max(size, 0.02);
     output.intensity = instance.padding.x > 0.0 ? instance.padding.x : 1.0;
+    // Fragment world position, used to keep the flame pattern world-anchored.
+    output.worldPosition = world;
     return output;
 }
 
@@ -109,9 +112,10 @@ float4 PSFire(ParticleOutput input) : SV_Target
     const float height = saturate(uv.y * 0.5 + 0.5);
     const float width = lerp(1.0, 0.32, height);
 
-    // Rising turbulence with a lateral sway and a finer detail layer.
-    float3 q = float3(uv * 1.45, seed);
-    q.y += time * 2.6;
+    // World-space turbulence: the billboard rotates with the camera, but the
+    // flame pattern is sampled in world space, so it does not swim with the view.
+    float3 q = input.worldPosition * (2.0 / max(input.size, 0.3)) +
+               float3(seed, time * 2.6, 0.0);
     q.x += sin(time * 1.9 + seed) * 0.22;
     const float turbulence = Fbm3(q);
     const float detail = Fbm3(q * 2.7 + float3(0.0, time * 4.2, 1.7));
@@ -132,7 +136,11 @@ float4 PSFire(ParticleOutput input) : SV_Target
     const float fade = SoftDepthFade(input);
     const float intensity = flame * input.opacity * input.intensity *
                             flicker * 5.5;
-    return float4(color * intensity * fade, 1.0);
+
+    // Fade out billboards that are almost at the camera so a single flame
+    // cannot fill the screen.
+    const float cameraFade = smoothstep(0.4, 2.0, input.viewDistance);
+    return float4(color * intensity * fade * cameraFade, 1.0);
 }
 
 // Smoke and dust puffs (alpha blended).

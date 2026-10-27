@@ -15,6 +15,35 @@ float SampleDensity(float3 uvw)
     return VolumeTexture.SampleLevel(LinearSampler, uvw, 0).r;
 }
 
+// Transmittance from a point inside the cloud towards the sun. Used for the
+// cloud's self-shadowing; the scene and ground use the same volume for their
+// smoke shadows.
+float SunTransmittance(float3 position)
+{
+    const float3 sunDir = normalize(SunDirection.xyz);
+    float2 range = RayBoxRange(position, sunDir, VolumeMin.xyz, VolumeMax.xyz);
+    range.x = max(range.x, 0.0);
+    if (range.y <= range.x)
+    {
+        return 1.0;
+    }
+
+    const int steps = 6;
+    const float stepSize = (range.y - range.x) / float(steps);
+    float t = range.x + stepSize * 0.5;
+    float opticalDepth = 0.0;
+    [loop]
+    for (int i = 0; i < steps; ++i)
+    {
+        const float3 samplePosition = position + sunDir * t;
+        const float3 uvw = (samplePosition - VolumeMin.xyz) /
+                           max(VolumeMax.xyz - VolumeMin.xyz, 1e-4);
+        opticalDepth += SampleDensity(uvw) * VolumeMin.w * stepSize;
+        t += stepSize;
+    }
+    return exp(-opticalDepth);
+}
+
 // Front-to-back emission/absorption raymarching through the baked blast field.
 // The result is premultiplied and blended with One / InvSrcAlpha.
 float4 PSVolume(VSOut input) : SV_Target
@@ -57,6 +86,7 @@ float4 PSVolume(VSOut input) : SV_Target
     // was the most expensive part of this pass.
     bool shadingReady = false;
     float3 shadingNormal = float3(0.0, 1.0, 0.0);
+    float cloudShadow = 1.0;
 
     [loop]
     for (int i = 0; i < steps; ++i)
@@ -152,16 +182,20 @@ float4 PSVolume(VSOut input) : SV_Target
                 float gradientLength = length(gradient);
                 shadingNormal = gradientLength > 1e-4 ? -gradient / gradientLength
                                                       : float3(0.0, 1.0, 0.0);
+                cloudShadow = SunTransmittance(position);
                 shadingReady = true;
             }
             float3 normal = shadingNormal;
             float sunShade = saturate(dot(normal, sunDirection));
             float skyShade = 0.5 + 0.5 * normal.y;
             float shade = 0.45 + 0.85 * sunShade + 0.30 * skyShade;
-            scattering *= shade;
+            scattering *= shade * cloudShadow;
             emission *= lerp(1.0, shade, 0.5);
 
-            accum += transmittance * (emission + scattering) * stepSize;
+            // Fade the first few metres so flying through the cloud does not
+            // smear a screen-filling red veil over the camera.
+            const float nearFade = smoothstep(0.0, 3.0, t);
+            accum += transmittance * (emission + scattering) * stepSize * nearFade;
             transmittance *= exp(-density * extinctionScale * stepSize);
 
             if (transmittance < 0.02)

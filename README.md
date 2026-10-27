@@ -27,14 +27,16 @@ start-up at 0.4 m above the ground**.
   soot and shock-driven ground dust. Fire is rendered by a GPU flame shader that adds
   fbm turbulence, a heat ramp and soft depth fading in one instanced draw call; burning
   objects spawn their flames on the visible canopy or roof surface and keep them in both
-  render modes.
+  render modes. Flames are drawn before the smoke volume, so the cloud occludes and
+  scatters over them.
 - **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
   1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
   pressure waveform.
 - **Fire and smoke** – the fireball emits Planckian blackbody radiation from a hot,
   filamentary core through a cooler, soot-rich surface. A growing smoke envelope and a
   shock-lifted dust skirt progressively obscure the cooling fireball, as in real
-  detonations.
+  detonations. The smoke cloud also casts a volumetric shadow on the ground and the
+  scene, and self-shadows towards the sun.
 - **Auto-scale volume** – the baked volume box follows the fireball and the growing
   smoke cloud. It only grows; with a fixed voxel count the effective accuracy drops by
   the same factor, keeping the bake cost constant. Can be disabled in the Rendering

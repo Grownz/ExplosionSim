@@ -33,7 +33,9 @@ Texture2D<float> ShadowMap0 : register(t2);
 Texture2D<float> ShadowMap1 : register(t3);
 Texture2D<float> ShadowMap2 : register(t4);
 Texture2D<float> StaticShadowMap : register(t5);
+Texture3D<float4> VolumeTexture : register(t7);
 SamplerComparisonState ShadowSampler : register(s2);
+SamplerState VolumeSampler : register(s4);
 
 // Tiling high-frequency grain for the procedural materials. It is sampled with
 // the anisotropic sampler selected in the rendering settings, so the surface
@@ -234,6 +236,35 @@ float SampleShadow(float3 worldPosition, float3 normal)
     // occlude the fragment.
     return min(SampleShadowDynamic(worldPosition, normal),
                SampleStaticShadow(worldPosition, normal));
+}
+
+// Volumetric shadow of the smoke/fireball cloud. Marches a few samples from
+// the surface towards the sun and attenuates the direct sunlight.
+float SmokeShadow(float3 worldPosition)
+{
+    const float3 sunDir = normalize(SunDirection.xyz);
+    float2 range = RayBoxRange(worldPosition, sunDir, VolumeMin.xyz, VolumeMax.xyz);
+    range.x = max(range.x, 0.0);
+    if (range.y <= range.x)
+    {
+        return 1.0;
+    }
+
+    const int steps = 8;
+    const float stepSize = (range.y - range.x) / float(steps);
+    float t = range.x + stepSize * 0.5;
+    float opticalDepth = 0.0;
+    [loop]
+    for (int i = 0; i < steps; ++i)
+    {
+        const float3 position = worldPosition + sunDir * t;
+        const float3 uvw = (position - VolumeMin.xyz) /
+                           max(VolumeMax.xyz - VolumeMin.xyz, 1e-4);
+        const float density = VolumeTexture.SampleLevel(VolumeSampler, uvw, 0).r;
+        opticalDepth += density * VolumeMin.w * stepSize;
+        t += stepSize;
+    }
+    return exp(-opticalDepth);
 }
 
 // High-frequency surface grain. Facades use the building-space facade
@@ -509,6 +540,7 @@ float4 PSScene(VSOutput input) : SV_Target
     }
 
     sunAmount *= SampleShadow(input.WorldPosition, normal);
+    sunAmount *= SmokeShadow(input.WorldPosition);
 
     // Blast damage is an overlay: irregular char and cracks over the intact
     // facade, never a flat recolour.

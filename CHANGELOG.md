@@ -41,6 +41,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the visible canopy rim or roof surface instead of inside the mesh, where the soft depth
   fade hid it, and the spawn point follows the current rigid-body pose of thrown objects.
   The high-fidelity mode no longer drops the scene fire batch.
+- Fire is now integrated with the smoke: the flame pass is drawn before the volume, so the
+  smoke's premultiplied transmittance occludes the flames and the volume's scattering
+  composites over them. The smoke cloud also casts a volumetric shadow on the ground and
+  scene, and the volume self-shadows towards the sun.
+- A near-camera fade on the volume and on the fire billboards prevents the camera from
+  picking up a screen-filling red veil when flying through the smoke or a flame.
 
 ## [0.5.5] - 2026-10-26
 

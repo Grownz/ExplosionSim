@@ -1059,6 +1059,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         activeVolumeSplit_ = volumeSplit_;
     }
 
+    // The active volume feeds the raymarch and the smoke shadows on the ground
+    // and scene.
+    ID3D11ShaderResourceView* volumeView =
+        highFidelity ? solverVolume : volumeSRV_.Get();
+
     const int capacity = simulation.Particles().Capacity();
     if (capacity != particleCapacity_) {
         particleCapacity_ = capacity;
@@ -1084,10 +1089,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     if (frameIndex_ == 0) {
         const auto& state = simulation.Blast().State();
         LogInfo("First frame: t=%.3fs fireball=%.2fm (%.0f K) shock=%.1fm volume=%d "
-                "particles=%d+%d highFidelity=%d",
+                "particles=%d+%d fire=%d highFidelity=%d",
                 state.time, state.fireballRadius, state.fireballTemperatureK, state.shockRadius,
                 activeVolumeValid_ ? 1 : 0, int(simulation.Particles().AdditiveBatch().size()),
-                int(simulation.Particles().AlphaBatch().size()), highFidelity ? 1 : 0);
+                int(simulation.Particles().AlphaBatch().size()),
+                int(simulation.Particles().FireBatch().size()), highFidelity ? 1 : 0);
     }
 
     UpdateFrameConstants(simulation, camera, settings);
@@ -1273,13 +1279,23 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         ID3D11SamplerState* groundShadowSampler = sceneRenderer_.ShadowSampler();
         context->PSSetSamplers(2, 1, &groundShadowSampler);
 
+        // Smoke shadow lookup for the ground.
+        ID3D11ShaderResourceView* smokeVolume =
+            volumeView ? volumeView : volumeDummySRV_.Get();
+        context->PSSetShaderResources(6, 1, &smokeVolume);
+        ID3D11SamplerState* smokeSampler = linearClamp_.Get();
+        context->PSSetSamplers(3, 1, &smokeSampler);
+
         context->Draw(3, 0);
 
         ID3D11ShaderResourceView* nullShadow[4] = {nullptr, nullptr, nullptr,
                                                    nullptr};
         context->PSSetShaderResources(2, 4, nullShadow);
+        ID3D11ShaderResourceView* nullSmoke = nullptr;
+        context->PSSetShaderResources(6, 1, &nullSmoke);
         ID3D11SamplerState* nullSampler = nullptr;
         context->PSSetSamplers(2, 1, &nullSampler);
+        context->PSSetSamplers(3, 1, &nullSampler);
         context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());
     }
 
@@ -1293,9 +1309,17 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         } else if (settings.anisotropicFiltering >= 2) {
             surfaceSampler = anisoWrap_[0].Get();
         }
+        ID3D11ShaderResourceView* smokeVolume =
+            volumeView ? volumeView : volumeDummySRV_.Get();
+        context->PSSetShaderResources(7, 1, &smokeVolume);
+        context->PSSetSamplers(4, 1, linearClamp_.GetAddressOf());
         sceneRenderer_.RenderScene(context, simulation.Scene(), hdrRTV,
                                    device_->DepthDSV(), hdr_.width, hdr_.height,
                                    surfaceSampler);
+        ID3D11ShaderResourceView* nullSmoke = nullptr;
+        context->PSSetShaderResources(7, 1, &nullSmoke);
+        ID3D11SamplerState* nullSmokeSampler = nullptr;
+        context->PSSetSamplers(4, 1, &nullSmokeSampler);
     }
 
     // Snapshot the depth buffer so subsequent passes can sample it without a
@@ -1313,9 +1337,6 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     info_.volumeValid = activeVolumeValid_;
     info_.highFidelity = highFidelity;
 
-    ID3D11ShaderResourceView* volumeView =
-        highFidelity ? solverVolume : volumeSRV_.Get();
-
     // Hot debris and sparks are drawn before the volume so that the optically
     // thick fireball correctly occludes the material inside it.
     if (!highFidelity && settings.enableParticles && info_.additiveParticles > 0) {
@@ -1330,6 +1351,28 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->OMSetBlendState(blendAdditive_.Get(), nullptr, 0xffffffff);
         context->PSSetShader(particleAdditivePS_.Get(), nullptr, 0);
         context->DrawInstanced(6, UINT(info_.additiveParticles), 0, 0);
+
+        ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
+        context->VSSetShaderResources(0, 1, nullSRVs);
+        context->PSSetShaderResources(0, 2, nullSRVs);
+    }
+
+    // --- Fire particles -----------------------------------------------------
+    // Drawn before the volume so the smoke's premultiplied transmittance
+    // composites over the flames: the cloud occludes them and scatters its own
+    // light over the fire.
+    if (settings.enableParticles && info_.fireParticles > 0) {
+        context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
+        context->OMSetDepthStencilState(depthTest_.Get(), 0);
+        SetViewport(hdr_.width, hdr_.height);
+        context->VSSetShader(particleVS_.Get(), nullptr, 0);
+
+        ID3D11ShaderResourceView* srvs[2] = {particleSRVFire_.Get(), depthSample};
+        context->VSSetShaderResources(0, 1, srvs);
+        context->PSSetShaderResources(0, 2, srvs);
+        context->OMSetBlendState(blendAdditive_.Get(), nullptr, 0xffffffff);
+        context->PSSetShader(particleFirePS_.Get(), nullptr, 0);
+        context->DrawInstanced(6, UINT(info_.fireParticles), 0, 0);
 
         ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
         context->VSSetShaderResources(0, 1, nullSRVs);
@@ -1362,27 +1405,6 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         ID3D11ShaderResourceView* nullSRVs[4] = {nullptr, nullptr, nullptr, nullptr};
         context->PSSetShaderResources(0, 4, nullSRVs);
         context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());
-    }
-
-    // --- Particles ---------------------------------------------------------
-    // Turbulent flame tongues on top of the fireball volume, plus scene fires on
-    // burning objects in both render modes.
-    if (settings.enableParticles && info_.fireParticles > 0) {
-        context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
-        context->OMSetDepthStencilState(depthTest_.Get(), 0);
-        SetViewport(hdr_.width, hdr_.height);
-        context->VSSetShader(particleVS_.Get(), nullptr, 0);
-
-        ID3D11ShaderResourceView* srvs[2] = {particleSRVFire_.Get(), depthSample};
-        context->VSSetShaderResources(0, 1, srvs);
-        context->PSSetShaderResources(0, 2, srvs);
-        context->OMSetBlendState(blendAdditive_.Get(), nullptr, 0xffffffff);
-        context->PSSetShader(particleFirePS_.Get(), nullptr, 0);
-        context->DrawInstanced(6, UINT(info_.fireParticles), 0, 0);
-
-        ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
-        context->VSSetShaderResources(0, 1, nullSRVs);
-        context->PSSetShaderResources(0, 2, nullSRVs);
     }
 
     // Soft smoke and dust puffs composite over the volume.

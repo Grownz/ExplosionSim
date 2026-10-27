@@ -522,7 +522,8 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
 
         Hint("Compressible Euler solver (HLLC + MUSCL) running on the GPU. It uses the "
              "moist-air density and virtual temperature; wind drifts the rendered volume. "
-             "Particle rendering is disabled in this mode.");
+             "The solver supplies the fireball and smoke; scene fires on burning objects "
+             "are still rendered.");
     }
 
     SectionHeader("BLAST PHYSICS");
