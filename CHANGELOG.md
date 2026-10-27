@@ -4,13 +4,38 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-10-27
+
+This feature release turns the procedural town into a more interactive and physical
+environment: the app starts armed and waits for **Detonate**, the buildings, vehicles and
+trees use richer procedural materials, fire is rendered by a GPU flame shader and is
+integrated with the volumetric smoke, anisotropic filtering also applies to the
+procedural surfaces, and the scene generator is substantially faster.
+
+### Highlights
+
+- **Manual armed start** - the charge is armed on launch; **Detonate** or **D** starts
+  the explosion. **H** cycles panel -> overlays -> restore, and the animated right-edge
+  handle collapses/reopens the panel.
+- **GPU fire and smoke** - `PSFire` renders turbulent flames in one instanced draw call.
+  Flames spawn on the visible surfaces, render before the volume, are occluded and
+  scattered by the smoke, and are shown in both render modes. The smoke casts volumetric
+  shadows and self-shadows towards the sun.
+- **Richer materials and anisotropic filtering** - four facade styles, vehicle
+  paint/glass/lights/tires and tree bark/foliage detail; the aniso setting filters the
+  procedural surface grain and supersamples facade patterns along the major footprint
+  axis.
+- **Chunk controls** - a continuous 0.25x..2x chunk-size slider, static chunk colours and
+  facade coordinates, and a measured **32,000-chunk** global budget.
+- **Much faster scene generation** - placement is serial, the Voronoi fracture runs on
+  the thread pool, and Rearm/Reset/loop reuse the town. The default 20 t town (9,595
+  chunks) generates in ~0.18 s; the extreme setting is capped at 31,860 chunks (~0.9 s).
 
 ### Added
 
 - **Parallel scene generation** - the deterministic placement pass stays serial, while
   the Voronoi fracture runs on the thread pool with one RNG per building. The default
-  20 t town (9,595 chunks) generates in ~0.17 s instead of ~1.15 s.
+  20 t town (9,595 chunks) generates in ~0.18 s instead of ~1.15 s.
 - **Global chunk budget** - the chunk-size slider is capped at a measured **32,000
   chunks** for the whole scene. Reference timings: 16k -> 0.35 s, 24k -> 0.7 s,
   32k -> 0.9 s, 40k -> 1.2 s.
@@ -60,6 +85,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   scene, and the volume self-shadows towards the sun.
 - A near-camera fade on the volume and on the fire billboards prevents the camera from
   picking up a screen-filling red veil when flying through the smoke or a flame.
+- Flame turbulence is sampled in world space, so the pattern no longer swims with the
+  camera when it moves.
 
 ## [0.5.5] - 2026-10-26
 
@@ -402,7 +429,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.5.5...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.6.0
 [0.5.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.5
 [0.5.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.4.0
