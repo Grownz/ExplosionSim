@@ -1112,6 +1112,107 @@ void TestAsyncSceneGeneration() {
     simulation.Shutdown();
 }
 
+void TestParallelSceneGeneration() {
+    ex::sim::Environment environment{};
+    ex::sim::Charge charge{};
+    charge.tntMassKg = 1000.0;
+    charge.heightOfBurstM = 0.4;
+    ex::sim::BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 4242;
+    settings.density = 1.0f;
+    settings.quality = 1;
+    settings.chunkScale = 0.5f;
+    settings.voronoiChunks = true;
+
+    ex::core::ThreadPool pool(4);
+    ex::scene::Scene serial;
+    ex::scene::Scene parallel;
+    serial.Generate(settings, model);
+    parallel.Generate(settings, model, {}, &pool);
+
+    CHECK(!serial.Empty());
+    CHECK(serial.GenerationHash() == parallel.GenerationHash());
+    CHECK(serial.Objects().size() == parallel.Objects().size());
+    int serialChunks = 0;
+    int parallelChunks = 0;
+    for (const ex::scene::SceneObject& object : serial.Objects()) {
+        serialChunks += int(object.chunks.size());
+    }
+    for (const ex::scene::SceneObject& object : parallel.Objects()) {
+        parallelChunks += int(object.chunks.size());
+    }
+    CHECK(serialChunks == parallelChunks);
+    CHECK(serialChunks > 0);
+
+    // The global budget must cap an extreme request even when it is generated
+    // with the parallel path.
+    charge.tntMassKg = 20000.0;
+    settings.density = 0.7f;
+    settings.chunkScale = 0.25f;
+    model.Configure(charge, environment);
+    ex::scene::Scene budgeted;
+    budgeted.Generate(settings, model, {}, &pool);
+    int budgetedChunks = 0;
+    for (const ex::scene::SceneObject& object : budgeted.Objects()) {
+        budgetedChunks += int(object.chunks.size());
+    }
+    CHECK(budgetedChunks > 0);
+    CHECK(budgetedChunks <= ex::scene::kSceneChunkBudget);
+}
+
+void TestSceneReuse() {
+    ex::core::ThreadPool pool(2);
+    ex::sim::SimulationSettings settings{};
+    settings.chargeMassKg = 0.2;
+    settings.heightOfBurstM = 0.4;
+    settings.fuseSeconds = 0.0;
+    settings.volumeResolution = 32;
+    settings.particleBudget = 2000;
+    settings.bakeVolume = false;
+    settings.scene.seed = 1234;
+    settings.scene.density = 0.5f;
+
+    ex::sim::Simulation simulation;
+    simulation.SetAsyncSceneGeneration(false);
+    CHECK(simulation.Initialize(settings, pool, true));
+    const int generations = simulation.Scene().GenerationCount();
+    const uint64_t hash = simulation.Scene().GenerationHash();
+    const size_t objects = simulation.Scene().Objects().size();
+    CHECK(generations >= 1);
+    CHECK(!simulation.Scene().Empty());
+
+    simulation.Rearm();
+    CHECK(simulation.Scene().GenerationCount() == generations);
+    CHECK(simulation.Scene().GenerationHash() == hash);
+    CHECK(simulation.Scene().Objects().size() == objects);
+
+    // A rearm after a collapse must clear the physics bodies but keep the town.
+    simulation.DetonateNow();
+    for (int i = 0; i < 20; ++i) {
+        simulation.StepFixed(1.0 / 60.0);
+    }
+    simulation.Rearm();
+    CHECK(simulation.Scene().GenerationCount() == generations);
+    CHECK(simulation.Scene().Physics().BodyCount() == 0);
+    simulation.DetonateNow();
+    simulation.StepFixed(1.0 / 60.0);
+    CHECK(simulation.Scene().GenerationCount() == generations);
+
+    // A fuse-only change restarts the simulation but reuses the town.
+    settings.fuseSeconds = 1.0;
+    simulation.ApplySettings(settings);
+    CHECK(simulation.Scene().GenerationCount() == generations);
+
+    // A scene setting change regenerates it.
+    settings.scene.seed += 1;
+    simulation.ApplySettings(settings);
+    CHECK(simulation.Scene().GenerationCount() == generations + 1);
+    simulation.Shutdown();
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -1145,6 +1246,8 @@ int main() {
     RUN(TestVoronoiCapRegression);
     RUN(TestSceneExtentScalesWithCharge);
     RUN(TestAsyncSceneGeneration);
+    RUN(TestParallelSceneGeneration);
+    RUN(TestSceneReuse);
     RUN(TestSettingsRoundTrip);
     RUN(TestFuseAndDetonation);
     RUN(TestRearmHoldsFuse);

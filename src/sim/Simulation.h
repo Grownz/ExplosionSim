@@ -127,7 +127,7 @@ public:
 
 private:
     void Detonate();
-    void ResetInternal(bool holdFuse);
+    void ResetInternal(bool holdFuse, bool regenerateScene);
     void ScheduleVolumeBake(double dtReal);
     void UpdateScene(double dtSim);
     void StartSceneGeneration(const scene::SceneSettings& settings,
@@ -147,6 +147,7 @@ private:
     std::atomic<bool> sceneReady_{false};
     bool asyncScene_ = false;
     bool sceneCompleted_ = false;
+    bool sceneValid_ = false;
     std::jthread sceneThread_;
 
     double realTime_ = 0.0;

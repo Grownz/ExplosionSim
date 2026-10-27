@@ -426,6 +426,9 @@ void DrawEnvironment(app::AppSettings& settings, const sim::Simulation& simulati
     ImGui::EndDisabled();
     Hint("Average Voronoi chunk size: 0.25x = four times smaller, 2x = twice as "
          "large. Very small chunks are limited by the per-building cell cap.");
+    ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
+    ImGui::TextWrapped("Global scene budget: %d chunks.", scene::kSceneChunkBudget);
+    ImGui::PopStyleColor();
 
     if (ImGui::Button("Regenerate scene")) {
         scene.seed += 1;

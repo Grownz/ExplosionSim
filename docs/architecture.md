@@ -41,10 +41,15 @@ The bake result is double-buffered. A new bake writes into the buffer that is no
 currently displayed, so the renderer never samples a partially written volume.
 
 In the interactive app the procedural town is generated on a dedicated `std::jthread`
-into a separate `Scene`. A progress callback publishes 0..1 through an atomic, and the
-main thread swaps the finished scene into place. The simulation is frozen while the town
-is generated, so the countdown and the solver cannot advance into a half-built scene.
-Headless captures and tests keep the synchronous path.
+into a separate `Scene`. Placement is serial and deterministic; the Voronoi fracture runs
+on the shared thread pool with one RNG per building. A progress callback publishes 0..1
+through an atomic, and the main thread swaps the finished scene into place. The
+simulation is frozen while the town is generated, so the countdown and the solver cannot
+advance into a half-built scene. Headless captures and tests keep the synchronous path.
+
+Rearm, Reset, loop restarts and non-scene setting changes reuse the deterministic town:
+only the mutable object/chunk state (damage, burning, bodies, joints) is reset. A new
+town is generated only when the layout settings or the charge/environment change.
 
 The UI reports the worker count and the measured bake time.
 
@@ -68,8 +73,9 @@ process Win32 messages
 real-time clock and can be driven to an exact simulation time.
 
 The main Detonate button becomes **Rearm** once an explosion is being rendered. Rearm
-stops the solver, resets the scene/volume and holds the fuse; the next **Detonate** press
-starts the new explosion immediately.
+stops the solver, resets the simulation state and volume, and holds the fuse; the next
+**Detonate** press starts the new explosion immediately. The generated town is reused
+unless the scene layout or the charge changed.
 
 ## Rendering pipeline
 
@@ -262,7 +268,11 @@ become 6-DOF rigid bodies, and burning objects emit fire particles.
 
 `scene.chunkScale` (0.25–2.0, default 1.0) multiplies the target Voronoi cell volume by
 `scale³`; the cell count is clamped to 6..256 per building, so the smallest settings
-saturate on large buildings. Chunk colours are static: every chunk inherits its object's
+saturate on large buildings. A global budget of **32,000 chunks** caps the whole scene:
+the per-building counts are scaled down before the fracture. Measured on the reference
+8-core/16-thread CPU: 16k -> 0.35 s, 24k -> 0.7 s, 32k -> 0.9 s and 40k -> 1.2 s
+generation time; the default 20 t town (9,595 chunks) generates in ~0.17 s. Chunk
+colours are static: every chunk inherits its object's
 colour and keeps the building-space facade coordinates, and only the semi-transparent
 fire effects overlay them.
 

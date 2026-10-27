@@ -26,6 +26,7 @@ bool SceneChanged(const SimulationSettings& a, const SimulationSettings& b) {
            a.scene.vegetation != b.scene.vegetation ||
            a.scene.quality != b.scene.quality ||
            a.scene.chunkScale != b.scene.chunkScale ||
+           a.scene.groundReflection != b.scene.groundReflection ||
            a.scene.voronoiChunks != b.scene.voronoiChunks;
 }
 
@@ -38,7 +39,7 @@ bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool
     particles_.Initialize(settings.particleBudget);
     volume_.Initialize(pool_, settings.volumeResolution);
     initialized_ = true;
-    ResetInternal(holdFuse);
+    ResetInternal(holdFuse, true);
     return true;
 }
 
@@ -46,6 +47,7 @@ void Simulation::Shutdown() {
     WaitForSceneGeneration();
     volume_.WaitForIdle();
     scene_.Clear();
+    sceneValid_ = false;
     initialized_ = false;
 }
 
@@ -56,8 +58,8 @@ Simulation::~Simulation() {
 void Simulation::StartSceneGeneration(const scene::SceneSettings& settings,
                                       const Charge& charge,
                                       const Environment& environment) {
-    // A superseded job only checks cancellation at row boundaries, so the join
-    // below is short (one building row at most).
+    // A superseded job checks cancellation per building; the join below waits
+    // for at most the buildings already in flight on the pool.
     if (sceneThread_.joinable()) {
         sceneThread_.request_stop();
         sceneThread_.join();
@@ -65,6 +67,7 @@ void Simulation::StartSceneGeneration(const scene::SceneSettings& settings,
     pendingScene_.reset();
     // Reset the visible town immediately; the worker fills the replacement.
     scene_.Clear();
+    sceneValid_ = false;
     sceneReady_.store(false, std::memory_order_relaxed);
     sceneCompleted_ = false;
     sceneProgress_.store(0.0f, std::memory_order_relaxed);
@@ -80,7 +83,7 @@ void Simulation::StartSceneGeneration(const scene::SceneSettings& settings,
                 scene->Generate(settings, localBlast, [this, token](float value) {
                     sceneProgress_.store(value, std::memory_order_relaxed);
                     return !token.stop_requested();
-                });
+                }, pool_);
                 success = !token.stop_requested();
             } catch (const std::exception& error) {
                 LogError("Scene generation failed: %s", error.what());
@@ -103,9 +106,12 @@ void Simulation::PollSceneGeneration() {
         if (pendingScene_) {
             scene_ = std::move(*pendingScene_);
             pendingScene_.reset();
+            sceneValid_ = true;
             sceneCompleted_ = true;
             sceneProgress_.store(1.0f, std::memory_order_relaxed);
             LogSceneStats();
+        } else {
+            sceneValid_ = false;
         }
         sceneGenerating_.store(false, std::memory_order_release);
         return;
@@ -114,6 +120,7 @@ void Simulation::PollSceneGeneration() {
         // The job was cancelled or failed; release its resources.
         sceneThread_.join();
         pendingScene_.reset();
+        sceneValid_ = false;
     }
 }
 
@@ -124,7 +131,10 @@ void Simulation::WaitForSceneGeneration() {
     }
     if (sceneReady_.exchange(false, std::memory_order_acquire) && pendingScene_) {
         scene_ = std::move(*pendingScene_);
+        sceneValid_ = true;
         LogSceneStats();
+    } else {
+        sceneValid_ = false;
     }
     pendingScene_.reset();
     sceneGenerating_.store(false, std::memory_order_release);
@@ -146,14 +156,14 @@ void Simulation::LogSceneStats() {
 }
 
 void Simulation::Reset() {
-    ResetInternal(false);
+    ResetInternal(false, !sceneValid_ && !sceneGenerating_);
 }
 
 void Simulation::Rearm() {
-    ResetInternal(true);
+    ResetInternal(true, !sceneValid_ && !sceneGenerating_);
 }
 
-void Simulation::ResetInternal(bool holdFuse) {
+void Simulation::ResetInternal(bool holdFuse, bool regenerateScene) {
     if (!initialized_) {
         return;
     }
@@ -172,12 +182,25 @@ void Simulation::ResetInternal(bool holdFuse) {
     charge.heightOfBurstM = std::max(settings_.heightOfBurstM, 0.0);
 
     blast_.Configure(charge, environment);
-    if (asyncScene_) {
-        StartSceneGeneration(settings_.scene, charge, environment);
-    } else {
-        scene_.Generate(settings_.scene, blast_);
-        LogSceneStats();
+
+    if (!regenerateScene && !sceneValid_ && !sceneGenerating_) {
+        // No usable town (first run, failed job): generate one.
+        regenerateScene = true;
     }
+    if (regenerateScene) {
+        if (asyncScene_) {
+            StartSceneGeneration(settings_.scene, charge, environment);
+        } else {
+            scene_.Generate(settings_.scene, blast_, {}, pool_);
+            sceneValid_ = true;
+            LogSceneStats();
+        }
+    } else {
+        // The deterministic geometry is unchanged; only reset the runtime
+        // state (damage, burning, bodies, joints, spawn queues).
+        scene_.ResetState();
+    }
+
     particles_.Reset();
     volume_.SetAutoScale(settings_.autoScaleVolume);
     volume_.SetResolution(settings_.volumeResolution);
@@ -233,6 +256,13 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool solverDomainChanged =
         settings_.solverHemisphere != settings.solverHemisphere;
     const bool autoScaleChanged = settings_.autoScaleVolume != settings.autoScaleVolume;
+    // The scene geometry depends on the layout settings and on the charge /
+    // environment (the radius and the stored blast fields). Everything else
+    // only restarts the simulation and can reuse the generated town.
+    const bool needsScene = sceneChanged || physicsChanged;
+    const bool needsReset = physicsChanged || budgetChanged || fuseChanged ||
+                            modeChanged || solverResolutionChanged ||
+                            solverDomainChanged;
 
     settings_ = settings;
 
@@ -247,9 +277,8 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     if (budgetChanged) {
         particles_.Initialize(settings_.particleBudget);
     }
-    if (physicsChanged || budgetChanged || fuseChanged || modeChanged ||
-        solverResolutionChanged || solverDomainChanged) {
-        Reset();
+    if (needsReset) {
+        ResetInternal(false, needsScene);
         return;
     }
 
@@ -267,7 +296,8 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
             StartSceneGeneration(settings_.scene, blast_.GetCharge(),
                                  blast_.GetEnvironment());
         } else {
-            scene_.Generate(settings_.scene, blast_);
+            scene_.Generate(settings_.scene, blast_, {}, pool_);
+            sceneValid_ = true;
             LogSceneStats();
         }
     }

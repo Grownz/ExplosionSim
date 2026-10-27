@@ -23,6 +23,10 @@ start-up at 0.4 m above the ground**.
   and adds fine structure, so even moderate volume resolutions look turbulent.
 - **Multithreading** – a work-stealing thread pool parallelises particle integration and
   volume baking; the render thread always participates in the work.
+- **Fast scene generation** – placement is serial and deterministic, while the Voronoi
+  fracture runs on the thread pool. The default 20 t town (9,595 chunks) generates in
+  ~0.17 s; the smallest chunk setting is capped at a measured 32,000 chunks (~0.9 s).
+  Rearm, Reset and loop restarts reuse the generated town instead of rebuilding it.
 - **Cinematic particles** – instanced billboards for glowing debris, sparks,
   soot and shock-driven ground dust. Fire is rendered by a GPU flame shader that adds
   fbm turbulence, a heat ramp and soft depth fading in one instanced draw call; burning

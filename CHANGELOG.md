@@ -8,6 +8,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Parallel scene generation** - the deterministic placement pass stays serial, while
+  the Voronoi fracture runs on the thread pool with one RNG per building. The default
+  20 t town (9,595 chunks) generates in ~0.17 s instead of ~1.15 s.
+- **Global chunk budget** - the chunk-size slider is capped at a measured **32,000
+  chunks** for the whole scene. Reference timings: 16k -> 0.35 s, 24k -> 0.7 s,
+  32k -> 0.9 s, 40k -> 1.2 s.
 - **GPU fire particles** - burning rubble and trees emit procedural flame billboards
   (`PSFire`): fbm turbulence shapes the silhouette and heat gradient in a single
   instanced draw call, with soft depth fading against the scene.
@@ -30,6 +36,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Rearm, Reset, loop restarts and non-scene setting changes now reuse the generated town;
+  only the mutable object/chunk state (damage, burning, bodies, joints) is reset. A new
+  town is generated only when the layout settings or the charge/environment change.
+- The scene hash now includes the chunk geometry, so the renderer rebuilds its chunk
+  vertex/index buffers when the chunk scale or budget changes.
 - Chunk texturing is static: each chunk keeps its building's colour and facade
   coordinates, and only the semi-transparent fire effects overlay it.
 - The Pause/Rearm/Frame row at the top of the panel was removed. Pause and Frame now sit
@@ -37,6 +48,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Ground-reflection changes now regenerate the scene, so the stored shielding factors stay
+  consistent with the setting.
 - Burning trees and vehicles now show flames in both render modes. Fire is spawned on
   the visible canopy rim or roof surface instead of inside the mesh, where the soft depth
   fade hid it, and the spawn point follows the current rigid-body pose of thrown objects.

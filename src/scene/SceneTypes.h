@@ -10,7 +10,19 @@
 #include "scene/PhysicsWorld.h"
 #include "sim/BlastModel.h"
 
+namespace ex::core {
+class ThreadPool;
+}
+
 namespace ex::scene {
+
+// Upper bound for the total number of Voronoi chunks in one scene. The chunk
+// size slider can request far more; the generation scales the per-building
+// counts down to this budget. Measured on the reference 8-core/16-thread CPU:
+// 16k -> 0.35 s, 24k -> 0.7 s, 32k -> 0.9 s, 40k -> 1.2 s generation time.
+// 32k is the largest value that stays below one second and still runs the
+// collapsed 20 t scene at ~100 fps.
+inline constexpr int kSceneChunkBudget = 32000;
 
 enum class SceneObjectType : uint8_t {
     Building = 0,
@@ -117,22 +129,33 @@ struct SceneObject {
     bool structureRegistered = false;
     int occluders = 0;
     std::vector<SceneChunk> chunks;
+
+    // Generation-only fracture data. Not part of the scene hash.
+    uint32_t fractureSeed = 0;
+    int requestedChunks = 0;
+    int chunkCount = 0;
 };
 
-// Deterministic procedural scene around ground zero. Generation is
-// single-threaded and seeded; the hash allows tests to verify reproducibility.
+// Deterministic procedural scene around ground zero. Placement is serial and
+// seeded; the Voronoi fracture runs in parallel with one RNG per building. The
+// hash allows tests to verify reproducibility.
 class Scene {
 public:
     // `progress` is called with a monotonic 0..1 value; returning false aborts
     // the generation (used to cancel a superseded background job).
     void Generate(const SceneSettings& settings, const sim::BlastModel& blast,
-                  const std::function<bool(float)>& progress = {});
+                  const std::function<bool(float)>& progress = {},
+                  core::ThreadPool* pool = nullptr);
     void Clear();
+    // Resets the mutable object/chunk state (damage, burning, bodies, joints)
+    // without regenerating the geometry. Used by Rearm/Reset and loop restarts.
+    void ResetState();
     void Update(const sim::BlastModel& blast, float dtSim);
 
     const std::vector<SceneObject>& Objects() const { return objects_; }
     const SceneSettings& Settings() const { return settings_; }
     uint64_t GenerationHash() const { return hash_; }
+    int GenerationCount() const { return generationCount_; }
     float Extent() const { return extent_; }
     bool Empty() const { return objects_.empty(); }
     SceneStats Stats() const;
@@ -172,6 +195,7 @@ private:
     std::vector<std::pair<int, int>> bodyChunk_;
     PhysicsWorld physics_;
     uint64_t hash_ = 0;
+    int generationCount_ = 0;
     float extent_ = 0.0f;
     double time_ = 0.0;
     double physicsAccumulator_ = 0.0;

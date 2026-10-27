@@ -1,11 +1,16 @@
 #include "scene/SceneTypes.h"
 
+#include "core/Log.h"
 #include "core/Random.h"
+#include "core/ThreadPool.h"
 #include "scene/VoronoiFracture.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <mutex>
 #include <queue>
 #include <utility>
 
@@ -20,7 +25,8 @@ constexpr DirectX::XMFLOAT4 kBuildingColors[4] = {
     {0.70f, 0.68f, 0.62f, 1.0f},
 };
 
-uint64_t HashObject(uint64_t hash, const SceneObject& object) {    auto mix = [&hash](uint64_t value) {
+uint64_t HashObject(uint64_t hash, const SceneObject& object) {
+    auto mix = [&hash](uint64_t value) {
         hash ^= value + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
     };
     mix(object.id);
@@ -32,6 +38,27 @@ uint64_t HashObject(uint64_t hash, const SceneObject& object) {    auto mix = [&
     mix(uint64_t(int(std::lround(object.size.y * 100.0f))));
     mix(uint64_t(int(std::lround(object.size.z * 100.0f))));
     mix(uint64_t(object.meshVariant));
+    mix(uint64_t(std::llround(double(object.peakOverpressurePa) * 10.0)));
+    mix(uint64_t(std::llround(double(object.impulsePaS) * 10.0)));
+    mix(uint64_t(std::llround(double(object.thermalFluenceJm2) * 10.0)));
+    // Chunk geometry is part of the scene hash so the renderer rebuilds its
+    // vertex/index buffers when the chunk scale or budget changes.
+    mix(uint64_t(object.chunks.size()));
+    for (const SceneChunk& chunk : object.chunks) {
+        mix(uint64_t(int(std::lround(chunk.center.x * 100.0f))));
+        mix(uint64_t(int(std::lround(chunk.center.y * 100.0f))));
+        mix(uint64_t(int(std::lround(chunk.center.z * 100.0f))));
+        mix(uint64_t(int(std::lround(chunk.half.x * 100.0f))));
+        mix(uint64_t(int(std::lround(chunk.half.y * 100.0f))));
+        mix(uint64_t(int(std::lround(chunk.half.z * 100.0f))));
+        mix(uint64_t(int(std::lround(chunk.orientation.x * 1000.0f))));
+        mix(uint64_t(int(std::lround(chunk.orientation.y * 1000.0f))));
+        mix(uint64_t(int(std::lround(chunk.orientation.z * 1000.0f))));
+        mix(uint64_t(int(std::lround(chunk.orientation.w * 1000.0f))));
+        mix(uint64_t(int(std::lround(chunk.volume * 1000.0f))));
+        mix(uint64_t(chunk.hullPositions.size()));
+        mix(uint64_t(chunk.neighbors.size()));
+    }
     return hash;
 }
 
@@ -230,21 +257,24 @@ void BuildGridChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int qua
     }
 }
 
-// Voronoi fracture (roadmap 2.3 phase B): convex cells clipped to the building
-// box. The cells keep a flat-shaded hull for rendering and a fitted OBB as the
-// collision proxy, so the rigid-body solver is unchanged.
-void BuildVoronoiChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int quality,
-                        float chunkScale, core::Rng& rng) {
+// Target number of Voronoi cells for a building. Kept in one place so the
+// global chunk budget can scale the counts before the parallel fracture.
+int VoronoiCellCount(const DirectX::XMFLOAT3& size, int quality, float chunkScale) {
     const float baseCellVolume =
         quality >= 2 ? 24.0f : (quality >= 1 ? 45.0f : 90.0f);
     const float scale = std::clamp(chunkScale, 0.25f, 2.0f);
     const float targetCellVolume = baseCellVolume * scale * scale * scale;
     const float volume = size.x * size.y * size.z;
-    const int cellCount =
-        std::clamp(int(volume / targetCellVolume + 0.5f), 6, 256);
+    return std::clamp(int(volume / targetCellVolume + 0.5f), 6, 256);
+}
 
+// Voronoi fracture (roadmap 2.3 phase B): convex cells clipped to the building
+// box. The cells keep a flat-shaded hull for rendering and a fitted OBB as the
+// collision proxy, so the rigid-body solver is unchanged.
+void BuildVoronoiChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int quality,
+                        int cellCount, uint32_t fractureSeed, core::Rng& rng) {
     std::vector<FractureCell> cells;
-    const uint32_t cellSeed = rng.NextU32() ^ (object.id * 0x9E3779B9u);
+    const uint32_t cellSeed = fractureSeed ^ (object.id * 0x9E3779B9u);
     FractureBoxVoronoi(
         DirectX::XMFLOAT3(object.position.x, size.y * 0.5f, object.position.z),
         DirectX::XMFLOAT3(size.x * 0.5f, size.y * 0.5f, size.z * 0.5f), cellCount,
@@ -291,10 +321,47 @@ void Scene::Clear() {
     physicsAccumulator_ = 0.0;
 }
 
+void Scene::ResetState() {
+    for (SceneObject& object : objects_) {
+        object.damage = DamageState::Intact;
+        object.damageAmount = 0.0f;
+        object.resolved = false;
+        object.burning = false;
+        object.burnTimer = 0.0f;
+        object.bodyIndex = -1;
+        object.collapsed = false;
+        object.collapsing = false;
+        object.structureRegistered = false;
+        for (SceneChunk& chunk : object.chunks) {
+            chunk.bodyIndex = -1;
+            chunk.detached = false;
+            chunk.neighborBroken.assign(chunk.neighbors.size(), 0);
+        }
+    }
+    debrisSpawns_.clear();
+    fireSpawns_.clear();
+    pendingFailures_.clear();
+    bodyChunk_.clear();
+    physics_.Clear();
+    time_ = 0.0;
+    physicsAccumulator_ = 0.0;
+}
+
 void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast,
-                     const std::function<bool(float)>& progress) {
+                     const std::function<bool(float)>& progress,
+                     core::ThreadPool* pool) {
+    ++generationCount_;
+    const auto generationStart = std::chrono::steady_clock::now();
+    std::mutex progressMutex;
+    float lastProgress = 0.0f;
     const auto report = [&](float value) {
-        return !progress || progress(std::clamp(value, 0.0f, 1.0f));
+        if (!progress) {
+            return true;
+        }
+        std::lock_guard<std::mutex> lock(progressMutex);
+        value = std::max(value, lastProgress);
+        lastProgress = value;
+        return progress(std::clamp(value, 0.0f, 1.0f));
     };
     if (!report(0.0f)) {
         return;
@@ -434,7 +501,12 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         if (type == SceneObjectType::Building) {
             const int quality = std::clamp(settings_.quality, 0, 2);
             if (settings_.voronoiChunks) {
-                BuildVoronoiChunks(object, size, quality, settings_.chunkScale, rng);
+                // Draw the fracture seed in the same serial order as before;
+                // the actual fracture runs later, in parallel.
+                object.fractureSeed = rng.NextU32();
+                object.requestedChunks =
+                    VoronoiCellCount(size, quality, settings_.chunkScale);
+                object.chunkCount = object.requestedChunks;
             } else {
                 BuildGridChunks(object, size, quality, rng);
             }
@@ -482,12 +554,12 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 ++buildings;
             }
         }
-        if (!report(0.03f + 0.73f * float(ix + cells + 1) /
+        if (!report(0.02f + 0.04f * float(ix + cells + 1) /
                                  float(2 * cells + 1))) {
             return;
         }
     }
-    if (!report(0.76f)) {
+    if (!report(0.06f)) {
         return;
     }
 
@@ -521,12 +593,12 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 ++vehicles;
             }
         }
-        if (!report(0.76f + 0.04f * float(ix + cells + 1) /
+        if (!report(0.06f + 0.02f * float(ix + cells + 1) /
                                  float(2 * cells + 1))) {
             return;
         }
     }
-    if (!report(0.81f)) {
+    if (!report(0.08f)) {
         return;
     }
 
@@ -559,12 +631,110 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                 ++trees;
             }
         }
-        if (!report(0.81f + 0.03f * float(ix + cells + 1) /
+        if (!report(0.08f + 0.02f * float(ix + cells + 1) /
                                  float(2 * cells + 1))) {
             return;
         }
     }
-    if (!report(0.85f)) {
+    if (!report(0.10f)) {
+        return;
+    }
+
+    // Global chunk budget. The requested Voronoi count grows quickly at small
+    // chunk scales; the O(N^2) clipping would otherwise dominate the loading
+    // time. Scale the per-building counts down before fracturing.
+    int buildingCount = 0;
+    int requestedChunks = 0;
+    if (settings_.voronoiChunks) {
+        for (const SceneObject& object : objects_) {
+            if (object.type == SceneObjectType::Building) {
+                ++buildingCount;
+                requestedChunks += object.requestedChunks;
+            }
+        }
+        if (requestedChunks > kSceneChunkBudget && buildingCount > 0) {
+            const float scale = float(kSceneChunkBudget) / float(requestedChunks);
+            int total = 0;
+            for (SceneObject& object : objects_) {
+                if (object.type != SceneObjectType::Building) {
+                    continue;
+                }
+                object.chunkCount =
+                    std::max(6, int(float(object.requestedChunks) * scale));
+                total += object.chunkCount;
+            }
+            // Trim the rounding remainder (and the min-6 floor) from buildings
+            // that still have room.
+            for (int pass = 0; pass < 4 && total > kSceneChunkBudget; ++pass) {
+                for (SceneObject& object : objects_) {
+                    if (total <= kSceneChunkBudget) {
+                        break;
+                    }
+                    if (object.type == SceneObjectType::Building &&
+                        object.chunkCount > 6) {
+                        --object.chunkCount;
+                        --total;
+                    }
+                }
+            }
+            LogInfo("Scene chunk budget: requested %d, capped to %d", requestedChunks,
+                    total);
+        }
+    }
+
+    // Fracture the buildings in parallel. Each building uses its own seed and
+    // RNG, so the result is independent of the thread schedule.
+    const int quality = std::clamp(settings_.quality, 0, 2);
+    std::atomic<bool> cancelled{false};
+    std::atomic<int> completed{0};
+    const auto fractureOne = [&](SceneObject& object) {
+        core::Rng local(object.fractureSeed);
+        BuildVoronoiChunks(object, object.size, quality, object.chunkCount,
+                           object.fractureSeed, local);
+    };
+    if (settings_.voronoiChunks && buildingCount > 0) {
+        if (pool) {
+            pool->ParallelFor(int(objects_.size()), 1, [&](int begin, int end) {
+                for (int i = begin; i < end; ++i) {
+                    if (cancelled.load(std::memory_order_relaxed)) {
+                        return;
+                    }
+                    SceneObject& object = objects_[i];
+                    if (object.type != SceneObjectType::Building) {
+                        continue;
+                    }
+                    fractureOne(object);
+                    const int done = ++completed;
+                    if ((done & 7) == 0 || done == buildingCount) {
+                        if (!report(0.10f + 0.70f * float(done) /
+                                                float(buildingCount))) {
+                            cancelled.store(true, std::memory_order_relaxed);
+                            return;
+                        }
+                    }
+                }
+            });
+        } else {
+            for (SceneObject& object : objects_) {
+                if (object.type != SceneObjectType::Building) {
+                    continue;
+                }
+                fractureOne(object);
+                const int done = ++completed;
+                if ((done & 7) == 0 || done == buildingCount) {
+                    if (!report(0.10f + 0.70f * float(done) /
+                                            float(buildingCount))) {
+                        cancelled.store(true);
+                        return;
+                    }
+                }
+            }
+        }
+        if (cancelled.load(std::memory_order_relaxed)) {
+            return;
+        }
+    }
+    if (!report(0.80f)) {
         return;
     }
 
@@ -590,7 +760,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
                                     object.position.z + object.size.z * 0.5f);
         buildingBoxes.push_back(box);
     }
-    if (!report(0.87f)) {
+    if (!report(0.82f)) {
         return;
     }
 
@@ -665,7 +835,7 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         object.thermalFluenceJm2 *= factor;
 
         if ((++shielded & 63u) == 0u &&
-            !report(0.87f + 0.12f * float(shielded) / objectCount)) {
+            !report(0.82f + 0.17f * float(shielded) / objectCount)) {
             return;
         }
     }
@@ -678,6 +848,15 @@ void Scene::Generate(const SceneSettings& settings, const sim::BlastModel& blast
         hash_ = HashObject(hash_, object);
     }
     report(1.0f);
+    int chunkCount = 0;
+    for (const SceneObject& object : objects_) {
+        chunkCount += int(object.chunks.size());
+    }
+    LogInfo("Scene generated in %.1f ms: %d objects, %d chunks",
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - generationStart)
+                .count(),
+            int(objects_.size()), chunkCount);
 }
 
 void Scene::Update(const sim::BlastModel&, float dtSim) {
