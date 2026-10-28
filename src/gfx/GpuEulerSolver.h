@@ -44,6 +44,9 @@ struct SolverStats {
     int expansions = 0;
     float plumeTop = 0.0f;
     float plumeRadius = 0.0f;
+    // Radius of the upper plume only (above the base surge), used to place the
+    // cap closure ring.
+    float plumeCapRadius = 0.0f;
     float plumeDomeFraction = 0.0f;
     bool fieldBoundsValid = false;
 };
@@ -52,7 +55,7 @@ struct SolverStats {
 enum class SolverPass : int {
     SweepX = 0,
     SweepY,
-    SweepZ,   // includes the fused source terms
+    SweepZ,   // the fused source alternates between the three sweeps
     Reduce,
     Render,   // render-volume update
     Count
@@ -79,6 +82,9 @@ public:
     bool Reset(const EulerConfig& config);
     void Step(int steps);
     void UpdateRenderVolume();
+    // Precomputes the sun transmittance volume for the volume raymarcher.
+    // Call once per frame after UpdateRenderVolume with the renderer's sun.
+    void UpdateLightVolume(const DirectX::XMFLOAT3& sunDirection);
     bool RescaleDomain(float factor);
 
     // Headless captures wait for the reduction so the time step sequence is
@@ -114,6 +120,7 @@ public:
 
     bool HasVolume() const { return hasVolume_; }
     ID3D11ShaderResourceView* VolumeSRV() const { return renderVolume_.srv.Get(); }
+    ID3D11ShaderResourceView* LightVolumeSRV() const { return lightVolume_.srv.Get(); }
     const sim::VolumeBounds& Bounds() const { return bounds_; }
     float ExtinctionScale() const { return extinctionScale_; }
     const SolverStats& Stats() const { return stats_; }
@@ -123,6 +130,7 @@ public:
     bool HasFieldBounds() const { return stats_.fieldBoundsValid; }
     float FieldTop() const { return stats_.plumeTop; }
     float FieldRadius() const { return stats_.plumeRadius; }
+    float FieldCapRadius() const { return stats_.plumeCapRadius; }
     float FieldDomeFraction() const { return stats_.plumeDomeFraction; }
 
 private:
@@ -136,6 +144,8 @@ private:
         DirectX::XMFLOAT4 extra;
         DirectX::XMFLOAT4 oldDomainMin;
         DirectX::XMFLOAT4 oldDomainMax;
+        DirectX::XMFLOAT4 sunDirection;
+        DirectX::XMFLOAT4 lightParams;
     };
 
     struct VolumeTexture {
@@ -160,7 +170,7 @@ private:
     void UnbindStateUAVs();
     void UnbindAll();
     void DispatchGrid();
-    void DispatchSweep(int direction);
+    void DispatchSweep(int direction, bool applySource);
     void DispatchReduce();
     void DispatchRender();
     void BeginPass(SolverPass pass);
@@ -169,6 +179,9 @@ private:
 
     static constexpr float kBoundScale = 512.0f; // must match euler_reduce.hlsl
     static constexpr int kMaxBatchSteps = 8;
+    static constexpr int kLightVolumeResolution = 64;
+    // Reduction output channels: speed, top, radius, dome fill, cap radius.
+    static constexpr int kReduceChannels = 8;
     // Ring of constant buffers so the CPU can submit ahead without overwriting
     // a buffer the GPU is still reading. Constants change once per sub-batch.
     static constexpr int kConstantBufferCount = 4;
@@ -179,9 +192,12 @@ private:
 
     ComPtr<ID3D11ComputeShader> initShader_;
     ComPtr<ID3D11ComputeShader> sweepShaders_[3];
+    // Source-fused variants, used for the last sweep of a step.
+    ComPtr<ID3D11ComputeShader> sweepSourceShaders_[3];
     ComPtr<ID3D11ComputeShader> reduceShader_;
     ComPtr<ID3D11ComputeShader> renderShader_;
     ComPtr<ID3D11ComputeShader> rescaleShader_;
+    ComPtr<ID3D11ComputeShader> lightShader_;
 
     ComPtr<ID3D11Buffer> constantBuffers_[kConstantBufferCount];
     int constantBufferIndex_ = 0;
@@ -191,6 +207,7 @@ private:
     VolumeTexture stateA_[2];
     VolumeTexture stateB_[2];
     VolumeTexture renderVolume_;
+    VolumeTexture lightVolume_;
     int stateIndex_ = 0;
     int resolution_ = 0;
 
@@ -225,6 +242,10 @@ private:
     float lastDt_ = 0.0f;
     float plumeRadius_ = 0.0f;
     float plumeCenterY_ = 0.0f;
+    // Height above which the reduction measures the cap radius (0 = no cap
+    // split, use the full field). Derived from the last measured plume top.
+    float capThreshold_ = 0.0f;
+    DirectX::XMFLOAT3 sunDirection_{0.0f, 1.0f, 0.0f};
     long long totalSteps_ = 0;
     bool hasVolume_ = false;
     bool initialized_ = false;

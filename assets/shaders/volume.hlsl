@@ -4,6 +4,7 @@ Texture3D<float4> VolumeTexture : register(t0);
 Texture2D<float> SceneDepth : register(t1);
 Texture3D<float4> NoiseTexture : register(t2);
 Texture3D<float4> VolumeAux : register(t3);
+Texture3D<float> LightVolume : register(t4);
 SamplerState LinearSampler : register(s0);
 SamplerState NoiseSampler : register(s1);
 
@@ -15,9 +16,16 @@ float SampleDensity(float3 uvw)
     return VolumeTexture.SampleLevel(LinearSampler, uvw, 0).r;
 }
 
-// Transmittance from a point inside the cloud towards the sun. Used for the
-// cloud's self-shadowing; the scene and ground use the same volume for their
-// smoke shadows.
+// View-independent sun transmittance precomputed by euler_light.hlsl.
+float SampleLight(float3 position)
+{
+    const float3 uvw = (position - LightVolumeMin.xyz) /
+                       max(LightVolumeMax.xyz - LightVolumeMin.xyz, 1e-4);
+    return LightVolume.SampleLevel(LinearSampler, uvw, 0);
+}
+
+// Transmittance from a point inside the cloud towards the sun. Used as the
+// fallback for the CPU-baked volume, which has no precomputed light volume.
 float SunTransmittance(float3 position)
 {
     const float3 sunDir = normalize(SunDirection.xyz);
@@ -51,21 +59,27 @@ float4 PSVolume(VSOut input) : SV_Target
     float3 rayOrigin = CameraPosition.xyz;
     float3 rayDirection = RayDirection(input.uv);
 
+    const float voxel = max(VolumeParams.x, 1e-4);
     float2 range = RayBoxRange(rayOrigin, rayDirection, VolumeMin.xyz, VolumeMax.xyz);
     range.x = max(range.x, 0.0);
 
     float sceneDepth = SceneDepth.Load(int3(input.position.xy, 0));
     float3 scenePosition = WorldFromUV(input.uv, sceneDepth);
     float sceneDistance = length(scenePosition - rayOrigin);
-    range.y = min(range.y, sceneDistance);
+    // A half-voxel bias avoids a hard cut where the cloud meets the ground.
+    range.y = min(range.y, sceneDistance + voxel * 0.5);
 
     if (range.y <= range.x)
     {
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    const int steps = (int)max(VolumeMax.w, 8.0);
-    const float stepSize = (range.y - range.x) / float(steps);
+    // Fixed world-space step: the step size no longer grows with the ray length
+    // at grazing angles, which used to make dense layers disappear.
+    const int maxSteps = (int)max(VolumeMax.w, 8.0);
+    const float distance = range.y - range.x;
+    const int steps = min(maxSteps, max(1, int(ceil(distance / voxel))));
+    const float stepSize = distance / float(steps);
     const float extinctionScale = VolumeMin.w;
     const float3 boxSize = VolumeMax.xyz - VolumeMin.xyz;
 
@@ -81,15 +95,17 @@ float4 PSVolume(VSOut input) : SV_Target
     float3 accum = float3(0.0, 0.0, 0.0);
     float transmittance = 1.0;
 
-    // The directional shading is computed once at the first dense sample and
-    // reused for the rest of the ray. Sampling six neighbours per raymarch step
-    // was the most expensive part of this pass.
+    // The directional shading normal is computed once at the first dense sample
+    // with an isotropic 27-point gradient. The shadow itself is sampled from the
+    // precomputed light volume at every step, so it no longer depends on the
+    // camera.
     bool shadingReady = false;
     float3 shadingNormal = float3(0.0, 1.0, 0.0);
-    float cloudShadow = 1.0;
+    float firstCloudShadow = 1.0;
 
+    int i = 0;
     [loop]
-    for (int i = 0; i < steps; ++i)
+    while (i < steps)
     {
         float3 position = rayOrigin + rayDirection * t;
 
@@ -172,24 +188,51 @@ float4 PSVolume(VSOut input) : SV_Target
             if (!shadingReady)
             {
                 const float gradEps = 0.006;
-                float gx = SampleDensity(uvw + float3(gradEps, 0.0, 0.0)) -
-                           SampleDensity(uvw - float3(gradEps, 0.0, 0.0));
-                float gy = SampleDensity(uvw + float3(0.0, gradEps, 0.0)) -
-                           SampleDensity(uvw - float3(0.0, gradEps, 0.0));
-                float gz = SampleDensity(uvw + float3(0.0, 0.0, gradEps)) -
-                           SampleDensity(uvw - float3(0.0, 0.0, gradEps));
-                float3 gradient = float3(gx, gy, gz) / (2.0 * gradEps);
-                float gradientLength = length(gradient);
+                float3 gradient = float3(0.0, 0.0, 0.0);
+                [unroll]
+                for (int oz = -1; oz <= 1; ++oz)
+                {
+                    [unroll]
+                    for (int oy = -1; oy <= 1; ++oy)
+                    {
+                        [unroll]
+                        for (int ox = -1; ox <= 1; ++ox)
+                        {
+                            const float weight = (ox == 0 ? 2.0 : 1.0) *
+                                                 (oy == 0 ? 2.0 : 1.0) *
+                                                 (oz == 0 ? 2.0 : 1.0);
+                            const float d =
+                                SampleDensity(uvw + float3(ox, oy, oz) * gradEps);
+                            gradient += float3(ox, oy, oz) * weight * d;
+                        }
+                    }
+                }
+                const float gradientLength = length(gradient);
                 shadingNormal = gradientLength > 1e-4 ? -gradient / gradientLength
                                                       : float3(0.0, 1.0, 0.0);
-                cloudShadow = SunTransmittance(position);
+                // The light volume provides the shadow in the solver path; the
+                // CPU-baked volume still needs the marched fallback.
+                if (VolumeParams2.w < 0.5)
+                {
+                    firstCloudShadow = SunTransmittance(position);
+                }
                 shadingReady = true;
             }
             float3 normal = shadingNormal;
             float sunShade = saturate(dot(normal, sunDirection));
             float skyShade = 0.5 + 0.5 * normal.y;
             float shade = 0.45 + 0.85 * sunShade + 0.30 * skyShade;
-            scattering *= shade * cloudShadow;
+
+            float cloudShadow = firstCloudShadow;
+            if (VolumeParams2.w > 0.5)
+            {
+                cloudShadow = SampleLight(position);
+            }
+            // Multiple-scattering approximation: shadowed smoke still receives
+            // some diffuse light instead of turning into a black hole.
+            float shadow = lerp(0.35, 1.0, pow(saturate(cloudShadow), 0.5));
+            scattering *= shade * shadow;
+            scattering += albedo * density * ambientLight * 0.6;
             emission *= lerp(1.0, shade, 0.5);
 
             // Fade the first few metres so flying through the cloud does not
@@ -204,7 +247,19 @@ float4 PSVolume(VSOut input) : SV_Target
             }
         }
 
-        t += stepSize;
+        // Conservative empty-space skipping: double the step while the sample is
+        // empty. The render volume is smoothed, so dense layers span several
+        // voxels and are not lost by the 2x skip.
+        if (density <= 0.002)
+        {
+            t += stepSize * 2.0;
+            i += 2;
+        }
+        else
+        {
+            t += stepSize;
+            ++i;
+        }
     }
 
     float alpha = 1.0 - transmittance;

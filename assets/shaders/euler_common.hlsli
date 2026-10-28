@@ -34,9 +34,11 @@ cbuffer SolverConstants : register(b0)
     float4 Ambient;     // rho0, p0, T0, gamma
     float4 Charge;      // mass, energy, radius, height of burst
     float4 Physics;     // gravity, gas constant, cooling, simulation time
-    float4 Extra;       // reserved
+    float4 Extra;       // x = cap radius, y = cap centre height, z = hemisphere, w = cap height threshold
     float4 OldDomainMin; // xyz = old lower corner, w = old dx (for rescaling)
     float4 OldDomainMax; // xyz = old upper corner
+    float4 SunDirection; // xyz = normalized direction to the sun
+    float4 LightParams;  // x = extinction scale, y = light raymarch steps
 };
 
 SamplerState LinearSampler : register(s0);
@@ -425,11 +427,17 @@ void ApplySource(inout float4 a, inout float2 b, int3 cell)
     float targetCenterY = Extra.y;
     float dr = radialLength - targetRadius;
     float dy = world.y - targetCenterY;
-    float ringDistance = sqrt(dr * dr + dy * dy);
-    float ringWidth = max(0.45 * targetRadius, 2.0 * DomainMin.w);
+    // The unresolved cap vortex is oblate: wide across the cap, thin in the
+    // vertical. A circular ring would spin the head into a ball, so the ring
+    // distance is stretched vertically (aspect > 1) to keep the vortex flat.
+    const float ringAspect = 1.50;
+    const float aspectSq = ringAspect * ringAspect;
+    float ringDistance = sqrt(dr * dr + dy * dy * aspectSq);
+    float ringWidth = max(0.60 * targetRadius, 2.0 * DomainMin.w);
     float ring = exp(-pow(ringDistance / ringWidth, 2.0));
-    float2 tangent = float2(dy, -dr) / max(ringDistance, 1e-3);
-    float strength = 25.0 * ring * plumeMask;
+    float2 tangent = float2(dy * aspectSq, -dr) /
+                     max(sqrt(dr * dr + dy * dy * aspectSq * aspectSq), 1e-3);
+    float strength = 30.0 * ring * plumeMask;
     float impulse = rho * strength * DomainMax.w;
     a.y += radialDirection.x * tangent.x * impulse;
     a.z += tangent.y * impulse;
@@ -439,10 +447,39 @@ void ApplySource(inout float4 a, inout float2 b, int3 cell)
 
     float above =
         saturate((world.y - (targetCenterY + targetRadius)) / targetRadius);
-    float verticalDamping = 2.0 * above;
+    float verticalDamping = 4.0 * above;
     a.z -= rho * max(velocity.y, 0.0) * verticalDamping * DomainMax.w;
     energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) *
               verticalDamping * DomainMax.w;
+
+    // Flatten the cap top. The toroidal ring is weak at the centre because the
+    // ring distance is roughly one cap radius there, so the central column can
+    // keep rising and round the head off. This band damps the upward motion at
+    // the top near the axis.
+    const float capTop = targetCenterY + targetRadius;
+    const float topBand =
+        exp(-pow((world.y - capTop) / max(0.25 * targetRadius, 2.0 * DomainMin.w), 2.0));
+    const float axisBand =
+        exp(-pow(radialLength / max(0.70 * targetRadius, 2.0 * DomainMin.w), 2.0));
+    const float flatten = 8.0 * topBand * axisBand * plumeMask;
+    a.z -= rho * max(velocity.y, 0.0) * flatten * DomainMax.w;
+    energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) * flatten *
+              DomainMax.w;
+
+    // Stable-layer surrogate: a sub-grid inversion just below the cap top damps
+    // the plume above it. This mimics the stable ambient layer that flattens a
+    // real mushroom cloud without disturbing the hydrostatic balance of the
+    // uniform ambient (a full stratified atmosphere would need a well-balanced
+    // pressure treatment). It is anchored to the cap rather than the domain:
+    // auto-scale grows the box purely as a numerical budget, so a fixed domain
+    // fraction would slide off the head as soon as the solver expands.
+    const float stableHeight = targetCenterY + 0.85 * targetRadius;
+    const float stableBand =
+        saturate((world.y - stableHeight) / max(0.30 * targetRadius, 2.0 * DomainMin.w));
+    const float stableDamping = 5.0 * stableBand * plumeMask;
+    a.z -= rho * max(velocity.y, 0.0) * stableDamping * DomainMax.w;
+    energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) * stableDamping *
+              DomainMax.w;
 
     // Radiative cooling of hot soot.
     energy -= Physics.z * soot * max(temperature - Ambient.z, 0.0) * DomainMax.w;

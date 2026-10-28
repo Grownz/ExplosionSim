@@ -28,14 +28,28 @@ void CSRender(uint3 id : SV_DispatchThreadID)
     float pressure = max((Ambient.w - 1.0) * (energy - 0.5 * rho * dot(velocity, velocity)), 1e-3);
     float temperature = AmbientTemperature(rho, pressure);
 
-    // Smooth the product mass over the six face neighbours; the auto-scaled
-    // grid reaches ~1 m voxels late in the run.
+    // Isotropic 27-point smoothing (binomial weights 8/4/2/1) of the product
+    // mass. The previous 7-point cross filter sampled only the axes, which left
+    // a four-lobed pattern at the ground contact.
     int3 p = int3(id);
-    float sootSum = 2.0 * max(b.y, 0.0) + LoadB(p + int3(1, 0, 0)).y +
-                    LoadB(p - int3(1, 0, 0)).y + LoadB(p + int3(0, 1, 0)).y +
-                    LoadB(p - int3(0, 1, 0)).y + LoadB(p + int3(0, 0, 1)).y +
-                    LoadB(p - int3(0, 0, 1)).y;
-    float sootDensity = max(sootSum / 8.0, 0.0);
+    float sootSum = 0.0;
+    [unroll]
+    for (int dz = -1; dz <= 1; ++dz)
+    {
+        [unroll]
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+            [unroll]
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                const float weight = (dx == 0 ? 2.0 : 1.0) *
+                                     (dy == 0 ? 2.0 : 1.0) *
+                                     (dz == 0 ? 2.0 : 1.0);
+                sootSum += weight * max(LoadB(p + int3(dx, dy, dz)).y, 0.0);
+            }
+        }
+    }
+    float sootDensity = max(sootSum / 64.0, 0.0);
 
     float products = smoothstep(0.004, 0.030, sootDensity);
     float smoke = smoothstep(0.0005, 0.008, sootDensity);

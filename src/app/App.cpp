@@ -794,7 +794,7 @@ int App::RunSolverBenchmark() {
             "wall %.2f ms",
             result.timing.totalMs, result.msPerStep, result.msPerFrame, result.submissionMs,
             result.wallMs);
-    LogInfo("  sweeps %.2f ms (X %.2f, Y %.2f, Z+source %.2f), reduce %.2f ms (%d passes), "
+    LogInfo("  sweeps %.2f ms (X %.2f, Y %.2f, Z %.2f), reduce %.2f ms (%d passes), "
             "render %.2f ms (%d passes)",
             sweepMs, passMs(gfx::SolverPass::SweepX), passMs(gfx::SolverPass::SweepY),
             passMs(gfx::SolverPass::SweepZ), passMs(gfx::SolverPass::Reduce),

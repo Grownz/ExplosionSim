@@ -679,13 +679,28 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
 
     const bool highFidelity =
         simulation.Settings().mode == sim::SimulationMode::HighFidelity;
-    frameConstants_.volumeParams = XMFLOAT4(0.0f,
+    if (highFidelity) {
+        const sim::VolumeBounds& lightBounds = solver_.Bounds();
+        frameConstants_.lightVolumeMin =
+            XMFLOAT4(lightBounds.min.x, lightBounds.min.y, lightBounds.min.z, 0.0f);
+        frameConstants_.lightVolumeMax =
+            XMFLOAT4(lightBounds.max.x, lightBounds.max.y, lightBounds.max.z, 0.0f);
+    } else {
+        frameConstants_.lightVolumeMin = frameConstants_.volumeMin;
+        frameConstants_.lightVolumeMax = frameConstants_.volumeMax;
+    }
+    const float volumeResolution = highFidelity
+                                       ? float(std::max(solver_.Stats().resolution, 1))
+                                       : float(std::max(volumeResolution_, 1));
+    const float voxelSize =
+        (activeVolumeBounds_.max.x - activeVolumeBounds_.min.x) / volumeResolution;
+    frameConstants_.volumeParams = XMFLOAT4(voxelSize,
                                             activeVolumeSplit_ ? 1.0f : 0.0f,
                                             1.0f, 1.0f);
     frameConstants_.volumeParams2 =
         XMFLOAT4(highFidelity ? 0.40f : 1.0f, highFidelity ? 0.16f : 1.0f,
                  highFidelity ? 0.0f : 1.0f,
-                 float(settings.anisotropicFiltering));
+                 highFidelity ? 1.0f : 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11DeviceContext* context = device_->Context();
@@ -844,6 +859,27 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
     }
 }
 
+void Renderer::UpdatePlumeModel(sim::Simulation& simulation) {
+    const sim::BlastState& state = simulation.Blast().State();
+    float radius = float(state.cloudRadius);
+    float centerY = float(state.cloudCenterY);
+
+    // The analytic cloud grows faster than the resolved plume, and the measured
+    // full radius includes the ground-hugging base surge. Both would place the
+    // cap ring around the whole base instead of the head. Use the measured cap
+    // radius (upper plume only) and follow the measured top once the reduction
+    // has produced them.
+    if (solver_.HasFieldBounds()) {
+        const float capRadius = solver_.FieldCapRadius();
+        const float measuredTop = solver_.FieldTop();
+        if (capRadius > 0.0f && measuredTop > capRadius) {
+            radius = capRadius;
+            centerY = measuredTop - capRadius;
+        }
+    }
+    solver_.SetPlumeModel(radius, centerY);
+}
+
 bool Renderer::EnsureSolver(sim::Simulation& simulation) {
     if (solverBlastSerial_ != simulation.BlastSerial()) {
         if (solver_.Reset(MakeEulerConfig(simulation))) {
@@ -895,8 +931,7 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
             steps = int(std::ceil((target - advancedTotal) / double(dt)));
             steps = std::clamp(steps, 1, std::min(batchMax, maxSteps - submitted));
         }
-        solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius),
-                              float(simulation.Blast().State().cloudCenterY));
+        UpdatePlumeModel(simulation);
         solver_.Step(steps);
         const double advanced = solver_.ConsumeAdvance();
         advancedTotal += advanced;
@@ -929,7 +964,7 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
     int guard = 0;
     while (solver_.Stats().time < targetTime && guard++ < 4096) {
         MaybeExpandSolver(simulation);
-        solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius), float(simulation.Blast().State().cloudCenterY));
+        UpdatePlumeModel(simulation);
         solver_.Step(16);
 
         // Keep the analytic model in sync so the ground effects, dust and the
@@ -974,7 +1009,7 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
 
         const long long remaining = targetSteps - solver_.Stats().steps;
         const int batch = int(std::min<long long>(remaining, 16));
-        solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius), float(simulation.Blast().State().cloudCenterY));
+        UpdatePlumeModel(simulation);
         solver_.Step(batch);
 
         const double advance = solver_.ConsumeAdvance();
@@ -995,11 +1030,15 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
     solver_.UpdateRenderVolume();
 
     LogInfo("High-fidelity capture: %lld steps, t=%.4f s (analytic %.4f s), domain half %.2f m, "
-            "top %.2f m, accuracy x%.2f, expansions %d, plume top %.2f m, radius %.2f m",
+            "top %.2f m, accuracy x%.2f, expansions %d, plume top %.2f m, radius %.2f m, "
+            "cap radius %.2f m, analytic cloud R %.2f m, centre %.2f m",
             solver_.Stats().steps, solver_.Stats().time, simulation.Blast().State().time,
             solver_.Stats().domainHalfExtent, solver_.Stats().domainTop,
             solver_.Stats().accuracyFactor, solver_.Stats().expansions,
-            solver_.Stats().plumeTop, solver_.Stats().plumeRadius);
+            solver_.Stats().plumeTop, solver_.Stats().plumeRadius,
+            solver_.Stats().plumeCapRadius,
+            simulation.Blast().State().cloudRadius,
+            simulation.Blast().State().cloudCenterY);
 }
 
 double Renderer::ConsumeSolverAdvance() {    return solver_.ConsumeAdvance();
@@ -1036,8 +1075,7 @@ SolverBenchmarkResult Renderer::BenchmarkSolver(sim::Simulation& simulation,
     const long long warmup = std::min<long long>(steps, std::max(8, stepsPerFrame * 2));
     for (long long done = 0; done < warmup;) {
         const int batch = int(std::min<long long>(stepsPerFrame, warmup - done));
-        solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius),
-                              float(simulation.Blast().State().cloudCenterY));
+        UpdatePlumeModel(simulation);
         solver_.Step(batch);
         solver_.UpdateRenderVolume();
         solver_.WaitForReduction();
@@ -1064,8 +1102,7 @@ SolverBenchmarkResult Renderer::BenchmarkSolver(sim::Simulation& simulation,
         int remaining = int(std::min<long long>(stepsPerFrame, steps - done));
         while (remaining > 0) {
             const int batch = std::min(remaining, 64);
-            solver_.SetPlumeModel(float(simulation.Blast().State().cloudRadius),
-                                  float(simulation.Blast().State().cloudCenterY));
+            UpdatePlumeModel(simulation);
             const auto submitStart = std::chrono::steady_clock::now();
             solver_.Step(batch);
             submissionMs += std::chrono::duration<double, std::milli>(
@@ -1486,12 +1523,26 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     // --- Volumetric fireball / smoke ---------------------------------------
     if (settings.enableVolume && activeVolumeValid_ && volumeView) {
+        // Refresh the sun transmittance volume for the HF solver. The light
+        // volume is view-independent and sampled by the raymarcher.
+        if (highFidelity && solverVolume) {
+            const XMFLOAT4& sun = frameConstants_.sunDirection;
+            solver_.UpdateLightVolume(XMFLOAT3(sun.x, sun.y, sun.z));
+        }
+
         context->OMSetRenderTargets(1, &hdrRTV, nullptr);
         context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
-        ID3D11ShaderResourceView* srvs[4] = {volumeView, depthSample, noiseSRV_.Get(),
+        ID3D11ShaderResourceView* lightView = volumeDummySRV_.Get();
+        if (highFidelity && solverVolume) {
+            if (ID3D11ShaderResourceView* light = solver_.LightVolumeSRV()) {
+                lightView = light;
+            }
+        }
+        ID3D11ShaderResourceView* srvs[5] = {volumeView, depthSample, noiseSRV_.Get(),
                                              volumeAuxSRV_ ? volumeAuxSRV_.Get()
-                                                           : volumeDummySRV_.Get()};
-        context->PSSetShaderResources(0, 4, srvs);
+                                                           : volumeDummySRV_.Get(),
+                                             lightView};
+        context->PSSetShaderResources(0, 5, srvs);
         ID3D11SamplerState* volumeSampler = linearClamp_.Get();
         if (settings.anisotropicFiltering >= 8) {
             volumeSampler = anisoClamp_[2].Get();
@@ -1507,8 +1558,8 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->PSSetShader(volumePS_.Get(), nullptr, 0);
         context->Draw(3, 0);
 
-        ID3D11ShaderResourceView* nullSRVs[4] = {nullptr, nullptr, nullptr, nullptr};
-        context->PSSetShaderResources(0, 4, nullSRVs);
+        ID3D11ShaderResourceView* nullSRVs[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+        context->PSSetShaderResources(0, 5, nullSRVs);
         context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());
     }
 

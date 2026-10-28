@@ -4,6 +4,27 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **View-independent high-fidelity lighting** - the solver precomputes a 64³
+  sun-transmittance volume once per frame and the raymarcher samples it at every step,
+  so self-shadowing no longer changes when the camera moves. A multiple-scattering floor
+  keeps shadowed smoke from turning black, and the raymarcher now steps at a fixed
+  world-space size (one render voxel) with conservative empty-space skipping, so grazing
+  rays keep the dense layers. The shading normal uses an isotropic 27-point gradient.
+- **Mushroom head** - the cap closure, the top-flattening band and the stable-layer
+  surrogate are anchored to the measured cap radius and top instead of the analytic cloud
+  or the domain height. The reduction measures the cap radius above the base surge, so
+  auto-scale no longer slides the ring off the head, and the ring is vertically stretched
+  to spin a flatter, oblate cap.
+- **Ground contact** - the initial charge is deposited with an anti-aliased sphere
+  fraction instead of a binary voxel mask, and the render volume applies an isotropic
+  27-point binomial filter to the soot channel instead of the axis-only 7-point cross.
+  The sweep order alternates per step (X, Y, Z / Z, Y, X) with the source fused into the
+  last sweep, which averages the dimensional-splitting error at no extra dispatch cost.
+
 ## [0.8.0] - 2026-10-28
 
 This release brings updates and the changelog into the app. The app checks GitHub in the

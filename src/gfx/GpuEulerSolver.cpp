@@ -101,12 +101,20 @@ bool GpuEulerSolver::CreateComputeShaders() {
     auto sweepXBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepX");
     auto sweepYBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepY");
     auto sweepZBlob = compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepZ");
+    auto sweepXSourceBlob =
+        compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepXSource");
+    auto sweepYSourceBlob =
+        compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepYSource");
+    auto sweepZSourceBlob =
+        compile(L"assets\\shaders\\euler_sweep.hlsl", "CSSweepZSource");
     auto reduceBlob = compile(L"assets\\shaders\\euler_reduce.hlsl", "CSReduce");
     auto renderBlob = compile(L"assets\\shaders\\euler_render.hlsl", "CSRender");
     auto rescaleBlob = compile(L"assets\\shaders\\euler_rescale.hlsl", "CSRescale");
+    auto lightBlob = compile(L"assets\\shaders\\euler_light.hlsl", "CSLight");
 
-    if (!initBlob || !sweepXBlob || !sweepYBlob || !sweepZBlob || !reduceBlob ||
-        !renderBlob || !rescaleBlob) {
+    if (!initBlob || !sweepXBlob || !sweepYBlob || !sweepZBlob ||
+        !sweepXSourceBlob || !sweepYSourceBlob || !sweepZSourceBlob ||
+        !reduceBlob || !renderBlob || !rescaleBlob || !lightBlob) {
         LogError("High-fidelity solver: shader compilation failed.");
         return false;
     }
@@ -121,9 +129,16 @@ bool GpuEulerSolver::CreateComputeShaders() {
         !create(sweepXBlob.Get(), sweepShaders_[0]) ||
         !create(sweepYBlob.Get(), sweepShaders_[1]) ||
         !create(sweepZBlob.Get(), sweepShaders_[2]) ||
+        !create(sweepXSourceBlob.Get(), sweepSourceShaders_[0]) ||
+        !create(sweepYSourceBlob.Get(), sweepSourceShaders_[1]) ||
+        !create(sweepZSourceBlob.Get(), sweepSourceShaders_[2]) ||
         !create(reduceBlob.Get(), reduceShader_) ||
         !create(renderBlob.Get(), renderShader_) || !create(rescaleBlob.Get(), rescaleShader_)) {
         LogError("High-fidelity solver: failed to create compute shader objects.");
+        return false;
+    }
+    if (!create(lightBlob.Get(), lightShader_)) {
+        LogError("High-fidelity solver: failed to create the light shader object.");
         return false;
     }
     return true;
@@ -143,7 +158,7 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     }
 
     D3D11_BUFFER_DESC bufferDesc{};
-    bufferDesc.ByteWidth = 4 * sizeof(uint32_t);
+    bufferDesc.ByteWidth = kReduceChannels * sizeof(uint32_t);
     bufferDesc.Usage = D3D11_USAGE_DEFAULT;
     bufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
     bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -157,7 +172,7 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     uavDesc.Format = DXGI_FORMAT_UNKNOWN;
     uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
     uavDesc.Buffer.FirstElement = 0;
-    uavDesc.Buffer.NumElements = 4;
+    uavDesc.Buffer.NumElements = kReduceChannels;
     if (FAILED(device_->CreateUnorderedAccessView(maxSpeedBuffer_.Get(), &uavDesc,
                                                   &maxSpeedUAV_))) {
         LogError("High-fidelity solver: max-speed UAV creation failed.");
@@ -165,7 +180,7 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     }
 
     D3D11_BUFFER_DESC stagingDesc{};
-    stagingDesc.ByteWidth = 4 * sizeof(uint32_t);
+    stagingDesc.ByteWidth = kReduceChannels * sizeof(uint32_t);
     stagingDesc.Usage = D3D11_USAGE_STAGING;
     stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -228,6 +243,12 @@ bool GpuEulerSolver::CreateTextures(int resolution) {
         return false;
     }
 
+    if (!CreateVolumeTexture(device_, kLightVolumeResolution, DXGI_FORMAT_R32_FLOAT,
+                             &lightVolume_.texture, &lightVolume_.srv, &lightVolume_.uav)) {
+        LogError("High-fidelity solver: light volume creation failed.");
+        return false;
+    }
+
     stateIndex_ = 0;
     return true;
 }
@@ -240,6 +261,7 @@ void GpuEulerSolver::ReleaseVolumeResources() {
         set.Reset();
     }
     renderVolume_.Reset();
+    lightVolume_.Reset();
     resolution_ = 0;
     hasVolume_ = false;
 }
@@ -259,7 +281,11 @@ void GpuEulerSolver::Shutdown() {
     rescaleShader_.Reset();
     renderShader_.Reset();
     reduceShader_.Reset();
+    lightShader_.Reset();
     for (auto& shader : sweepShaders_) {
+        shader.Reset();
+    }
+    for (auto& shader : sweepSourceShaders_) {
         shader.Reset();
     }
     initShader_.Reset();
@@ -280,11 +306,13 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
     constants_.physics = XMFLOAT4(float(config_.gravity), float(config_.gasConstant), kCooling,
                                   float(time_));
     constants_.extra = XMFLOAT4(plumeRadius_, plumeCenterY_,
-                                config_.hemispherical ? 1.0f : 0.0f, 0.0f);
+                                config_.hemispherical ? 1.0f : 0.0f, capThreshold_);
     constants_.oldDomainMin =
         XMFLOAT4(oldBounds_.min.x, oldBounds_.min.y, oldBounds_.min.z, oldDx_);
     constants_.oldDomainMax =
         XMFLOAT4(oldBounds_.max.x, oldBounds_.max.y, oldBounds_.max.z, 0.0f);
+    constants_.sunDirection = XMFLOAT4(sunDirection_.x, sunDirection_.y, sunDirection_.z, 0.0f);
+    constants_.lightParams = XMFLOAT4(extinctionScale_, 24.0f, 0.0f, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11Buffer* buffer = constantBuffers_[constantBufferIndex_].Get();
@@ -325,8 +353,10 @@ void GpuEulerSolver::DispatchGrid() {
                        UINT((resolution_ + kThreadGroupZ - 1) / kThreadGroupZ));
 }
 
-void GpuEulerSolver::DispatchSweep(int direction) {
-    context_->CSSetShader(sweepShaders_[direction].Get(), nullptr, 0);
+void GpuEulerSolver::DispatchSweep(int direction, bool applySource) {
+    ID3D11ComputeShader* shader = applySource ? sweepSourceShaders_[direction].Get()
+                                              : sweepShaders_[direction].Get();
+    context_->CSSetShader(shader, nullptr, 0);
     BindStateSRV(stateIndex_);
     BindStateUAV(1 - stateIndex_);
     BeginPass(SolverPass(int(SolverPass::SweepX) + direction));
@@ -447,7 +477,7 @@ SolverTiming GpuEulerSolver::ResolveTiming() {
 }
 
 void GpuEulerSolver::DispatchReduce() {
-    const UINT zeros[4] = {0, 0, 0, 0};
+    const UINT zeros[kReduceChannels] = {};
     context_->ClearUnorderedAccessViewUint(maxSpeedUAV_.Get(), zeros);
     context_->CSSetShader(reduceShader_.Get(), nullptr, 0);
     BindStateSRV(stateIndex_);
@@ -534,7 +564,7 @@ void GpuEulerSolver::ConsumeStaging() {
         return;
     }
 
-    uint32_t values[4] = {0, 0, 0, 0};
+    uint32_t values[kReduceChannels] = {};
     memcpy(values, mapped.pData, sizeof(values));
     context_->Unmap(maxSpeedStaging_.Get(), 0);
 
@@ -551,6 +581,14 @@ void GpuEulerSolver::ConsumeStaging() {
     }
     if (values[3] > 0) {
         stats_.plumeDomeFraction = float(values[3]) / kBoundScale;
+    }
+    if (values[4] > 0) {
+        stats_.plumeCapRadius = float(values[4]) / kBoundScale;
+    }
+    // Measure the cap radius above the base surge next time. The threshold is
+    // derived from the measured top, so it follows the rising plume.
+    if (stats_.plumeTop > 0.0f) {
+        capThreshold_ = 0.55f * stats_.plumeTop;
     }
     if (values[1] > 0 || values[2] > 0) {
         stats_.fieldBoundsValid = true;
@@ -586,6 +624,7 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     totalSteps_ = 0;
     maxSpeed_ = 4000.0f;
     lastDt_ = 0.0f;
+    capThreshold_ = 0.0f;
     reducePending_ = false;
     hasVolume_ = false;
     oldBounds_ = bounds_;
@@ -638,8 +677,12 @@ void GpuEulerSolver::Step(int steps) {
         UpdateConstants(0, dt);
 
         for (int step = 0; step < batch; ++step) {
-            for (int direction = 0; direction < 3; ++direction) {
-                DispatchSweep(direction);
+            // Alternate the dimensional-splitting order so the truncation error
+            // averages out instead of biasing the base surge along the axes.
+            const bool reverse = (totalSteps_ & 1) != 0;
+            for (int i = 0; i < 3; ++i) {
+                const int direction = reverse ? 2 - i : i;
+                DispatchSweep(direction, i == 2);
             }
 
             time_ += double(dt);
@@ -672,6 +715,24 @@ void GpuEulerSolver::UpdateRenderVolume() {
     }
     DispatchRender();
     hasVolume_ = true;
+}
+
+void GpuEulerSolver::UpdateLightVolume(const XMFLOAT3& sunDirection) {
+    if (!initialized_ || !hasVolume_ || !lightVolume_.uav || !lightShader_) {
+        return;
+    }
+    sunDirection_ = sunDirection;
+    context_->CSSetShader(lightShader_.Get(), nullptr, 0);
+    UpdateConstants(0, 0.0f);
+
+    ID3D11ShaderResourceView* render = renderVolume_.srv.Get();
+    context_->CSSetShaderResources(2, 1, &render);
+    ID3D11UnorderedAccessView* light = lightVolume_.uav.Get();
+    context_->CSSetUnorderedAccessViews(2, 1, &light, nullptr);
+
+    const int groups = (kLightVolumeResolution + 3) / 4;
+    context_->Dispatch(groups, groups, groups);
+    UnbindAll();
 }
 
 bool GpuEulerSolver::RescaleDomain(float factor) {

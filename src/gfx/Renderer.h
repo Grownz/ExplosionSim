@@ -128,6 +128,8 @@ private:
         DirectX::XMFLOAT4 fireball;
         DirectX::XMFLOAT4 volumeParams;
         DirectX::XMFLOAT4 volumeParams2;
+        DirectX::XMFLOAT4 lightVolumeMin;
+        DirectX::XMFLOAT4 lightVolumeMax;
     };
 
     struct BloomConstants {
@@ -143,6 +145,7 @@ private:
     EulerConfig MakeEulerConfig(const sim::Simulation& simulation) const;
     bool EnsureSolver(sim::Simulation& simulation);
     void MaybeExpandSolver(const sim::Simulation& simulation);
+    void UpdatePlumeModel(sim::Simulation& simulation);
     void UploadVolume(const sim::VolumeFrame& frame);
     void UploadParticles(const std::vector<sim::ParticleInstance>& instances,
                          ComPtr<ID3D11Buffer>& buffer);

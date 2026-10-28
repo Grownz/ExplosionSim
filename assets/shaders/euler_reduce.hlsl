@@ -1,16 +1,18 @@
 #include "euler_common.hlsli"
 
-// Reduce output layout (one structured buffer, four uints):
+// Reduce output layout (one structured buffer, eight uints):
 //   [0] = max signal speed        (float bits)
 //   [1] = max product height      (fixed point, 1/512 m)
 //   [2] = max product radius      (fixed point, 1/512 m)
 //   [3] = max normalized dome fill (fixed point, 1/512)
+//   [4] = max cap radius          (fixed point, 1/512 m, above Extra.w)
 RWStructuredBuffer<uint> ReduceOutput : register(u2);
 
 groupshared uint gMaxSpeed;
 groupshared uint gMaxHeight;
 groupshared uint gMaxRadius;
 groupshared uint gMaxDome;
+groupshared uint gMaxCapRadius;
 
 static const float kBoundScale = 512.0;
 static const float kHeightThreshold = 0.004;
@@ -42,6 +44,7 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
         gMaxHeight = 0;
         gMaxRadius = 0;
         gMaxDome = 0;
+        gMaxCapRadius = 0;
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -49,6 +52,7 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
     uint height = 0;
     uint radius = 0;
     uint dome = 0;
+    uint capRadius = 0;
 
     const float domainHeight = max(DomainMax.y - DomainMin.y, 1e-3);
     const float lowFloor = max(kGroundFadeVoxels * DomainMin.w, kLowLayerFraction * domainHeight);
@@ -79,7 +83,15 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
             const bool aboveBaseSurge = world.y > upperFloor;
             if (aboveBaseSurge || b.y > kFireballThreshold)
             {
-                radius = Quantize(max(abs(world.x), abs(world.z)));
+                const float horizontal = max(abs(world.x), abs(world.z));
+                radius = Quantize(horizontal);
+                // Cap radius: the widest part of the upper plume. Extra.w is a
+                // height derived from the measured top, so the base surge does
+                // not widen the cap closure ring.
+                if (Extra.w > 0.0 && world.y > Extra.w)
+                {
+                    capRadius = Quantize(horizontal);
+                }
                 if (IsHemispherical())
                 {
                     dome = Quantize(DomainFraction(world));
@@ -92,6 +104,7 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
     InterlockedMax(gMaxHeight, height);
     InterlockedMax(gMaxRadius, radius);
     InterlockedMax(gMaxDome, dome);
+    InterlockedMax(gMaxCapRadius, capRadius);
     GroupMemoryBarrierWithGroupSync();
 
     if (localIndex == 0)
@@ -100,5 +113,6 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
         InterlockedMax(ReduceOutput[1], gMaxHeight);
         InterlockedMax(ReduceOutput[2], gMaxRadius);
         InterlockedMax(ReduceOutput[3], gMaxDome);
+        InterlockedMax(ReduceOutput[4], gMaxCapRadius);
     }
 }

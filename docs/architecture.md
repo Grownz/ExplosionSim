@@ -124,7 +124,17 @@ the current rigid-body pose, so flames are not hidden inside the mesh.
   procedural surface grain
 - no mipmaps
 - the ground and scene shaders march the same volume towards the sun (8 samples) for
-  the smoke shadow; the raymarcher uses a 6-sample sun transmittance for self-shadowing
+  the smoke shadow
+- the raymarcher steps at a fixed world-space size (one render voxel) instead of dividing
+  the ray length into a fixed number of steps, so grazing rays no longer lose the dense
+  layers; empty samples advance two steps, and the step count is capped by `VolumeMax.w`
+- the high-fidelity solver precomputes a 64³ `R32F` sun-transmittance volume
+  (`euler_light.hlsl`, 24 samples per voxel) once per frame. The raymarcher samples it
+  per step, so the self-shadowing no longer depends on the camera; the CPU-baked volume
+  falls back to the 6-sample transmittance
+- multiple scattering: shadowed smoke keeps a 35 % diffuse floor instead of turning black
+- the shading normal uses an isotropic 27-point density gradient at the first dense
+  sample
 - the first 3 m of the volume ray are faded out so flying into the cloud does not leave
   a screen-filling veil
 - the shader jitters ray start positions to hide slice banding and adds procedural noise
@@ -162,19 +172,23 @@ volume raymarcher.
 1. **Init** – fills the domain with ambient air and deposits the charge as a sphere of
    detonation products.
 2. **Sweep x / y / z** – finite-volume update with MUSCL reconstruction and HLLC fluxes.
-   The Z sweep also applies the source terms (buoyancy, entrainment drag, cap closure,
+   The last sweep also applies the source terms (buoyancy, entrainment drag, cap closure,
    soot cooling, absorbing sponge) to the state it just produced, so the state does not
-   round-trip through memory. The order is still X, Y, Z, Source and the equations are
-   unchanged. Each direction has its own entry point (`CSSweepX` / `CSSweepY` /
-   `CSSweepZ`): the direction constant folds the HLLC selects, and the fused source code
-   stays out of the X/Y shaders (it raises their temp-register count from 22 to 24 and
-   would cost about 12 % of the total solver time). The middle MUSCL stencil is shared by
-   both faces of a cell, so 18 minmods are evaluated instead of 24.
-3. **Reduce** – group-shared maximum of the signal speed `|v| + c`, written to a
-   one-element structured buffer.
-4. **Render** – converts the state into the render volume (soot incandescence, shock
-   gradient, compression). It runs once per frame, after all solver steps, not after
-   every sub-batch.
+   round-trip through memory. The sweep order alternates per step (X, Y, Z / Z, Y, X) and
+   the source rides on the last sweep, which averages the dimensional-splitting error
+   without extra dispatches. Each direction has a source-free and a source-fused entry
+   point (`CSSweepX/Y/Z` and `CSSweepXSource/YSource/ZSource`): the direction constant
+   folds the HLLC selects, and the source code stays out of the source-free shaders (it
+   raises their temp-register count and would cost occupancy). The middle MUSCL stencil
+   is shared by both faces of a cell, so 18 minmods are evaluated instead of 24.
+3. **Reduce** – group-shared maximum of the signal speed `|v| + c`, the visible product
+   top, the full radius, the dome fill and the cap radius (upper plume only), written to
+   an eight-element structured buffer.
+4. **Light** – precomputes the 64³ sun-transmittance volume from the render volume once
+   per frame (24 samples per voxel, `R32F`).
+5. **Render** – converts the state into the render volume (soot incandescence, shock
+   gradient, compression) and applies an isotropic 27-point binomial filter to the soot
+   channel. It runs once per frame, after all solver steps, not after every sub-batch.
 
 Three sweeps per step mean the ping-pong index returns to its starting value after each
 step. All passes use `4x4x4` thread groups (the group size is compiled in through
@@ -243,10 +257,16 @@ hemisphere.
 
 The coarse grid cannot resolve the vortex ring that forms the mushroom head. The source
 pass adds a drag term `0.6 v|v| / (2R)` (the same entrainment closure as the analytic
-cloud) and a toroidal force around the analytic cloud radius and centre: outward at the
-cap top, downward outside, inward at the bottom and upward inside. The render conversion
-uses a lower soot threshold for the diluted smoke than for the incandescent products, and
-the camera frames the analytic cloud rather than the solver domain.
+cloud) and a toroidal force around the measured cap: outward at the cap top, downward
+outside, inward at the bottom and upward inside. The ring is vertically stretched (aspect
+1.5), so it spins a flat, oblate cap instead of a ball. Two extra bands damp the upward
+motion at the cap top and just below it (the stable-layer surrogate), which flattens the
+head. All three terms are anchored to the measured cap radius and top rather than the
+domain or the analytic cloud: the reduction measures the cap radius only above 55 % of
+the measured top, so the ground-hugging base surge no longer widens or lowers the ring,
+and auto-scale can grow the box without sliding the closure off the head. The render
+conversion uses a lower soot threshold for the diluted smoke than for the incandescent
+products, and the camera frames the analytic cloud rather than the solver domain.
 
 ### Auto-scale (domain expansion)
 

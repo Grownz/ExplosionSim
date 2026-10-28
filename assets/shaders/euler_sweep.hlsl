@@ -1,14 +1,15 @@
 #include "euler_common.hlsli"
 
 // One directional finite-volume sweep with MUSCL reconstruction and HLLC fluxes.
-// The Z sweep also applies the source terms, so a step is three dispatches
-// instead of four and the state never round-trips through memory between the Z
-// update and the source terms.
+// The last sweep of a step also applies the source terms, so a step is three
+// dispatches instead of four and the state never round-trips through memory
+// between the last update and the source terms. The order alternates per step
+// (X,Y,Z / Z,Y,X), so every direction takes a turn as the source sweep.
 //
 // Each direction has its own entry point. `dir` is then a compile-time constant,
-// which folds the direction selects in HLLC and keeps the X/Y shaders free of the
-// fused source code (the source raises the temp-register count and would reduce
-// occupancy for all three passes).
+// which folds the direction selects in HLLC and keeps the source-free variants
+// free of the fused source code (the source raises the temp-register count and
+// would reduce occupancy for those passes).
 void SweepBody(uint3 id, int dir, bool applySource)
 {
     if (any(id >= (uint3)Grid.xyz))
@@ -60,8 +61,8 @@ void SweepBody(uint3 id, int dir, bool applySource)
 
     Sanitise(a, b);
 
-    // The source terms run after the Z update, exactly as the former separate
-    // pass did (X, Y, Z, Source).
+    // The source terms run after the last directional update of the step,
+    // exactly as the former separate pass did (X, Y, Z, Source).
     if (applySource)
     {
         ApplySource(a, b, cell);
@@ -85,6 +86,27 @@ void CSSweepY(uint3 id : SV_DispatchThreadID)
 
 [numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
 void CSSweepZ(uint3 id : SV_DispatchThreadID)
+{
+    SweepBody(id, 2, false);
+}
+
+// Source-fused variants used for the last sweep of a step. The sweep order
+// alternates between X,Y,Z and Z,Y,X so the dimensional-splitting anisotropy
+// averages out instead of imprinting a four-lobed pattern on the base surge.
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
+void CSSweepXSource(uint3 id : SV_DispatchThreadID)
+{
+    SweepBody(id, 0, true);
+}
+
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
+void CSSweepYSource(uint3 id : SV_DispatchThreadID)
+{
+    SweepBody(id, 1, true);
+}
+
+[numthreads(EULER_GROUP_X, EULER_GROUP_Y, EULER_GROUP_Z)]
+void CSSweepZSource(uint3 id : SV_DispatchThreadID)
 {
     SweepBody(id, 2, true);
 }

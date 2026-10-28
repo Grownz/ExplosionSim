@@ -30,11 +30,18 @@ void CSInit(uint3 id : SV_DispatchThreadID)
                               (3.0 * radius - capHeight) / 3.0;
     const float aboveVolume = max(fullVolume - belowVolume, 1e-6);
 
-    if (length(offset) < radius)
+    const float distance = length(offset);
+    // Anti-aliased sphere: distribute the charge over the boundary cells so the
+    // initial condition does not seed the Cartesian grid with stair steps.
+    const float fraction =
+        saturate((radius - distance) / max(DomainMin.w, 1e-4) + 0.5);
+    if (fraction > 0.0)
     {
-        rho = Charge.x / aboveVolume;
-        energy = Charge.y / aboveVolume;
-        sootDensity = rho;
+        const float chargeDensity = Charge.x / aboveVolume;
+        const float chargeEnergy = Charge.y / aboveVolume;
+        rho = lerp(rho, chargeDensity, fraction);
+        energy = lerp(energy, chargeEnergy, fraction);
+        sootDensity = chargeDensity * fraction;
     }
 
     OutA[id] = float4(rho, 0.0, 0.0, 0.0);
