@@ -109,10 +109,16 @@ public:
 
     // Analytic cloud radius and centre used by the sub-grid entrainment/cap
     // closure. Call before stepping with the current reduced-order cloud state.
-    void SetPlumeModel(float radius, float centerY, float top) {
+    void SetPlumeModel(float radius, float centerY, float top, float dragRadius,
+                       float riseSpeed) {
         plumeRadius_ = radius > 0.0f ? radius : 0.0f;
         plumeCenterY_ = centerY;
         plumeTop_ = top > 0.0f ? top : 0.0f;
+        // The entrainment drag must see the thermal's radius, not the narrow
+        // resolved cap: a too-small radius over-damps the rise and locks the
+        // solver below the analytic cloud.
+        dragRadius_ = dragRadius > 0.0f ? dragRadius : plumeRadius_;
+        riseSpeed_ = riseSpeed > 0.0f ? riseSpeed : 0.0f;
     }
 
     // Simulated time advanced since the last call (used to keep the reduced
@@ -246,6 +252,8 @@ private:
     float plumeRadius_ = 0.0f;
     float plumeCenterY_ = 0.0f;
     float plumeTop_ = 0.0f;
+    float dragRadius_ = 0.0f;
+    float riseSpeed_ = 0.0f;
     // Fixed-altitude inversion surrogate (world units). Set at Reset from the
     // initial domain and kept across auto-scale expansions: the box height is a
     // numerical budget, not a physical tropopause.

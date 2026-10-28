@@ -255,23 +255,32 @@ hemisphere.
 
 ### Sub-grid cap closure
 
-The coarse grid cannot resolve the vortex ring that forms the mushroom head. The source
-pass adds a drag term `0.6 v|v| / (2R)` (the same entrainment closure as the analytic
-cloud) and a toroidal force around the measured head: outward at the cap top, downward
-outside, inward at the bottom and upward inside. The head geometry follows Glasstone &
-Dolan (*The Effects of Nuclear Weapons*, 2.17): for a cloud that has not reached the
-tropopause the base of the head is roughly at half the altitude of the top, so a
-developed head spans `[0.5 T, T]` and its vortex-ring core sits at `0.75 T`. A young,
-still spherical head keeps the thermal scaling `C = T - R`; the offset is capped at
-`T/4`, which blends continuously between the two regimes. The ring radius and the
-measured top come from the reduction: the cap radius is measured only above 70 % of the
-top, so the ground-hugging base surge can neither widen nor lower the closure. The ring
-is slightly oblate (aspect 1.25) and the top band damps the central overshoot, which
-flattens the head. The stable-layer surrogate sits at a fixed altitude derived from the
-initial domain (0.95 × its top), not at a fraction of the growing box or of the cap, so
-it acts like a tropopause lid instead of a brake glued to the head. The camera frames
-the resolved field once the reduction has measured it, so the head is not left low in a
-frame sized by the analytic cloud.
+The coarse grid cannot resolve the vortex ring that forms the mushroom head, and it
+diffuses the fireball heat, so the resolved plume rises slower than the analytic cloud
+that drives the camera, dust and particles. The closure is therefore tied to the analytic
+reference cloud:
+
+- **Geometry** - the analytic cap ellipsoid (major `0.62 R`, minor `0.52 R`, centre
+  `cloudCenterY`) supplies the ring radius, the ring centre and the cap top. The ring
+  force curls outward over the top, down the outside and inward at the bottom; the top
+  band flattens the cap. Both travel with the analytic cap instead of braking the plume
+  at its own lagging measured top.
+- **Drag radius** - the entrainment drag `0.6 v|v| / (2R)` uses the analytic cloud radius,
+  not the narrow resolved cap. A too-small radius over-damps the rise and locks the solver
+  below the reference.
+- **Rise guide** - a one-sided relaxation (`4 s^-1`) adds the missing upward momentum in
+  the upper plume, so the head follows the analytic rise speed. It only accelerates, never
+  brakes: early on the blast drives the fireball faster than the analytic thermal, and
+  slowing it would drag the head down. The guide is limited to the upper cloud, so the
+  stem and base stay buoyancy-driven and the cloud keeps a mushroom silhouette instead of
+  rising as a block.
+
+The reduction still measures the cap radius (above 70 % of the top) and the full bounds;
+the bounds drive auto-scale. The stable-layer surrogate is disabled (`stableLayerY_ = 0`)
+because the analytic reference has no stratification and stops through drag alone; a
+stratified environment can enable it again. The camera frames the resolved field once the
+reduction has measured it, so the head is not left low in a frame sized by the analytic
+cloud.
 
 ### Auto-scale (domain expansion)
 

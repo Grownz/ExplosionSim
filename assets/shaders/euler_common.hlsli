@@ -40,7 +40,7 @@ cbuffer SolverConstants : register(b0)
     float4 SunDirection; // xyz = normalized direction to the sun
     float4 LightParams;  // x = extinction scale, y = light raymarch steps
     float4 CapParams;    // x = cap radius, y = cap centre, z = cap top, w = cap height threshold
-    float4 EnvParams;    // x = stable layer height, y = initial domain top
+    float4 EnvParams;    // x = stable layer height (0 = off), y = initial top, z = analytic rise speed
 };
 
 SamplerState LinearSampler : register(s0);
@@ -418,6 +418,30 @@ void ApplySource(inout float4 a, inout float2 b, int3 cell)
     a.yzw -= rho * velocity * drag * plumeMask * DomainMax.w;
     energy -= rho * dot(velocity, velocity) * drag * plumeMask * DomainMax.w;
 
+    // One-way coupling to the analytic thermal. The coarse grid diffuses the
+    // fireball heat, so the resolved plume rises slower than the analytic cloud
+    // that drives the camera, dust and particles. A one-sided relaxation in the
+    // upper plume adds the missing upward momentum and keeps both on one
+    // trajectory without flattening the resolved velocity structure.
+    const float riseTarget = EnvParams.z;
+    if (riseTarget > 0.0)
+    {
+        // Only the head is guided: lifting the whole plume would raise the stem
+        // and base with it and turn the cloud into a column. The base stays
+        // buoyancy-driven; the head follows the analytic rise and stretches the
+        // stem behind it.
+        const float guideHeight =
+            smoothstep(0.45 * CapParams.z, 0.75 * CapParams.z, world.y);
+        const float guide = 4.0 * plumeMask * guideHeight;
+        // One-sided: only add the missing upward momentum. Early on the blast
+        // drives the fireball faster than the analytic thermal, and slowing it
+        // down would drag the head below the analytic cloud.
+        const float guideImpulse =
+            rho * max(riseTarget - velocity.y, 0.0) * guide * DomainMax.w;
+        a.z += guideImpulse;
+        energy += guideImpulse * velocity.y;
+    }
+
     // Sub-grid cap closure. The mushroom head is a toroidal vortex: the ring
     // core sits at the vertical centre of the head, the flow curls outward over
     // the top and back down the outside, and the inner branch feeds the stem.
@@ -431,10 +455,14 @@ void ApplySource(inout float4 a, inout float2 b, int3 cell)
     float3 radial = float3(world.x, 0.0, world.z);
     float radialLength = length(radial);
     float3 radialDirection = radial / max(radialLength, 1e-3);
+    // The head geometry comes from the renderer: the analytic cap centre and
+    // top, so the closure travels with the reference cloud instead of braking
+    // the resolved plume at its own (lagging) measured top.
     const float capTop = max(CapParams.z, 2.0 * DomainMin.w);
     const float targetRadius = max(CapParams.x, 2.0 * DomainMin.w);
-    const float upperHalf = max(min(targetRadius, 0.25 * capTop), 2.0 * DomainMin.w);
-    const float targetCenterY = capTop - upperHalf;
+    const float targetCenterY = CapParams.y;
+    const float upperHalf =
+        max(capTop - targetCenterY, 2.0 * DomainMin.w);
     float dr = radialLength - targetRadius;
     float dy = world.y - targetCenterY;
     // The vortex tube is slightly oblate: wide across the head, a little
@@ -473,12 +501,13 @@ void ApplySource(inout float4 a, inout float2 b, int3 cell)
     energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) * flatten *
               DomainMax.w;
 
-    // Stable-layer surrogate at a fixed altitude (set at Reset from the initial
-    // domain). A real inversion does not travel with the cloud; keeping it at a
-    // fixed height means the head can rise through the box instead of being
-    // held down by a layer glued to its own top.
-    const float stableBand =
-        saturate((world.y - EnvParams.x) / max(0.10 * EnvParams.y, 2.0 * DomainMin.w));
+    // Stable-layer surrogate. The analytic reference cloud has no stratification
+    // and stops through entrainment drag alone, so the lid is disabled here
+    // (stableLayerY_ = 0). A stratified environment can set it again.
+    const float stableBand = EnvParams.x > 0.0
+                                 ? saturate((world.y - EnvParams.x) /
+                                            max(0.10 * EnvParams.y, 2.0 * DomainMin.w))
+                                 : 0.0;
     const float stableDamping = 3.0 * stableBand * plumeMask;
     a.z -= rho * max(velocity.y, 0.0) * stableDamping * DomainMax.w;
     energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) * stableDamping *

@@ -14,14 +14,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   keeps shadowed smoke from turning black, and the raymarcher now steps at a fixed
   world-space size (one render voxel) with conservative empty-space skipping, so grazing
   rays keep the dense layers. The shading normal uses an isotropic 27-point gradient.
-- **Mushroom head geometry** - the head is now placed from the measured top and the
-  Glasstone & Dolan rule that the base of the head sits at about half the top height: a
-  developed head spans `[0.5 T, T]` with its vortex-ring core at `0.75 T`, while a young
-  spherical head keeps the thermal scaling `C = T - R`; the blend is continuous. The
-  reduction measures the cap radius above 70 % of the top so the base surge cannot widen
-  or lower the ring. The stable-layer surrogate is fixed at the initial domain height
-  instead of travelling with the cap, so it no longer arrests the rise, and the camera
-  frames the resolved cloud instead of the (faster) analytic prediction.
+- **Mushroom head follows the analytic cloud** - the cap closure now uses the analytic
+  reference cloud (cap ellipsoid, cloud radius, rise speed) that also drives the camera,
+  dust and particles. The entrainment drag uses the analytic radius instead of the narrow
+  resolved cap, and a one-sided rise guide in the upper plume adds the upward momentum the
+  coarse grid loses to numerical diffusion. The head therefore rises with the analytic
+  cloud while the stem and base stay buoyancy-driven. The camera frames the resolved field
+  instead of the analytic prediction.
 - **Ground contact** - the initial charge is deposited with an anti-aliased sphere
   fraction instead of a binary voxel mask, and the render volume applies an isotropic
   27-point binomial filter to the soot channel instead of the axis-only 7-point cross.

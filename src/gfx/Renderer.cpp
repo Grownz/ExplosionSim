@@ -861,29 +861,16 @@ void Renderer::MaybeExpandSolver(const sim::Simulation& simulation) {
 
 void Renderer::UpdatePlumeModel(sim::Simulation& simulation) {
     const sim::BlastState& state = simulation.Blast().State();
-    float radius = float(state.cloudRadius);
-    float centerY = float(state.cloudCenterY);
-    // Before the first reduction, use the analytic sphere as the cap: its top
-    // is centre + radius.
-    float capTop = centerY + radius;
-
-    // The analytic cloud grows faster than the resolved plume, and the measured
-    // full radius includes the ground-hugging base surge. Both would place the
-    // cap ring around the whole base instead of the head. Use the measured cap
-    // radius (upper plume only) and the measured top.
-    if (solver_.HasFieldBounds()) {
-        const float capRadius = solver_.FieldCapRadius();
-        const float measuredTop = solver_.FieldTop();
-        if (capRadius > 0.0f && measuredTop > 0.5f * capRadius) {
-            radius = capRadius;
-            capTop = measuredTop;
-            // The vortex core sits at the vertical centre of the head. A
-            // developed head spans [0.5 T, T] (Glasstone & Dolan 2.17), a young
-            // spherical one C = T - R; the T/4 cap blends between them.
-            centerY = capTop - std::min(capRadius, 0.25f * capTop);
-        }
-    }
-    solver_.SetPlumeModel(radius, centerY, capTop);
+    // The analytic model is the reference cloud: it drives the camera, the dust
+    // and the particles, and it is what the UI reports. Use its cap ellipsoid
+    // (major 0.62 R, minor 0.52 R) and its rise speed so the resolved head
+    // follows the same geometry and trajectory instead of drifting below it.
+    const float cloudRadius = float(state.cloudRadius);
+    const float radius = 0.62f * cloudRadius;
+    const float centerY = float(state.cloudCenterY);
+    const float capTop = centerY + 0.52f * cloudRadius;
+    solver_.SetPlumeModel(radius, centerY, capTop, cloudRadius,
+                          float(state.cloudRiseSpeed));
 }
 
 bool Renderer::EnsureSolver(sim::Simulation& simulation) {
@@ -1037,14 +1024,15 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
 
     LogInfo("High-fidelity capture: %lld steps, t=%.4f s (analytic %.4f s), domain half %.2f m, "
             "top %.2f m, accuracy x%.2f, expansions %d, plume top %.2f m, radius %.2f m, "
-            "cap radius %.2f m, analytic cloud R %.2f m, centre %.2f m",
+            "cap radius %.2f m, analytic cloud R %.2f m, centre %.2f m, rise %.2f m/s",
             solver_.Stats().steps, solver_.Stats().time, simulation.Blast().State().time,
             solver_.Stats().domainHalfExtent, solver_.Stats().domainTop,
             solver_.Stats().accuracyFactor, solver_.Stats().expansions,
             solver_.Stats().plumeTop, solver_.Stats().plumeRadius,
             solver_.Stats().plumeCapRadius,
             simulation.Blast().State().cloudRadius,
-            simulation.Blast().State().cloudCenterY);
+            simulation.Blast().State().cloudCenterY,
+            simulation.Blast().State().cloudRiseSpeed);
 }
 
 double Renderer::ConsumeSolverAdvance() {    return solver_.ConsumeAdvance();

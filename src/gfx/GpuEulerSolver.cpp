@@ -305,7 +305,7 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
                                  depositRadius_, float(config_.heightOfBurstM));
     constants_.physics = XMFLOAT4(float(config_.gravity), float(config_.gasConstant), kCooling,
                                   float(time_));
-    constants_.extra = XMFLOAT4(plumeRadius_, plumeCenterY_,
+    constants_.extra = XMFLOAT4(dragRadius_, plumeCenterY_,
                                 config_.hemispherical ? 1.0f : 0.0f, capThreshold_);
     constants_.oldDomainMin =
         XMFLOAT4(oldBounds_.min.x, oldBounds_.min.y, oldBounds_.min.z, oldDx_);
@@ -315,7 +315,7 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
     constants_.lightParams = XMFLOAT4(extinctionScale_, 24.0f, 0.0f, 0.0f);
     constants_.capParams =
         XMFLOAT4(plumeRadius_, plumeCenterY_, plumeTop_, capThreshold_);
-    constants_.envParams = XMFLOAT4(stableLayerY_, initialTop_, 0.0f, 0.0f);
+    constants_.envParams = XMFLOAT4(stableLayerY_, initialTop_, riseSpeed_, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11Buffer* buffer = constantBuffers_[constantBufferIndex_].Get();
@@ -616,8 +616,10 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     bounds_.max = XMFLOAT3(float(half), float(2.0 * half), float(half));
     dx_ = float(2.0 * half / double(resolution_));
     initialTop_ = bounds_.max.y;
-    stableLayerY_ = 0.95f * initialTop_;
+    stableLayerY_ = 0.0f;
     plumeTop_ = 0.0f;
+    dragRadius_ = 0.0f;
+    riseSpeed_ = 0.0f;
 
     const double chargeRadius =
         std::cbrt(3.0 * std::max(config.chargeMassKg, 1e-6) / (4.0 * 3.14159265358979 * 1630.0));
