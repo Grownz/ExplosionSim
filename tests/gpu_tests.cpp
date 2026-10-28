@@ -48,6 +48,13 @@ bool CreateDevice(ComPtr<ID3D11Device>& device, ComPtr<ID3D11DeviceContext>& con
 } // namespace
 
 int main() {
+    // Domain sizing regression: a high burst must fit inside [0, 2 * half],
+    // otherwise the solver clamps the charge to the domain ceiling and the
+    // resolved cloud sits far below the analytic shock front.
+    const double highHalf = ex::gfx::SolverHalfExtentForBurst(400.0, 19.83);
+    CHECK(2.0 * highHalf >= 400.0 + 2.0 * 19.83);
+    CHECK_NEAR(ex::gfx::SolverHalfExtentForBurst(0.4, 0.6), 1.8, 1e-9);
+
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
     if (!CreateDevice(device, context)) {

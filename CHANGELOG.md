@@ -30,6 +30,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   burst height for every charge; only the mushroom cloud rises with buoyancy.
   The slider also accepts the same 0.01-5000 m range as `settings.ini`, so a
   loaded value is no longer clamped to 400 m in the interface.
+- **High-fidelity bursts stay at the configured height** - the solver domain was
+  sized only from the fireball radius and then clamped the charge to its ceiling.
+  A 400 m burst therefore resolved its cloud around 120 m while the analytic
+  shock front sat at 400 m. The domain now includes the burst point and the
+  fireball above it, so the resolved cloud and the pressure front coincide.
 - **Bloom no longer lingers after rearm or restart** - the bloom mip chain is
   cleared when the simulation is rearmed (`R`, Rearm button) or restarted, so the
   previous explosion's glow disappears immediately instead of staying on screen.

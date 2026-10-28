@@ -1223,9 +1223,13 @@ EulerConfig Renderer::MakeEulerConfig(const sim::Simulation& simulation) const {
     config.resolution = std::clamp(simulation.Settings().solverResolution, 32, 512);
 
     const double fireball = std::max(blast.FireballMaxRadiusM(), 0.1);
-    // Scale the cube with the charge: the old 30 m cap made large charges use
-    // a tiny high-fidelity domain.
-    config.domainHalfExtent = std::clamp(3.0 * fireball, 1.0, 2000.0);
+    // The solver domain is [0, 2 * half] in y. It must contain the burst point
+    // and the fireball above it; sizing it only from the fireball radius used
+    // to clamp a high burst to the domain ceiling, so the resolved cloud sat
+    // hundreds of metres below the analytic shock front. Scale the cube with
+    // the charge and lift it to the configured height of burst.
+    config.domainHalfExtent = std::clamp(
+        SolverHalfExtentForBurst(charge.heightOfBurstM, fireball), 1.0, 3000.0);
     config.hemispherical = simulation.Settings().solverHemisphere;
     config.chargeMassKg = std::max(charge.tntMassKg, 1e-6);
     config.chargeEnergyJ = charge.EnergyJ();

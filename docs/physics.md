@@ -273,10 +273,13 @@ with the ideal-gas equation of state `p = (gamma - 1)(E - 0.5 rho |v|^2)` and
 ### Initial condition and boundaries
 
 The charge is deposited as a sphere of radius `max(R_charge, 3.5 dx)` with the TNT mass
-and energy, and `Y = 1` (soot density equal to the local gas density). For low bursts the
-part of the sphere below the ground is not present in the grid; the density and energy
-density are scaled by the ratio of the full sphere volume to the above-ground volume, so
-the total charge mass and energy are preserved instead of being truncated. The ground is a
+and energy, and `Y = 1` (soot density equal to the local gas density). The cubic domain
+is sized to contain both the burst point and the fireball above it, so a high burst is
+not clamped to the domain ceiling; at very high altitudes this necessarily coarsens the
+grid for a fixed resolution. For low bursts the part of the sphere below the ground is
+not present in the grid; the density and energy density are scaled by the ratio of the
+full sphere volume to the above-ground volume, so the total charge mass and energy are
+preserved instead of being truncated. The ground is a
 reflecting wall (mirrored ghost cell with reversed vertical momentum). The lateral and
 top boundaries use zero-gradient ghost cells plus an absorbing sponge over the outer 6 %
 of the domain that relaxes the state towards ambient, so outgoing waves do not reflect

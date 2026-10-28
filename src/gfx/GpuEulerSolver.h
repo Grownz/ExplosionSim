@@ -3,6 +3,7 @@
 #include <DirectXMath.h>
 #include <d3d11.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -10,6 +11,16 @@
 #include "sim/VolumeBaker.h"
 
 namespace ex::gfx {
+
+// Minimum cubic half extent that keeps a burst at `heightOfBurstM` and the
+// fireball above it inside the solver domain [0, 2 * half]. Sizing the cube
+// only from the fireball radius used to clamp high bursts to the domain
+// ceiling, so the resolved cloud sat far below the analytic shock front.
+inline double SolverHalfExtentForBurst(double heightOfBurstM, double fireballRadiusM) {
+    const double fireball = std::max(fireballRadiusM, 0.1);
+    return std::max(3.0 * fireball,
+                    0.5 * std::max(heightOfBurstM, 0.0) + 1.5 * fireball);
+}
 
 // Configuration of the GPU compressible-flow solver. The domain is a cube of
 // side 2 * domainHalfExtent with the ground at y = 0.
