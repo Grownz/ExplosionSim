@@ -146,6 +146,7 @@ add_executable(ExplosionSim WIN32
     src/app/App.cpp
     src/app/Changelog.cpp
     src/app/Settings.cpp
+    src/app/Splash.cpp
     src/gfx/GfxDevice.cpp
     src/gfx/Renderer.cpp
     src/gfx/Camera.cpp
@@ -172,6 +173,7 @@ target_link_libraries(ExplosionSim PRIVATE
     winmm
     winhttp
     windowscodecs
+    msimg32
     ole32
     shell32)
 

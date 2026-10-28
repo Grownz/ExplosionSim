@@ -59,6 +59,17 @@ town is generated only when the layout settings or the charge/environment change
 
 The UI reports the worker count and the measured bake time.
 
+## Startup
+
+A borderless GDI splash appears before the main window. It shows the hero image,
+the version, the current stage and a progress bar, and runs on its own thread so
+the bar keeps moving while the main thread creates the Direct3D device, compiles
+the shaders, initialises ImGui and prepares the simulation. The main window is
+created hidden and only shown when the splash closes, so no blank client area is
+visible during loading. Stages: window, Direct3D device, shader compilation,
+interface, simulation, city generation. The town itself is still generated on a
+worker thread; the in-app loading bar takes over once the splash closes.
+
 ## Frame loop
 
 ```

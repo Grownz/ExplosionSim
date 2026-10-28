@@ -1,6 +1,7 @@
 #include "app/App.h"
 
 #include "Version.h"
+#include "app/Splash.h"
 #include "core/Log.h"
 #include "gfx/ImageIO.h"
 #include "gfx/Shader.h"
@@ -158,12 +159,37 @@ int App::Run(const LaunchOptions& options) {
         return RunUpdateCheck();
     }
 
+    // The splash has to exist before the Direct3D device and ImGui, otherwise
+    // the main window stays blank while the shaders and the scene are prepared.
+    Splash splash;
+    bool splashVisible = false;
+    if (!options_.headless) {
+        splashVisible = splash.Show(gfx::ResolveAssetPath(L"assets\\splash.png"),
+                                    L"Explosion Simulator",
+                                    std::wstring(L"Version ") + EXPLOSION_VERSION_WSTRING);
+        if (splashVisible) {
+            splash.SetProgress(0.04f, L"Preparing window...");
+        }
+    }
+
     if (!options_.headless && !CreateMainWindow()) {
         return 1;
     }
 
+    if (splashVisible) {
+        splash.SetProgress(0.16f, L"Initializing Direct3D 11...");
+    }
     if (!InitializeGraphics()) {
         return 1;
+    }
+    if (splashVisible) {
+        splash.SetProgress(0.30f, L"Compiling shaders...");
+    }
+    if (!InitializeRenderer()) {
+        return 1;
+    }
+    if (splashVisible) {
+        splash.SetProgress(0.58f, L"Preparing simulation...");
     }
 
     if (settings_.simulation.gpuParticles && !renderer_.SupportsGpuParticles()) {
@@ -171,8 +197,14 @@ int App::Run(const LaunchOptions& options) {
         settings_.simulation.gpuParticles = false;
     }
 
+    if (splashVisible) {
+        splash.SetProgress(0.62f, L"Initializing interface...");
+    }
     if (!options_.headless && !InitializeImGui()) {
         return 1;
+    }
+    if (splashVisible) {
+        splash.SetProgress(0.72f, L"Preparing simulation...");
     }
 
     pool_ = std::make_unique<core::ThreadPool>();
@@ -181,6 +213,9 @@ int App::Run(const LaunchOptions& options) {
     simulation_.SetAsyncSceneGeneration(!options_.headless);
     simulation_.Initialize(settings_.simulation, *pool_, !options_.headless);
     FrameCamera();
+    if (splashVisible) {
+        splash.SetProgress(0.90f, L"Generating city...");
+    }
 
     const std::wstring changelogPath = gfx::ResolveAssetPath(L"CHANGELOG.md");
     if (!changelogPath.empty()) {
@@ -208,6 +243,14 @@ int App::Run(const LaunchOptions& options) {
     LogInfo("Simulation ready: %.4g kg TNT, %.2f m burst height, %d workers",
             settings_.simulation.chargeMassKg, settings_.simulation.heightOfBurstM,
             int(pool_->WorkerCount()));
+
+    if (splashVisible) {
+        splash.SetProgress(1.0f, L"Ready");
+        ShowWindow(window_, SW_SHOW);
+        UpdateWindow(window_);
+        splash.Close();
+        SetForegroundWindow(window_);
+    }
 
     if (!options_.headless) {
         timeBeginPeriod(1);
@@ -255,8 +298,8 @@ bool App::CreateMainWindow() {
     DwmSetWindowAttribute(window_, DWMWA_USE_IMMERSIVE_DARK_MODE, &darkMode, sizeof(darkMode));
 
     SetWindowTextW(window_, title.c_str());
-    ShowWindow(window_, SW_SHOW);
-    UpdateWindow(window_);
+    // The window is shown once the splash closes, so the user never sees a
+    // blank client area while the shaders and the scene are prepared.
     return true;
 }
 
@@ -269,11 +312,11 @@ bool App::InitializeGraphics() {
 
     camera_.SetViewport(graphics_.Width(), graphics_.Height());
     camera_.SetFovY(DirectX::XMConvertToRadians(48.0f));
-
-    if (!renderer_.Initialize(graphics_)) {
-        return false;
-    }
     return true;
+}
+
+bool App::InitializeRenderer() {
+    return renderer_.Initialize(graphics_);
 }
 
 bool App::InitializeImGui() {

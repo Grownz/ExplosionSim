@@ -6,6 +6,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Startup splash** - a borderless splash with the hero image, version, status
+  text and an animated progress bar appears immediately at launch. It runs on its
+  own thread, so the bar keeps moving while the Direct3D device, the shaders,
+  ImGui and the simulation are prepared. The main window is created hidden and
+  shown when the splash closes, so no blank window is visible during loading.
+
 ### Fixed
 
 - **Building chunks no longer spring apart** - a destroyed building used to break every

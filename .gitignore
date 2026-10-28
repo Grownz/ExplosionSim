@@ -21,6 +21,7 @@ CMakeUserPresets.json
 /screenshots/
 *.png
 !docs/screenshots/*.png
+!assets/splash.png
 *.log
 settings.ini
 imgui.ini

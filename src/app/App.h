@@ -66,6 +66,7 @@ public:
 private:
     bool CreateMainWindow();
     bool InitializeGraphics();
+    bool InitializeRenderer();
     bool InitializeImGui();
     void Shutdown();
 
