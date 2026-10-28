@@ -17,6 +17,8 @@ struct UpdateUiState {
     bool downloaded = false;
     bool failed = false;
     bool upToDate = false;
+    bool verified = false;
+    bool downloadFailed = false;
     std::string version;
     std::string notes;
     std::string error;

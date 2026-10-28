@@ -17,9 +17,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   notes, and a **Changelog** button at the bottom of the panel opens the full release
   history. `--check-updates` runs the check without a window, `--no-update-check` skips it
   for one run and `--version` prints the version.
+- **Update verification and proxy support** - the download is verified against the SHA-256
+  digest published by GitHub (or a `<zip>.sha256` asset), the updater verifies it again
+  before installing and checks the Authenticode signature of the new executable (unsigned
+  builds are accepted with a warning, invalid signatures abort). An optional HTTP proxy can
+  be configured in the Updates section, and failed checks/downloads show a retry action.
 
 ### Changed
 
+- The standalone updater was reduced from 328 KB to 251 KB by dropping miniz's deflate and
+  stdio paths, switching to Win32 file I/O and enabling size optimisation. It streams the
+  zip and hash with bounded 64 KB buffers.
 - The changelog viewer uses a font two points larger than the rest of the UI.
 
 ## [0.7.0] - 2026-10-27

@@ -323,18 +323,22 @@ powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 ```
 
 This builds the Release configuration and creates
-`build\ExplosionSim-0.7.0-win64.zip`, containing the executable, the shader assets and
-the documentation.
+`build\ExplosionSim-0.7.0-win64.zip` plus `ExplosionSim-0.7.0-win64.zip.sha256`, containing
+the executable, the updater, the shader assets and the documentation.
 
 ## Updates
 
 The app checks the GitHub releases API in the background once per day and shows a banner
 when a newer release is available. The Win64 zip is downloaded only on request to
 `%LOCALAPPDATA%\ExplosionSim\updates`. **Install and restart** replaces the executable and
-assets via a small helper, keeps `settings.ini` and rolls back on failure. The first start
-after an update shows the current release notes, and the **Changelog** button at the bottom
-of the control panel opens the full release history. `--no-update-check` skips the check for
-one run, `--check-updates` performs it without a window, and `--version` prints the version.
+assets via a small helper, keeps `settings.ini` and rolls back on failure. The download is
+verified against the SHA-256 digest published by GitHub; the helper verifies the checksum
+again and checks the Authenticode signature of the new executable (unsigned builds are
+accepted with a warning). An optional HTTP proxy can be set in the Updates section, and
+check/download failures show a retry action. The first start after an update shows the
+current release notes, and the **Changelog** button at the bottom of the control panel
+opens the full release history. `--no-update-check` skips the check for one run,
+`--check-updates` performs it without a window, and `--version` prints the version.
 
 ## Project layout
 ```

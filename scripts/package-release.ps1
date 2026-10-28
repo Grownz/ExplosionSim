@@ -42,4 +42,8 @@ if (Test-Path $archive) {
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $archive -CompressionLevel Optimal
 
 $sizeMb = [math]::Round((Get-Item $archive).Length / 1MB, 1)
-Write-Host "Created $archive ($sizeMb MB)"
+$hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+$hashFile = "$archive.sha256"
+Set-Content -Path $hashFile -Value "$hash  $(Split-Path $archive -Leaf)" -Encoding ascii
+Write-Host "SHA-256: $hash"
+Write-Host "Created $archive ($sizeMb MB) and $hashFile"

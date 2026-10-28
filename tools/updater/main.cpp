@@ -8,13 +8,15 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <softpub.h>
+#include <wintrust.h>
 
 #include "miniz.h"
+#include "update/Sha256.h"
 
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
-#include <fstream>
 #include <string>
 #include <vector>
 
@@ -22,7 +24,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-std::ofstream gLog;
+std::FILE* gLog = nullptr;
 
 std::string Narrow(const std::wstring& text) {
     if (text.empty()) {
@@ -41,8 +43,8 @@ std::string Narrow(const std::wstring& text) {
 
 void Log(const std::string& text) {
     if (gLog) {
-        gLog << text << "\n";
-        gLog.flush();
+        std::fprintf(gLog, "%s\n", text.c_str());
+        std::fflush(gLog);
     }
 }
 
@@ -61,6 +63,7 @@ struct Options {
     fs::path zip;
     fs::path target;
     std::wstring exeName = L"ExplosionSim.exe";
+    std::string sha256;
     bool restart = true;
 };
 
@@ -110,6 +113,13 @@ bool ParseOptions(Options& options, std::wstring& error) {
                 break;
             }
             options.exeName = value;
+        } else if (argument == L"--sha256") {
+            std::wstring value;
+            if (!next(value)) {
+                error = L"missing value for --sha256";
+                break;
+            }
+            options.sha256 = Narrow(value);
         } else if (argument == L"--no-restart") {
             options.restart = false;
         }
@@ -139,20 +149,28 @@ void WaitForProcess(DWORD pid) {
 }
 
 size_t ReadCallback(void* opaque, mz_uint64 offset, void* buffer, size_t size) {
-    auto* stream = static_cast<std::ifstream*>(opaque);
-    stream->clear();
-    stream->seekg(std::streamoff(offset));
-    if (!*stream) {
+    HANDLE file = static_cast<HANDLE>(opaque);
+    LARGE_INTEGER position{};
+    position.QuadPart = LONGLONG(offset);
+    if (!SetFilePointerEx(file, position, nullptr, FILE_BEGIN)) {
         return 0;
     }
-    stream->read(static_cast<char*>(buffer), std::streamsize(size));
-    return size_t(stream->gcount());
+    DWORD read = 0;
+    const DWORD request = size > 0xFFFFFFFFull ? 0xFFFFFFFFu : DWORD(size);
+    if (!ReadFile(file, buffer, request, &read, nullptr)) {
+        return 0;
+    }
+    return size_t(read);
 }
 
 size_t WriteCallback(void* opaque, mz_uint64, const void* buffer, size_t size) {
-    auto* stream = static_cast<std::ofstream*>(opaque);
-    stream->write(static_cast<const char*>(buffer), std::streamsize(size));
-    return stream->good() ? size : 0;
+    HANDLE file = static_cast<HANDLE>(opaque);
+    DWORD written = 0;
+    const DWORD request = size > 0xFFFFFFFFull ? 0xFFFFFFFFu : DWORD(size);
+    if (!WriteFile(file, buffer, request, &written, nullptr)) {
+        return 0;
+    }
+    return size_t(written);
 }
 
 bool IsSafeRelativePath(const fs::path& path) {
@@ -168,23 +186,24 @@ bool IsSafeRelativePath(const fs::path& path) {
 }
 
 bool ExtractZip(const fs::path& zipPath, const fs::path& staging, std::wstring& error) {
-    std::ifstream input(zipPath, std::ios::binary);
-    if (!input) {
+    HANDLE input = CreateFileW(zipPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (input == INVALID_HANDLE_VALUE) {
         error = L"cannot open the update zip";
         return false;
     }
-    input.seekg(0, std::ios::end);
-    const std::streamoff size = input.tellg();
-    input.seekg(0);
-    if (size <= 0) {
+    LARGE_INTEGER fileSize{};
+    if (!GetFileSizeEx(input, &fileSize) || fileSize.QuadPart <= 0) {
+        CloseHandle(input);
         error = L"the update zip is empty";
         return false;
     }
 
     mz_zip_archive archive{};
     archive.m_pRead = ReadCallback;
-    archive.m_pIO_opaque = &input;
-    if (!mz_zip_reader_init(&archive, mz_uint64(size), 0)) {
+    archive.m_pIO_opaque = input;
+    if (!mz_zip_reader_init(&archive, mz_uint64(fileSize.QuadPart), 0)) {
+        CloseHandle(input);
         error = L"the update zip is invalid";
         return false;
     }
@@ -214,20 +233,22 @@ bool ExtractZip(const fs::path& zipPath, const fs::path& staging, std::wstring& 
         }
         fs::create_directories(output.parent_path(), ec);
 
-        std::ofstream stream(output, std::ios::binary | std::ios::trunc);
-        if (!stream) {
+        HANDLE outputFile = CreateFileW(output.c_str(), GENERIC_WRITE, 0, nullptr,
+                                        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (outputFile == INVALID_HANDLE_VALUE) {
             error = L"cannot create " + output.wstring();
             ok = false;
             break;
         }
-        if (!mz_zip_reader_extract_to_callback(&archive, i, WriteCallback, &stream, 0)) {
+        if (!mz_zip_reader_extract_to_callback(&archive, i, WriteCallback, outputFile, 0)) {
             error = L"cannot extract " + output.wstring();
             ok = false;
         }
-        stream.close();
+        CloseHandle(outputFile);
     }
 
     mz_zip_reader_end(&archive);
+    CloseHandle(input);
     return ok;
 }
 
@@ -336,11 +357,47 @@ bool Relaunch(const Options& options) {
     return true;
 }
 
+bool VerifySignature(const fs::path& executable, std::wstring& error) {
+    WINTRUST_FILE_INFO fileInfo{};
+    fileInfo.cbStruct = sizeof(fileInfo);
+    fileInfo.pcwszFilePath = executable.c_str();
+
+    WINTRUST_DATA data{};
+    data.cbStruct = sizeof(data);
+    data.dwUIChoice = WTD_UI_NONE;
+    data.fdwRevocationChecks = WTD_REVOKE_NONE;
+    data.dwUnionChoice = WTD_CHOICE_FILE;
+    data.pFile = &fileInfo;
+    data.dwStateAction = WTD_STATEACTION_VERIFY;
+    data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
+
+    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    const LONG status = WinVerifyTrust(nullptr, &action, &data);
+
+    data.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust(nullptr, &action, &data);
+
+    if (status == ERROR_SUCCESS) {
+        return true;
+    }
+    // The project is currently unsigned. A missing signature is reported but
+    // not treated as a failure; an invalid signature is.
+    if (status == TRUST_E_NOSIGNATURE || status == TRUST_E_SUBJECT_FORM_UNKNOWN ||
+        status == TRUST_E_PROVIDER_UNKNOWN) {
+        Log("updater: the executable is unsigned; continuing");
+        return true;
+    }
+    error = L"the executable signature is invalid";
+    return false;
+}
+
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     const fs::path logPath = TempDirectory() / L"ExplosionSimUpdater.log";
-    gLog.open(logPath, std::ios::app);
+    if (_wfopen_s(&gLog, logPath.c_str(), L"a") != 0) {
+        gLog = nullptr;
+    }
     Log("updater: start");
 
     Options options;
@@ -358,6 +415,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 
     Log("updater: waiting for the application to exit");
     WaitForProcess(options.pid);
+
+    if (!options.sha256.empty()) {
+        Log("updater: verifying the SHA-256 digest");
+        const std::string actual = ex::update::Sha256FileHex(options.zip.wstring());
+        if (actual.empty() || _stricmp(actual.c_str(), options.sha256.c_str()) != 0) {
+            Log("updater: SHA-256 checksum mismatch");
+            relaunch();
+            return 7;
+        }
+    }
 
     const fs::path staging =
         TempDirectory() / (L"ExplosionSimUpdate-" + std::to_wstring(options.pid));
@@ -381,6 +448,13 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
         fs::remove_all(staging, ec);
         relaunch();
         return 5;
+    }
+
+    if (!VerifySignature(staging / options.exeName, error)) {
+        Log("updater: signature check failed: " + Narrow(error));
+        fs::remove_all(staging, ec);
+        relaunch();
+        return 8;
     }
 
     Log("updater: installing");

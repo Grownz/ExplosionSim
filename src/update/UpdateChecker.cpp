@@ -1,6 +1,7 @@
 #include "update/UpdateChecker.h"
 
 #include "core/Log.h"
+#include "update/Sha256.h"
 #include "update/Version.h"
 
 #include <nlohmann/json.hpp>
@@ -21,7 +22,7 @@ namespace ex::update {
 
 namespace {
 
-constexpr size_t kMaxApiResponse = 2 * 1024 * 1024;
+constexpr size_t kMaxApiResponse = 512 * 1024;
 
 struct WinHttpHandle {
     HINTERNET value = nullptr;
@@ -52,7 +53,19 @@ struct WinHttpHandle {
 };
 
 std::string WinHttpError(const char* what) {
-    return std::string(what) + " failed (WinHTTP error " + std::to_string(GetLastError()) + ")";
+    const DWORD code = GetLastError();
+    switch (code) {
+        case ERROR_WINHTTP_NAME_NOT_RESOLVED:
+            return std::string(what) + ": cannot resolve the host (offline?)";
+        case ERROR_WINHTTP_TIMEOUT:
+            return std::string(what) + ": the request timed out";
+        case ERROR_WINHTTP_CANNOT_CONNECT:
+            return std::string(what) + ": cannot connect (proxy or firewall?)";
+        case ERROR_WINHTTP_SECURE_FAILURE:
+            return std::string(what) + ": TLS certificate verification failed";
+        default:
+            return std::string(what) + " failed (WinHTTP error " + std::to_string(code) + ")";
+    }
 }
 
 std::wstring Widen(const std::string& text) {
@@ -71,6 +84,19 @@ std::wstring Widen(const std::string& text) {
 bool IsAllowedDownloadHost(const std::wstring& host) {
     return _wcsicmp(host.c_str(), L"github.com") == 0 ||
            _wcsicmp(host.c_str(), L"objects.githubusercontent.com") == 0;
+}
+
+std::wstring NormalizeProxy(const std::wstring& proxy) {
+    std::wstring value = proxy;
+    if (value.rfind(L"http://", 0) == 0) {
+        value.erase(0, 7);
+    } else if (value.rfind(L"https://", 0) == 0) {
+        value.erase(0, 8);
+    }
+    while (!value.empty() && value.back() == L'/') {
+        value.pop_back();
+    }
+    return value;
 }
 
 struct UrlParts {
@@ -97,10 +123,19 @@ bool CrackUrl(const std::wstring& url, UrlParts& parts) {
 
 bool OpenGetRequest(const std::wstring& host, const std::wstring& path,
                     const std::wstring& userAgent, bool githubHeaders,
-                    WinHttpHandle& session, WinHttpHandle& connect,
-                    WinHttpHandle& request, std::string& error) {
-    session = WinHttpHandle(WinHttpOpen(userAgent.c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                        WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
+                    const std::wstring& proxy, WinHttpHandle& session,
+                    WinHttpHandle& connect, WinHttpHandle& request, std::string& error) {
+    if (proxy.empty()) {
+        session = WinHttpHandle(WinHttpOpen(userAgent.c_str(),
+                                            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                            WINHTTP_NO_PROXY_NAME,
+                                            WINHTTP_NO_PROXY_BYPASS, 0));
+    } else {
+        const std::wstring namedProxy = NormalizeProxy(proxy);
+        session = WinHttpHandle(WinHttpOpen(userAgent.c_str(),
+                                            WINHTTP_ACCESS_TYPE_NAMED_PROXY,
+                                            namedProxy.c_str(), WINHTTP_NO_PROXY_BYPASS, 0));
+    }
     if (!session) {
         error = WinHttpError("WinHttpOpen");
         return false;
@@ -153,7 +188,17 @@ bool OpenGetRequest(const std::wstring& host, const std::wstring& path,
         return false;
     }
     if (status != 200) {
-        error = "HTTP " + std::to_string(status);
+        if (status == 403) {
+            error = "GitHub rate limit or access denied (HTTP 403)";
+        } else if (status == 404) {
+            error = "release not found (HTTP 404)";
+        } else if (status == 407) {
+            error = "proxy authentication required (HTTP 407)";
+        } else if (status >= 500) {
+            error = "GitHub is unavailable (HTTP " + std::to_string(status) + ")";
+        } else {
+            error = "HTTP " + std::to_string(status);
+        }
         return false;
     }
     return true;
@@ -273,6 +318,21 @@ bool ParseRelease(const std::string& body, const std::string& localVersion,
             error = "unexpected download URL";
             return false;
         }
+
+        // GitHub publishes the asset digest as "sha256:<hex>". Older releases
+        // may instead ship a <zip>.sha256 asset.
+        release.sha256 = NormalizeSha256(chosen->value("digest", ""));
+        const std::string checksumName = release.assetName + ".sha256";
+        for (const auto& asset : json["assets"]) {
+            if (!asset.is_object() || asset.value("name", "") != checksumName) {
+                continue;
+            }
+            const std::string url = asset.value("browser_download_url", "");
+            if (url.rfind("https://github.com/Grownz/ExplosionSim/releases/download/", 0) == 0) {
+                release.sha256Url = url;
+            }
+            break;
+        }
         return true;
     } catch (const std::exception& exception) {
         error = std::string("release parse failed: ") + exception.what();
@@ -291,28 +351,29 @@ UpdateChecker::~UpdateChecker() {
 }
 
 void UpdateChecker::CheckAsync(std::string localVersion, std::string skippedVersion,
-                               bool manual) {
+                               std::string proxy, bool manual) {
     {
         std::lock_guard lock(taskMutex_);
         if (taskPending_) {
             return;
         }
         task_ = [this, local = std::move(localVersion), skipped = std::move(skippedVersion),
-                 manual](std::stop_token token) {
-            CheckWorker(token, local, skipped, manual);
+                 proxy = std::move(proxy), manual](std::stop_token token) {
+            CheckWorker(token, local, skipped, proxy, manual);
         };
         taskPending_ = true;
     }
     taskCv_.notify_one();
 }
 
-void UpdateChecker::DownloadAsync(ReleaseInfo release, std::wstring targetPath) {
+void UpdateChecker::DownloadAsync(ReleaseInfo release, std::wstring targetPath,
+                                  std::string proxy) {
     cancelDownload_ = false;
     {
         std::lock_guard lock(taskMutex_);
-        task_ = [this, release = std::move(release),
-                 targetPath = std::move(targetPath)](std::stop_token token) {
-            DownloadWorker(token, release, targetPath);
+        task_ = [this, release = std::move(release), targetPath = std::move(targetPath),
+                 proxy = std::move(proxy)](std::stop_token token) {
+            DownloadWorker(token, release, targetPath, proxy);
         };
         taskPending_ = true;
     }
@@ -356,7 +417,7 @@ void UpdateChecker::WorkerLoop(std::stop_token token) {
 }
 
 void UpdateChecker::CheckWorker(std::stop_token token, std::string localVersion,
-                                std::string skippedVersion, bool manual) {
+                                std::string skippedVersion, std::string proxy, bool manual) {
     {
         std::lock_guard lock(mutex_);
         snapshot_ = Snapshot{};
@@ -369,8 +430,9 @@ void UpdateChecker::CheckWorker(std::stop_token token, std::string localVersion,
     WinHttpHandle request;
     std::string error;
     const std::wstring userAgent = L"ExplosionSim/" + Widen(localVersion);
+    const std::wstring wideProxy = Widen(proxy);
     if (!OpenGetRequest(L"api.github.com", L"/repos/Grownz/ExplosionSim/releases/latest",
-                        userAgent, true, session, connect, request, error)) {
+                        userAgent, true, wideProxy, session, connect, request, error)) {
         SetStatus(UpdateStatus::Failed, error);
         return;
     }
@@ -388,6 +450,29 @@ void UpdateChecker::CheckWorker(std::stop_token token, std::string localVersion,
         return;
     }
 
+    // Older releases may only publish a separate <zip>.sha256 asset.
+    if (release.sha256.empty() && !release.sha256Url.empty()) {
+        UrlParts parts;
+        if (CrackUrl(Widen(release.sha256Url), parts) && IsAllowedDownloadHost(parts.host)) {
+            WinHttpHandle checksumSession;
+            WinHttpHandle checksumConnect;
+            WinHttpHandle checksumRequest;
+            std::string checksumError;
+            if (OpenGetRequest(parts.host, parts.path, userAgent, false, wideProxy,
+                               checksumSession, checksumConnect, checksumRequest,
+                               checksumError)) {
+                std::string checksumBody;
+                if (ReadBody(checksumRequest.value, checksumBody, checksumError, token)) {
+                    release.sha256 = NormalizeSha256(checksumBody);
+                }
+            }
+        }
+        if (release.sha256.empty()) {
+            LogWarn("Update: no SHA-256 digest could be loaded for %s.",
+                    release.assetName.c_str());
+        }
+    }
+
     std::lock_guard lock(mutex_);
     snapshot_.release = release;
     snapshot_.status = isNewer ? UpdateStatus::Available : UpdateStatus::UpToDate;
@@ -396,7 +481,7 @@ void UpdateChecker::CheckWorker(std::stop_token token, std::string localVersion,
 }
 
 void UpdateChecker::DownloadWorker(std::stop_token token, const ReleaseInfo& release,
-                                   const std::wstring& targetPath) {
+                                   const std::wstring& targetPath, std::string proxy) {
     {
         std::lock_guard lock(mutex_);
         snapshot_.status = UpdateStatus::Downloading;
@@ -405,11 +490,14 @@ void UpdateChecker::DownloadWorker(std::stop_token token, const ReleaseInfo& rel
         snapshot_.total = release.assetSize;
         snapshot_.progress = 0.0f;
         snapshot_.error.clear();
+        snapshot_.verified = false;
+        snapshot_.downloadFailed = false;
     }
 
     UrlParts parts;
+    const std::wstring wideProxy = Widen(proxy);
     if (!CrackUrl(Widen(release.assetUrl), parts) || !IsAllowedDownloadHost(parts.host)) {
-        SetStatus(UpdateStatus::Failed, "unsupported download host");
+        SetStatus(UpdateStatus::Failed, "unsupported download host", true);
         return;
     }
 
@@ -417,9 +505,9 @@ void UpdateChecker::DownloadWorker(std::stop_token token, const ReleaseInfo& rel
     WinHttpHandle connect;
     WinHttpHandle request;
     std::string error;
-    if (!OpenGetRequest(parts.host, parts.path, L"ExplosionSim", false, session, connect,
-                        request, error)) {
-        SetStatus(UpdateStatus::Failed, error);
+    if (!OpenGetRequest(parts.host, parts.path, L"ExplosionSim", false, wideProxy, session,
+                        connect, request, error)) {
+        SetStatus(UpdateStatus::Failed, error, true);
         return;
     }
 
@@ -434,7 +522,7 @@ void UpdateChecker::DownloadWorker(std::stop_token token, const ReleaseInfo& rel
     part += L".part";
     std::ofstream file(part, std::ios::binary | std::ios::trunc);
     if (!file.is_open()) {
-        SetStatus(UpdateStatus::Failed, "cannot create the download file");
+        SetStatus(UpdateStatus::Failed, "cannot create the download file", true);
         return;
     }
 
@@ -478,20 +566,32 @@ void UpdateChecker::DownloadWorker(std::stop_token token, const ReleaseInfo& rel
 
     if (!ok) {
         std::filesystem::remove(part, ec);
-        SetStatus(cancelDownload_.load() ? UpdateStatus::Idle : UpdateStatus::Failed, error);
+        SetStatus(cancelDownload_.load() ? UpdateStatus::Idle : UpdateStatus::Failed, error,
+                  !cancelDownload_.load());
         return;
     }
     if (expected > 0 && downloaded != expected) {
         std::filesystem::remove(part, ec);
-        SetStatus(UpdateStatus::Failed, "incomplete download");
+        SetStatus(UpdateStatus::Failed, "incomplete download", true);
         return;
+    }
+    if (!release.sha256.empty()) {
+        const std::string actual = Sha256FileHex(part.wstring());
+        if (actual.empty() || actual != release.sha256) {
+            std::filesystem::remove(part, ec);
+            SetStatus(UpdateStatus::Failed, "SHA-256 checksum mismatch", true);
+            return;
+        }
+    } else {
+        LogWarn("Update: %s has no SHA-256 digest; the download is unverified.",
+                release.assetName.c_str());
     }
 
     std::filesystem::remove(target, ec);
     std::filesystem::rename(part, target, ec);
     if (ec) {
         std::filesystem::remove(part, ec);
-        SetStatus(UpdateStatus::Failed, "cannot finalise the download");
+        SetStatus(UpdateStatus::Failed, "cannot finalise the download", true);
         return;
     }
 
@@ -502,13 +602,15 @@ void UpdateChecker::DownloadWorker(std::stop_token token, const ReleaseInfo& rel
         snapshot_.total = expected > 0 ? expected : downloaded;
         snapshot_.progress = 1.0f;
         snapshot_.error.clear();
+        snapshot_.verified = !release.sha256.empty();
     }
 }
 
-void UpdateChecker::SetStatus(UpdateStatus status, std::string error) {
+void UpdateChecker::SetStatus(UpdateStatus status, std::string error, bool downloadFailed) {
     std::lock_guard lock(mutex_);
     snapshot_.status = status;
     snapshot_.error = std::move(error);
+    snapshot_.downloadFailed = downloadFailed;
 }
 
 void UpdateChecker::SetProgress(unsigned long long downloaded, unsigned long long total) {

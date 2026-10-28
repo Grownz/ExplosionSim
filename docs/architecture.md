@@ -443,6 +443,13 @@ to exit, extracts the zip with miniz, replaces the executable and assets, preser
 `settings.ini` and restores the previous files if the copy fails. The download host and
 asset name are validated.
 
+The downloaded zip is verified against the GitHub asset `digest` (or a `<zip>.sha256`
+asset) before it is renamed from `.part`. The helper verifies the zip hash again and runs
+`WinVerifyTrust` on the extracted executable: unsigned builds are accepted with a warning,
+invalid signatures abort. An optional HTTP proxy is passed to WinHTTP for the API check and
+the download. The helper uses Win32 file I/O, miniz without the deflate/stdio paths and
+size optimisation (~251 KB), and streams the zip and hash with bounded buffers.
+
 The changelog parser (`app::ParseChangelog`) reads the bundled `CHANGELOG.md`, splits it
 into release sections and provides the current release body. The first start after a
 version change opens the "What's new" modal; the footer button opens the full history.

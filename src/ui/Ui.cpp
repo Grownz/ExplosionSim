@@ -270,6 +270,11 @@ void DrawUpdateBanner(UiContext& context, UiActions& actions) {
         ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
         ImGui::TextWrapped("Version %s downloaded.", update.version.c_str());
         ImGui::PopStyleColor();
+        if (update.verified) {
+            ImGui::TextUnformatted("SHA-256 verified.");
+        } else {
+            ImGui::TextUnformatted("No checksum was published.");
+        }
         if (ImGui::Button("Install and restart##banner_install", ImVec2(-1.0f, 0.0f))) {
             actions.installUpdate = true;
         }
@@ -289,12 +294,30 @@ void DrawUpdates(UiContext& context, app::AppSettings& settings, UiActions& acti
     }
     ImGui::EndDisabled();
 
+    static char proxy[256] = {};
+    static bool proxyInitialized = false;
+    if (!proxyInitialized) {
+        std::snprintf(proxy, sizeof(proxy), "%s", settings.update.proxy.c_str());
+        proxyInitialized = true;
+    }
+    if (ImGui::InputText("HTTP proxy", proxy, sizeof(proxy))) {
+        settings.update.proxy = proxy;
+    }
+    Hint("Leave empty to use the system proxy. Applied to the next check or download.");
+
     if (update.checking) {
         ImGui::TextUnformatted("Checking GitHub for a newer release...");
     } else if (update.failed) {
         ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
-        ImGui::TextWrapped("Update check failed: %s", update.error.c_str());
+        ImGui::TextWrapped("Update failed: %s", update.error.c_str());
         ImGui::PopStyleColor();
+        if (update.downloadFailed) {
+            if (ImGui::Button("Retry download", ImVec2(-1.0f, 0.0f))) {
+                actions.downloadUpdate = true;
+            }
+        } else if (ImGui::Button("Retry check", ImVec2(-1.0f, 0.0f))) {
+            actions.checkForUpdates = true;
+        }
     } else if (update.upToDate) {
         ImGui::TextUnformatted("You are running the latest version.");
     }
@@ -316,7 +339,9 @@ void DrawUpdates(UiContext& context, app::AppSettings& settings, UiActions& acti
         }
     }
     if (update.downloaded) {
-        ImGui::TextUnformatted("The update zip is ready.");
+        ImGui::TextUnformatted(update.verified
+                                   ? "The update zip is verified (SHA-256)."
+                                   : "The update zip is ready (no checksum published).");
         if (ImGui::Button("Install and restart", ImVec2(-1.0f, 0.0f))) {
             actions.installUpdate = true;
         }

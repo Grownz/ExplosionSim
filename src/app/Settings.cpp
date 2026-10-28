@@ -223,6 +223,7 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
         ParseString(values, "lastSeenVersion", settings.update.lastSeenVersion);
     settings.update.skippedVersion =
         ParseString(values, "skippedVersion", settings.update.skippedVersion);
+    settings.update.proxy = ParseString(values, "proxy", settings.update.proxy);
     settings.update.lastCheckUnix =
         ParseLongLong(values, "lastCheckUnix", settings.update.lastCheckUnix);
 }
@@ -294,6 +295,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
            << "\n";
     stream << "lastSeenVersion=" << settings.update.lastSeenVersion << "\n";
     stream << "skippedVersion=" << settings.update.skippedVersion << "\n";
+    stream << "proxy=" << settings.update.proxy << "\n";
     stream << "lastCheckUnix=" << settings.update.lastCheckUnix << "\n";
 }
 

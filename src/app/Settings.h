@@ -11,6 +11,7 @@ struct UpdateSettings {
     bool checkForUpdates = true;
     std::string lastSeenVersion;
     std::string skippedVersion;
+    std::string proxy;
     long long lastCheckUnix = 0;
 };
 

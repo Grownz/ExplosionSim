@@ -69,7 +69,7 @@ private:
     int RunHeadless();
     int RunSolverBenchmark();
     int RunUpdateCheck();
-    bool StartUpdater(const std::wstring& zipPath);
+    bool StartUpdater(const std::wstring& zipPath, const std::string& sha256);
 
     void HandleCameraInput(float dt);
     void FrameCamera();

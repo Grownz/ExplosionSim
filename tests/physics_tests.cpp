@@ -12,6 +12,7 @@
 #include "sim/BlastModel.h"
 #include "sim/Simulation.h"
 #include "sim/VolumeBaker.h"
+#include "update/Sha256.h"
 #include "update/Version.h"
 
 #include <DirectXPackedVector.h>
@@ -1330,6 +1331,28 @@ void TestChangelogParsing() {
           std::string::npos);
 }
 
+void TestSha256() {
+    using ex::update::IsSha256Hex;
+    using ex::update::NormalizeSha256;
+    using ex::update::Sha256Hex;
+
+    CHECK(Sha256Hex("", 0) ==
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    CHECK(Sha256Hex("abc", 3) ==
+          "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    CHECK(Sha256Hex("The quick brown fox jumps over the lazy dog", 43) ==
+          "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592");
+
+    const std::string digest =
+        "af7ad64aebd625df0f3edbb878568d725525c39336149adf2ac3852212e3015d";
+    CHECK(IsSha256Hex(digest));
+    CHECK(NormalizeSha256("sha256:" + digest) == digest);
+    CHECK(NormalizeSha256(digest + "  ExplosionSim-0.7.0-win64.zip") == digest);
+    CHECK(NormalizeSha256("sha256:" + digest + "  file.zip") == digest);
+    CHECK(NormalizeSha256("not a digest").empty());
+    CHECK(NormalizeSha256(digest.substr(1)).empty());
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -1369,6 +1392,7 @@ int main() {
     RUN(TestSettingsRoundTrip);
     RUN(TestVersionComparison);
     RUN(TestChangelogParsing);
+    RUN(TestSha256);
     RUN(TestFuseAndDetonation);
     RUN(TestRearmHoldsFuse);
 #undef RUN

@@ -26,6 +26,8 @@ struct ReleaseInfo {
     std::string notes;     // release body (markdown)
     std::string assetName; // "ExplosionSim-0.8.0-win64.zip"
     std::string assetUrl;
+    std::string sha256;    // normalized lower-case digest, may be empty
+    std::string sha256Url; // optional <zip>.sha256 asset
     std::string publishedAt;
     unsigned long long assetSize = 0;
 };
@@ -42,6 +44,8 @@ public:
         unsigned long long total = 0;
         float progress = 0.0f;
         bool manual = false;
+        bool verified = false;
+        bool downloadFailed = false;
     };
 
     UpdateChecker();
@@ -51,11 +55,14 @@ public:
     UpdateChecker& operator=(const UpdateChecker&) = delete;
 
     // Queues a check of the latest GitHub release. `skippedVersion` suppresses
-    // an update the user chose to ignore. `manual` is reported back to the UI.
-    void CheckAsync(std::string localVersion, std::string skippedVersion, bool manual);
+    // an update the user chose to ignore. `proxy` is an optional host:port;
+    // empty uses the system proxy. `manual` is reported back to the UI.
+    void CheckAsync(std::string localVersion, std::string skippedVersion,
+                    std::string proxy, bool manual);
 
-    // Queues a download of the release asset to `targetPath`.
-    void DownloadAsync(ReleaseInfo release, std::wstring targetPath);
+    // Queues a download of the release asset to `targetPath`. When the release
+    // publishes a SHA-256 digest it is verified before the file is finalised.
+    void DownloadAsync(ReleaseInfo release, std::wstring targetPath, std::string proxy);
     void CancelDownload();
 
     Snapshot GetSnapshot() const;
@@ -64,10 +71,11 @@ public:
 private:
     void WorkerLoop(std::stop_token token);
     void CheckWorker(std::stop_token token, std::string localVersion,
-                     std::string skippedVersion, bool manual);
+                     std::string skippedVersion, std::string proxy, bool manual);
     void DownloadWorker(std::stop_token token, const ReleaseInfo& release,
-                        const std::wstring& targetPath);
-    void SetStatus(UpdateStatus status, std::string error = {});
+                        const std::wstring& targetPath, std::string proxy);
+    void SetStatus(UpdateStatus status, std::string error = {},
+                   bool downloadFailed = false);
     void SetProgress(unsigned long long downloaded, unsigned long long total);
 
     mutable std::mutex mutex_;

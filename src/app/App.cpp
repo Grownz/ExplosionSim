@@ -188,7 +188,8 @@ int App::Run(const LaunchOptions& options) {
         const long long now = UnixNow();
         if (now - settings_.update.lastCheckUnix >= 24 * 3600) {
             updateChecker_.CheckAsync(EXPLOSION_VERSION_STRING,
-                                      settings_.update.skippedVersion, false);
+                                      settings_.update.skippedVersion,
+                                      settings_.update.proxy, false);
             settings_.update.lastCheckUnix = now;
         }
     }
@@ -562,6 +563,8 @@ int App::RunInteractive() {
         updateState.progress = updateSnapshot.progress;
         updateState.downloadedBytes = updateSnapshot.downloaded;
         updateState.totalBytes = updateSnapshot.total;
+        updateState.verified = updateSnapshot.verified;
+        updateState.downloadFailed = updateSnapshot.downloadFailed;
         context.update = updateState;
         context.changelogText = &changelogText_;
         context.currentReleaseNotes = &currentReleaseNotes_;
@@ -615,7 +618,8 @@ int App::RunInteractive() {
 
         if (actions.checkForUpdates) {
             updateChecker_.CheckAsync(EXPLOSION_VERSION_STRING,
-                                      settings_.update.skippedVersion, true);
+                                      settings_.update.skippedVersion,
+                                      settings_.update.proxy, true);
             settings_.update.lastCheckUnix = UnixNow();
         }
         if (actions.downloadUpdate && !updateSnapshot.release.assetUrl.empty()) {
@@ -623,7 +627,8 @@ int App::RunInteractive() {
             const std::wstring fileName(updateSnapshot.release.assetName.begin(),
                                         updateSnapshot.release.assetName.end());
             updateChecker_.DownloadAsync(updateSnapshot.release,
-                                         directory + L"\\" + fileName);
+                                         directory + L"\\" + fileName,
+                                         settings_.update.proxy);
         }
         if (actions.cancelDownload) {
             updateChecker_.CancelDownload();
@@ -637,7 +642,7 @@ int App::RunInteractive() {
             const std::wstring directory = UpdateDownloadDirectory();
             const std::wstring fileName(updateSnapshot.release.assetName.begin(),
                                         updateSnapshot.release.assetName.end());
-            if (StartUpdater(directory + L"\\" + fileName)) {
+            if (StartUpdater(directory + L"\\" + fileName, updateSnapshot.release.sha256)) {
                 running_ = false;
             }
         }
@@ -684,7 +689,8 @@ int App::RunInteractive() {
 
 int App::RunUpdateCheck() {
     update::UpdateChecker checker;
-    checker.CheckAsync(EXPLOSION_VERSION_STRING, settings_.update.skippedVersion, true);
+    checker.CheckAsync(EXPLOSION_VERSION_STRING, settings_.update.skippedVersion,
+                       settings_.update.proxy, true);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
     while (std::chrono::steady_clock::now() < deadline) {
         const update::UpdateChecker::Snapshot snapshot = checker.GetSnapshot();
@@ -713,7 +719,7 @@ int App::RunUpdateCheck() {
     return 1;
 }
 
-bool App::StartUpdater(const std::wstring& zipPath) {
+bool App::StartUpdater(const std::wstring& zipPath, const std::string& sha256) {
     const std::wstring updater = gfx::ResolveAssetPath(L"ExplosionSimUpdater.exe");
     if (updater.empty()) {
         LogError("Update helper not found next to the executable.");
@@ -741,6 +747,9 @@ bool App::StartUpdater(const std::wstring& zipPath) {
                            std::to_wstring(GetCurrentProcessId()) + L" --zip \"" +
                            zipPath + L"\" --target \"" + target +
                            L"\" --exe ExplosionSim.exe";
+    if (!sha256.empty()) {
+        command += L" --sha256 " + std::wstring(sha256.begin(), sha256.end());
+    }
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process{};

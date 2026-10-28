@@ -120,17 +120,20 @@ endif()
 # ---------------------------------------------------------------------------
 add_library(miniz STATIC
     third_party/miniz/miniz.c
-    third_party/miniz/miniz_tdef.c
     third_party/miniz/miniz_tinfl.c
     third_party/miniz/miniz_zip.c)
 target_include_directories(miniz PUBLIC third_party/miniz)
-target_compile_options(miniz PRIVATE /W3)
+target_compile_definitions(miniz PRIVATE MINIZ_NO_DEFLATE_APIS MINIZ_NO_STDIO)
+target_compile_options(miniz PRIVATE /W3 /O1 /GL)
 
 add_executable(ExplosionSimUpdater WIN32
-    tools/updater/main.cpp)
-target_link_libraries(ExplosionSimUpdater PRIVATE miniz shell32)
+    tools/updater/main.cpp
+    src/update/Sha256.cpp)
+target_include_directories(ExplosionSimUpdater PRIVATE src)
+target_link_libraries(ExplosionSimUpdater PRIVATE miniz shell32 bcrypt wintrust crypt32)
 target_compile_definitions(ExplosionSimUpdater PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
-target_compile_options(ExplosionSimUpdater PRIVATE /W4 /permissive- /utf-8)
+target_compile_options(ExplosionSimUpdater PRIVATE /W4 /permissive- /utf-8 /O1 /Gy /GL)
+target_link_options(ExplosionSimUpdater PRIVATE /LTCG /OPT:REF /OPT:ICF)
 if(EXPLOSION_WARNINGS_AS_ERRORS)
     target_compile_options(ExplosionSimUpdater PRIVATE /WX)
 endif()
@@ -151,6 +154,7 @@ add_executable(ExplosionSim WIN32
     src/gfx/GpuEulerSolver.cpp
     src/gfx/SceneRenderer.cpp
     src/ui/Ui.cpp
+    src/update/Sha256.cpp
     src/update/UpdateChecker.cpp
     src/update/Version.cpp
     ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc)
@@ -160,6 +164,7 @@ target_link_libraries(ExplosionSim PRIVATE
     explosion_core
     imgui
     nlohmann_json::nlohmann_json
+    bcrypt
     d3d11
     dxgi
     d3dcompiler
@@ -200,8 +205,9 @@ if(EXPLOSION_BUILD_TESTS)
         tests/physics_tests.cpp
         src/app/Changelog.cpp
         src/app/Settings.cpp
+        src/update/Sha256.cpp
         src/update/Version.cpp)
-    target_link_libraries(explosion_tests PRIVATE explosion_core)
+    target_link_libraries(explosion_tests PRIVATE explosion_core bcrypt)
     target_compile_definitions(explosion_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
     target_compile_options(explosion_tests PRIVATE /W4 /permissive- /utf-8)
     if(EXPLOSION_WARNINGS_AS_ERRORS)
