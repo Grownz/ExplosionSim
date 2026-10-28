@@ -6,6 +6,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Building chunks no longer spring apart** - a destroyed building used to break every
+  overstressed joint in one frame and give each chunk a radial explosion impulse plus a
+  spin around the object centre. The chunks now detach from the passing wave: joint
+  failures are staggered from the blast-facing side to the far side (0.03-0.26 s) plus a
+  structural delay for weakly loaded joints, and a detached chunk inherits the local blast
+  impulse (outward, small) instead of an explosion. The support flood fill runs once per
+  affected object per frame, so the staggered collapse stays cheap.
+
 ### Changed
 
 - **View-independent high-fidelity lighting** - the solver precomputes a 64³

@@ -1066,10 +1066,13 @@ void Scene::StartCollapse(SceneObject& object) {
 
     const float radialLength = std::sqrt(object.position.x * object.position.x +
                                          object.position.z * object.position.z);
-    const float burstX = -object.position.x / std::max(radialLength, 1e-3f);
-    const float burstZ = -object.position.z / std::max(radialLength, 1e-3f);
+    // Outward wave direction: the blast-facing side of the building is hit
+    // first, the far side last.
+    const float outX = radialLength > 1e-3f ? object.position.x / radialLength : 1.0f;
+    const float outZ = radialLength > 1e-3f ? object.position.z / radialLength : 0.0f;
 
     std::vector<float> load(count, 0.0f);
+    std::vector<float> along(count, 0.5f);
     for (int i = 0; i < count; ++i) {
         const SceneChunk& chunk = object.chunks[i];
         const float heightFraction =
@@ -1077,15 +1080,20 @@ void Scene::StartCollapse(SceneObject& object) {
         const float dx = chunk.center.x - object.position.x;
         const float dz = chunk.center.z - object.position.z;
         const float horizontal = std::sqrt(dx * dx + dz * dz);
-        float facing = 0.5f;
-        if (horizontal > 1e-3f) {
-            facing = 0.5f + 0.5f * ((dx * burstX + dz * burstZ) / horizontal);
-        }
+        // 0 at the blast-facing side, 1 at the far side.
+        along[i] = horizontal > 1e-3f
+                       ? std::clamp(0.5f + 0.5f * ((dx * outX + dz * outZ) / horizontal),
+                                    0.0f, 1.0f)
+                       : 0.5f;
+        const float facing = 1.0f - along[i];
         load[i] = peak * (0.65f + 0.35f * heightFraction) * (0.70f + 0.60f * facing);
     }
 
-    // Stagger the joint failures: strongly loaded joints break almost at once,
-    // lightly loaded ones follow over the next few tenths of a second.
+    // Stagger the joint failures along the wave path. Even overstressed joints
+    // are scheduled instead of broken in this frame: otherwise a destroyed
+    // building detaches every chunk at once and appears to spring apart. The
+    // blast-facing side fails first, then the wave crosses the building, and
+    // weakly loaded joints follow over the next few tenths of a second.
     const int objectIndex = int(&object - objects_.data());
     for (int i = 0; i < count; ++i) {
         const SceneChunk& chunk = object.chunks[i];
@@ -1096,17 +1104,19 @@ void Scene::StartCollapse(SceneObject& object) {
             }
             const float stress = 0.5f * (load[i] + load[j]);
             const float ratio = stress / jointStrength;
-            if (ratio >= 1.0f) {
-                // Overstressed joints fail immediately; the flood fill below
-                // detaches whatever they were carrying.
-                BreakJoint(object, i, j);
-                continue;
-            }
             if (ratio < 0.15f) {
                 continue;
             }
+            const float jointAlong = 0.5f * (along[i] + along[j]);
+            const float jointHeight =
+                std::clamp(0.5f * (chunk.center.y + object.chunks[j].center.y) /
+                               std::max(object.size.y, 0.1f),
+                           0.0f, 1.0f);
+            const float waveDelay = 0.03f + 0.15f * jointAlong + 0.08f * jointHeight;
+            const float structuralDelay =
+                ratio >= 1.0f ? 0.0f : 0.35f * (1.0f - ratio);
             PendingJointFailure failure;
-            failure.time = time_ + 0.05 + 0.45 * (1.0 - std::min(ratio, 1.0f));
+            failure.time = time_ + waveDelay + structuralDelay;
             failure.objectIndex = objectIndex;
             failure.chunkA = i;
             failure.chunkB = j;
@@ -1193,22 +1203,30 @@ void Scene::DetachChunk(SceneObject& object, int index) {
     chunk.detached = true;
     object.collapsed = true;
 
-    const float peak = object.peakOverpressurePa;
+    // The chunk is torn off by the passing wave, not blown out of the
+    // building. Give it the wave velocity at the object (outward) and let
+    // gravity, contacts and the remaining joints separate the pieces. The old
+    // code added a radial "explosion" impulse and a spin around the object
+    // centre, which made the chunks spring apart instead of crumbling.
     const bool destroyed = object.damage == DamageState::Destroyed;
     const float radialLength = std::sqrt(object.position.x * object.position.x +
                                          object.position.z * object.position.z);
-    const float burstX = -object.position.x / std::max(radialLength, 1e-3f);
-    const float burstZ = -object.position.z / std::max(radialLength, 1e-3f);
-    const float baseSpeed =
-        std::clamp(peak / 8000.0f, 1.0f, 12.0f) * (destroyed ? 1.0f : 0.6f);
+    const float waveX = radialLength > 1e-3f ? object.position.x / radialLength : 1.0f;
+    const float waveZ = radialLength > 1e-3f ? object.position.z / radialLength : 0.0f;
+    // Impulse-driven: heavy masonry is barely pushed, light debris more. The
+    // shock reflection adds a small upward component at ground level.
+    const float waveSpeed =
+        std::clamp(object.impulsePaS / 700.0f, 0.5f, 6.0f) * (destroyed ? 1.0f : 0.6f);
     const float volume = chunk.volume > 0.0f
                              ? chunk.volume
                              : 8.0f * chunk.half.x * chunk.half.y * chunk.half.z;
     const float mass = std::clamp(volume * 350.0f, 80.0f, 15000.0f);
-    const DirectX::XMFLOAT3 velocity(burstX * baseSpeed * 0.8f, baseSpeed * 0.25f,
-                                     burstZ * baseSpeed * 0.8f);
-    const DirectX::XMFLOAT3 angular(chunk.center.x * 0.08f, chunk.center.z * 0.08f,
-                                    chunk.center.y * 0.05f);
+    const DirectX::XMFLOAT3 velocity(waveX * waveSpeed, waveSpeed * 0.12f,
+                                     waveZ * waveSpeed);
+    // A small, deterministic tumble so the pieces do not fall like rigid
+    // blocks, but nothing that reads as an outward blast.
+    const float spin = ((object.id + uint32_t(index)) & 1u) ? 0.45f : -0.45f;
+    const DirectX::XMFLOAT3 angular(spin, spin * 0.4f, -spin);
 
     if (chunk.bodyIndex >= 0) {
         physics_.SetBodyDynamic(chunk.bodyIndex, mass, velocity, angular);
@@ -1268,6 +1286,8 @@ void Scene::RegisterStructureBodies(SceneObject& object,
 }
 
 void Scene::ProcessJointFailures() {
+    std::vector<uint8_t> dirty(objects_.size(), 0);
+    bool anyFailure = false;
     for (size_t i = 0; i < pendingFailures_.size();) {
         if (pendingFailures_[i].time > time_) {
             ++i;
@@ -1282,7 +1302,18 @@ void Scene::ProcessJointFailures() {
         }
         SceneObject& object = objects_[failure.objectIndex];
         BreakJoint(object, failure.chunkA, failure.chunkB);
-        UpdateSupport(object);
+        dirty[size_t(failure.objectIndex)] = 1;
+        anyFailure = true;
+    }
+    if (!anyFailure) {
+        return;
+    }
+    // One support flood fill per affected object instead of one per failed
+    // joint: the collapse can now break hundreds of joints per frame.
+    for (size_t i = 0; i < objects_.size(); ++i) {
+        if (dirty[i]) {
+            UpdateSupport(objects_[i]);
+        }
     }
 }
 

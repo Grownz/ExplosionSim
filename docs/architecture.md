@@ -363,10 +363,14 @@ colour and keeps the building-space facade coordinates, and only the semi-transp
 fire effects overlay them.
 
 Collapse is progressive. Each chunk edge carries a joint; the blast load sets a failure
-time (strongly loaded joints fail almost immediately, the rest over the next few tenths of
-a second). A priority list of pending failures is processed every update: the joint is
-broken, the support graph is flood-filled again from the ground, and only the chunks that
-lost their connection detach. Chunks that are still standing are registered as static
+time, staggered along the wave path from the blast-facing side to the far side (0.03-0.26 s)
+plus a structural term for weakly loaded joints (up to ~0.6 s). Even overstressed joints are
+scheduled instead of broken in the same frame, so a destroyed building crumbles instead of
+detaching every chunk at once. A priority list of pending failures is processed every
+update: the joints are broken, the support graph is flood-filled once per affected object,
+and only the chunks that lost their connection detach. Detached chunks inherit the local
+wave impulse (outward, small) rather than a radial explosion, so they fall and pile up
+instead of springing apart. Chunks that are still standing are registered as static
 collision boxes, so debris piles up against the remaining structure; a heavy impact
 reports a contact impulse back to the scene, which damages the struck chunk's joints and
 can start a local cascade.

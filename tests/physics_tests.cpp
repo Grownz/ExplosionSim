@@ -451,14 +451,10 @@ void TestSceneDamage() {
     scene.Update(model, 10.0f);
 
     int damaged = 0;
-    int collapsed = 0;
     for (const ex::scene::SceneObject& object : scene.Objects()) {
         CHECK(object.resolved);
         if (object.damage != ex::scene::DamageState::Intact) {
             ++damaged;
-        }
-        if (object.collapsed) {
-            ++collapsed;
         }
         if (object.damage == ex::scene::DamageState::Destroyed) {
             CHECK(object.damageAmount > 0.9f);
@@ -466,13 +462,23 @@ void TestSceneDamage() {
     }
 
     CHECK(damaged > 0);
-    CHECK(collapsed > 0);
 
     const std::vector<ex::scene::SceneDebrisSpawn> spawns = scene.ConsumeDebrisSpawns();
     CHECK(!spawns.empty());
 
     scene.Update(model, 0.1f);
     CHECK(scene.ConsumeDebrisSpawns().empty());
+
+    // Joint failures are staggered along the wave path (blast-facing side
+    // first), so the collapse runs over the next few tenths of a second.
+    scene.Update(model, 1.0f);
+    int collapsed = 0;
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        if (object.collapsed) {
+            ++collapsed;
+        }
+    }
+    CHECK(collapsed > 0);
 
     // A small charge must leave the outer town intact (P-I thresholds).
     Charge light{};
