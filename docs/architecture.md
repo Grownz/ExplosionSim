@@ -428,6 +428,24 @@ the debris layout are not guaranteed to be bit-identical.
   occasional bake spikes when both run in the same frame. The bake is deliberately
   throttled and skipped while another bake is in flight.
 
+## Updates
+
+`update::UpdateChecker` owns one worker thread. It queries the GitHub releases API
+(`/repos/Grownz/ExplosionSim/releases/latest`) with WinHTTP, parses the response with
+nlohmann/json, compares the semantic version against `EXPLOSION_VERSION_STRING` and exposes
+a snapshot that the UI polls every frame. The automatic check runs at most once per 24
+hours (`lastCheckUnix` in `settings.ini`); a manual check bypasses the cache.
+
+Downloads are user-initiated. The Win64 zip is written to
+`%LOCALAPPDATA%\ExplosionSim\updates` with progress and cancel support; it is not executed
+or installed automatically. The download host and asset name are validated.
+
+The changelog parser (`app::ParseChangelog`) reads the bundled `CHANGELOG.md`, splits it
+into release sections and provides the current release body. The first start after a
+version change opens the "What's new" modal; the footer button opens the full history.
+The Markdown subset renderer in `Ui.cpp` draws headings, bullets, inline code and tables
+directly with ImGui.
+
 ## Extending
 
 The volume field is produced in `VolumeBaker::BakeRange`, which fills the RGBA texture

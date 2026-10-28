@@ -79,6 +79,16 @@ FetchContent_Declare(jolt
     SOURCE_SUBDIR Build)
 FetchContent_MakeAvailable(jolt)
 
+# nlohmann/json (MIT) parses the GitHub releases API response. It is header-only
+# and only used by the update checker.
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(nlohmann_json
+    URL https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.zip
+    URL_HASH SHA256=04022B05D806EB5FF73023C280B68697D12B93E1B7267A0B22A1A39EC7578069
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # Keep the project standard explicit after adding the third-party subproject.
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -111,6 +121,7 @@ endif()
 add_executable(ExplosionSim WIN32
     src/main.cpp
     src/app/App.cpp
+    src/app/Changelog.cpp
     src/app/Settings.cpp
     src/gfx/GfxDevice.cpp
     src/gfx/Renderer.cpp
@@ -120,17 +131,21 @@ add_executable(ExplosionSim WIN32
     src/gfx/GpuEulerSolver.cpp
     src/gfx/SceneRenderer.cpp
     src/ui/Ui.cpp
+    src/update/UpdateChecker.cpp
+    src/update/Version.cpp
     ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc)
 
 target_include_directories(ExplosionSim PRIVATE src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(ExplosionSim PRIVATE
     explosion_core
     imgui
+    nlohmann_json::nlohmann_json
     d3d11
     dxgi
     d3dcompiler
     dwmapi
     winmm
+    winhttp
     windowscodecs
     ole32
     shell32)
@@ -146,7 +161,10 @@ add_custom_command(TARGET ExplosionSim POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/assets
             $<TARGET_FILE_DIR:ExplosionSim>/assets
-    COMMENT "Copying assets next to the executable")
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${CMAKE_SOURCE_DIR}/CHANGELOG.md
+            $<TARGET_FILE_DIR:ExplosionSim>/CHANGELOG.md
+    COMMENT "Copying assets and changelog next to the executable")
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -155,7 +173,9 @@ if(EXPLOSION_BUILD_TESTS)
     enable_testing()
     add_executable(explosion_tests
         tests/physics_tests.cpp
-        src/app/Settings.cpp)
+        src/app/Changelog.cpp
+        src/app/Settings.cpp
+        src/update/Version.cpp)
     target_link_libraries(explosion_tests PRIVATE explosion_core)
     target_compile_definitions(explosion_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
     target_compile_options(explosion_tests PRIVATE /W4 /permissive- /utf-8)

@@ -152,6 +152,9 @@ terrain.
 --benchmark           render frames offscreen and print timing
 --frames <count>      number of benchmark frames (default 120)
 --solver-benchmark    step the GPU solver only and print per-pass GPU timings
+--no-update-check     skip the GitHub update check for this run
+--check-updates       check GitHub for a newer release and exit
+--version             print the version and exit
 --high-fidelity       use the GPU Euler solver for the volume
 --solver-resolution   solver grid resolution (64, 96, 128, 192, 256, 512)
 --solver-steps        max solver steps per frame (default 96)
@@ -322,6 +325,15 @@ powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
 This builds the Release configuration and creates
 `build\ExplosionSim-0.7.0-win64.zip`, containing the executable, the shader assets and
 the documentation.
+
+## Updates
+
+The app checks the GitHub releases API in the background once per day and shows a banner
+when a newer release is available. The Win64 zip is downloaded only on request to
+`%LOCALAPPDATA%\ExplosionSim\updates`; it is not installed automatically. The first start
+after an update shows the current release notes, and the **Changelog** button at the bottom
+of the control panel opens the full release history. `--no-update-check` skips the check for
+one run, `--check-updates` performs it without a window, and `--version` prints the version.
 
 ## Project layout
 ```

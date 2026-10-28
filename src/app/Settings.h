@@ -7,9 +7,17 @@
 
 namespace ex::app {
 
+struct UpdateSettings {
+    bool checkForUpdates = true;
+    std::string lastSeenVersion;
+    std::string skippedVersion;
+    long long lastCheckUnix = 0;
+};
+
 struct AppSettings {
     sim::SimulationSettings simulation{};
     gfx::RenderSettings render{};
+    UpdateSettings update{};
     bool paused = false;
     bool showUi = true;
     bool showOverlays = true;

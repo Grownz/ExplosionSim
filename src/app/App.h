@@ -4,13 +4,16 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "app/Changelog.h"
 #include "app/Settings.h"
 #include "core/ThreadPool.h"
 #include "gfx/Camera.h"
 #include "gfx/GfxDevice.h"
 #include "gfx/Renderer.h"
 #include "sim/Simulation.h"
+#include "update/UpdateChecker.h"
 
 struct LaunchOptions {
     std::wstring screenshotPath;
@@ -27,6 +30,8 @@ struct LaunchOptions {
     bool benchmark = false;
     int benchmarkFrames = 120;
     bool solverBenchmark = false;
+    bool noUpdateCheck = false;
+    bool checkUpdatesNow = false;
     bool headless = false;
     bool highFidelity = false;
     bool reducedOrder = false;
@@ -63,6 +68,7 @@ private:
     int RunInteractive();
     int RunHeadless();
     int RunSolverBenchmark();
+    int RunUpdateCheck();
 
     void HandleCameraInput(float dt);
     void FrameCamera();
@@ -94,6 +100,12 @@ private:
     int statFrames_ = 0;
     int screenshotCounter_ = 0;
     bool sceneFramed_ = false;
+
+    update::UpdateChecker updateChecker_;
+    std::string changelogText_;
+    std::vector<ChangelogSection> changelogSections_;
+    std::string currentReleaseNotes_;
+    bool showWhatsNew_ = false;
 };
 
 } // namespace ex::app

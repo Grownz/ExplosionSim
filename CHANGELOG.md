@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Update check and changelog viewer** - the app checks the GitHub releases API in the
+  background once per day and shows a banner when a newer release is available. The Win64
+  zip is downloaded only on request (to `%LOCALAPPDATA%\ExplosionSim\updates`), not
+  installed automatically. The first start after an update shows the current release notes,
+  and a **Changelog** button at the bottom of the panel opens the full release history.
+  `--check-updates` runs the check without a window, `--no-update-check` skips it for one
+  run and `--version` prints the version.
+
 ## [0.7.0] - 2026-10-27
 
 This performance release cuts the cost of the two heaviest systems since 0.6.0: the
@@ -506,6 +518,7 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.7.0...HEAD
 [0.7.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.6.0
 [0.5.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.5

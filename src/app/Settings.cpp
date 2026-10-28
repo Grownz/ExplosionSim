@@ -80,6 +80,25 @@ bool ParseBool(const std::map<std::string, std::string>& values, const char* key
     return it == values.end() ? fallback : ParseBool(it->second, fallback);
 }
 
+std::string ParseString(const std::map<std::string, std::string>& values, const char* key,
+                        const std::string& fallback) {
+    const auto it = values.find(key);
+    return it == values.end() ? fallback : it->second;
+}
+
+long long ParseLongLong(const std::map<std::string, std::string>& values, const char* key,
+                        long long fallback) {
+    const auto it = values.find(key);
+    if (it == values.end()) {
+        return fallback;
+    }
+    try {
+        return std::stoll(it->second);
+    } catch (...) {
+        return fallback;
+    }
+}
+
 } // namespace
 
 std::wstring DefaultSettingsPath() {
@@ -197,6 +216,15 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
                           : 144;
     settings.observerDistanceM =
         std::clamp(ParseDouble(values, "observerDistanceM", settings.observerDistanceM), 5.0, 5000.0);
+
+    settings.update.checkForUpdates =
+        ParseBool(values, "checkForUpdates", settings.update.checkForUpdates);
+    settings.update.lastSeenVersion =
+        ParseString(values, "lastSeenVersion", settings.update.lastSeenVersion);
+    settings.update.skippedVersion =
+        ParseString(values, "skippedVersion", settings.update.skippedVersion);
+    settings.update.lastCheckUnix =
+        ParseLongLong(values, "lastCheckUnix", settings.update.lastCheckUnix);
 }
 
 void SaveSettings(const AppSettings& settings, const std::wstring& path) {
@@ -260,6 +288,13 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "showOverlays=" << (settings.showOverlays ? "true" : "false") << "\n";
     stream << "maxFps=" << settings.maxFps << "\n";
     stream << "observerDistanceM=" << settings.observerDistanceM << "\n";
+
+    stream << "[update]\n";
+    stream << "checkForUpdates=" << (settings.update.checkForUpdates ? "true" : "false")
+           << "\n";
+    stream << "lastSeenVersion=" << settings.update.lastSeenVersion << "\n";
+    stream << "skippedVersion=" << settings.update.skippedVersion << "\n";
+    stream << "lastCheckUnix=" << settings.update.lastCheckUnix << "\n";
 }
 
 } // namespace ex::app

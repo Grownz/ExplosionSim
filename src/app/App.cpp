@@ -10,12 +10,14 @@
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
+#include <shellapi.h>
 #include <timeapi.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <thread>
 #include <vector>
 
@@ -45,6 +47,23 @@ private:
     LARGE_INTEGER frequency_{};
     LARGE_INTEGER start_{};
 };
+
+long long UnixNow() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+std::wstring UpdateDownloadDirectory() {
+    wchar_t buffer[MAX_PATH * 2]{};
+    const DWORD length =
+        GetEnvironmentVariableW(L"LOCALAPPDATA", buffer, DWORD(MAX_PATH * 2));
+    std::wstring directory = length > 0 ? std::wstring(buffer, length) : std::wstring(L".");
+    directory += L"\\ExplosionSim\\updates";
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    return directory;
+}
 
 bool RegisterWindowClass(HINSTANCE instance) {
     WNDCLASSEXW windowClass{};
@@ -112,6 +131,9 @@ int App::Run(const LaunchOptions& options) {
         settings_.simulation.bakeVolume = false;
         settings_.simulation.solverAutoScale = false;
     }
+    if (options_.checkUpdatesNow) {
+        return RunUpdateCheck();
+    }
 
     if (!options_.headless && !CreateMainWindow()) {
         return 1;
@@ -131,6 +153,28 @@ int App::Run(const LaunchOptions& options) {
     simulation_.SetAsyncSceneGeneration(!options_.headless);
     simulation_.Initialize(settings_.simulation, *pool_, !options_.headless);
     FrameCamera();
+
+    const std::wstring changelogPath = gfx::ResolveAssetPath(L"CHANGELOG.md");
+    if (!changelogPath.empty()) {
+        changelogText_ = ReadTextFile(changelogPath);
+        changelogSections_ = ParseChangelog(changelogText_);
+        currentReleaseNotes_ =
+            CurrentReleaseNotes(changelogSections_, EXPLOSION_VERSION_STRING);
+    }
+    if (currentReleaseNotes_.empty()) {
+        currentReleaseNotes_ = "No changelog is bundled with this build.";
+    }
+    showWhatsNew_ = !options_.headless &&
+                    settings_.update.lastSeenVersion != EXPLOSION_VERSION_STRING;
+
+    if (!options_.headless && !options_.noUpdateCheck && settings_.update.checkForUpdates) {
+        const long long now = UnixNow();
+        if (now - settings_.update.lastCheckUnix >= 24 * 3600) {
+            updateChecker_.CheckAsync(EXPLOSION_VERSION_STRING,
+                                      settings_.update.skippedVersion, false);
+            settings_.update.lastCheckUnix = now;
+        }
+    }
 
     LogInfo("Simulation ready: %.4g kg TNT, %.2f m burst height, %d workers",
             settings_.simulation.chargeMassKg, settings_.simulation.heightOfBurstM,
@@ -230,6 +274,7 @@ bool App::InitializeImGui() {
 }
 
 void App::Shutdown() {
+    updateChecker_.Shutdown();
     if (pool_) {
         simulation_.Shutdown();
     }
@@ -484,6 +529,27 @@ int App::RunInteractive() {
         context.workerThreads = int(pool_->WorkerCount());
         context.adapterName = graphics_.AdapterName().c_str();
 
+        const update::UpdateChecker::Snapshot updateSnapshot = updateChecker_.GetSnapshot();
+        ui::UpdateUiState updateState;
+        updateState.enabled = settings_.update.checkForUpdates;
+        updateState.checking = updateSnapshot.status == update::UpdateStatus::Checking;
+        updateState.available = updateSnapshot.status == update::UpdateStatus::Available;
+        updateState.downloading = updateSnapshot.status == update::UpdateStatus::Downloading;
+        updateState.downloaded = updateSnapshot.status == update::UpdateStatus::Downloaded;
+        updateState.failed = updateSnapshot.status == update::UpdateStatus::Failed;
+        updateState.upToDate = updateSnapshot.status == update::UpdateStatus::UpToDate;
+        updateState.version = updateSnapshot.release.version;
+        updateState.notes = updateSnapshot.release.notes;
+        updateState.error = updateSnapshot.error;
+        updateState.assetName = updateSnapshot.release.assetName;
+        updateState.progress = updateSnapshot.progress;
+        updateState.downloadedBytes = updateSnapshot.downloaded;
+        updateState.totalBytes = updateSnapshot.total;
+        context.update = updateState;
+        context.changelogText = &changelogText_;
+        context.currentReleaseNotes = &currentReleaseNotes_;
+        context.showWhatsNew = showWhatsNew_;
+
         const ui::UiActions actions = ui::Draw(context);
         if (actions.stepOnce) {
             stepOnce = true;
@@ -530,6 +596,36 @@ int App::RunInteractive() {
             ApplySimulationSettings();
         }
 
+        if (actions.checkForUpdates) {
+            updateChecker_.CheckAsync(EXPLOSION_VERSION_STRING,
+                                      settings_.update.skippedVersion, true);
+            settings_.update.lastCheckUnix = UnixNow();
+        }
+        if (actions.downloadUpdate && !updateSnapshot.release.assetUrl.empty()) {
+            const std::wstring directory = UpdateDownloadDirectory();
+            const std::wstring fileName(updateSnapshot.release.assetName.begin(),
+                                        updateSnapshot.release.assetName.end());
+            updateChecker_.DownloadAsync(updateSnapshot.release,
+                                         directory + L"\\" + fileName);
+        }
+        if (actions.cancelDownload) {
+            updateChecker_.CancelDownload();
+        }
+        if (actions.openDownloadFolder) {
+            const std::wstring directory = UpdateDownloadDirectory();
+            ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr,
+                          SW_SHOWNORMAL);
+        }
+        if (actions.skipUpdateVersion && !updateSnapshot.release.version.empty()) {
+            settings_.update.skippedVersion = updateSnapshot.release.version;
+            SaveSettings(settings_, DefaultSettingsPath());
+        }
+        if (actions.dismissWhatsNew) {
+            settings_.update.lastSeenVersion = EXPLOSION_VERSION_STRING;
+            showWhatsNew_ = false;
+            SaveSettings(settings_, DefaultSettingsPath());
+        }
+
         ImGui::Render();
 
         renderer_.Render(simulation_, camera_, settings_.render);
@@ -559,6 +655,37 @@ int App::RunInteractive() {
     }
 
     return 0;
+}
+
+int App::RunUpdateCheck() {
+    update::UpdateChecker checker;
+    checker.CheckAsync(EXPLOSION_VERSION_STRING, settings_.update.skippedVersion, true);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    while (std::chrono::steady_clock::now() < deadline) {
+        const update::UpdateChecker::Snapshot snapshot = checker.GetSnapshot();
+        if (snapshot.status == update::UpdateStatus::Available) {
+            LogInfo("Update available: %s (%s, %.1f MB)", snapshot.release.version.c_str(),
+                    snapshot.release.assetName.c_str(),
+                    double(snapshot.release.assetSize) / (1024.0 * 1024.0));
+            checker.Shutdown();
+            return 0;
+        }
+        if (snapshot.status == update::UpdateStatus::UpToDate) {
+            LogInfo("Up to date: version %s is the latest release.",
+                    EXPLOSION_VERSION_STRING);
+            checker.Shutdown();
+            return 0;
+        }
+        if (snapshot.status == update::UpdateStatus::Failed) {
+            LogError("Update check failed: %s", snapshot.error.c_str());
+            checker.Shutdown();
+            return 1;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    LogError("Update check timed out.");
+    checker.Shutdown();
+    return 1;
 }
 
 int App::RunSolverBenchmark() {

@@ -2,6 +2,7 @@
 // No external test framework is required.
 
 #include "core/ThreadPool.h"
+#include "app/Changelog.h"
 #include "app/Settings.h"
 #include "gfx/Frustum.h"
 #include "gfx/Shader.h"
@@ -11,6 +12,7 @@
 #include "sim/BlastModel.h"
 #include "sim/Simulation.h"
 #include "sim/VolumeBaker.h"
+#include "update/Version.h"
 
 #include <DirectXPackedVector.h>
 
@@ -1255,6 +1257,79 @@ void TestSceneReuse() {
     simulation.Shutdown();
 }
 
+void TestVersionComparison() {
+    using ex::update::CompareVersions;
+    using ex::update::ParseVersion;
+    using ex::update::SemanticVersion;
+
+    SemanticVersion a{};
+    SemanticVersion b{};
+    CHECK(ParseVersion("0.7.0", a));
+    CHECK(a.major == 0 && a.minor == 7 && a.patch == 0);
+    CHECK(ParseVersion("v0.8.0", b));
+    CHECK(b.major == 0 && b.minor == 8 && b.patch == 0);
+    CHECK(CompareVersions(a, b) < 0);
+    CHECK(CompareVersions(b, a) > 0);
+
+    CHECK(ParseVersion("1.10.0", a));
+    CHECK(ParseVersion("1.9.9", b));
+    CHECK(CompareVersions(a, b) > 0);
+    CHECK(ParseVersion("2.0.0-beta.1", a));
+    CHECK(a.major == 2 && a.minor == 0 && a.patch == 0);
+    CHECK(!ParseVersion("", a));
+    CHECK(!ParseVersion("v", a));
+    CHECK(!ParseVersion("1.2", a));
+    CHECK(!ParseVersion("1.2.x", a));
+    CHECK(CompareVersions(SemanticVersion{1, 2, 3}, SemanticVersion{1, 2, 3}) == 0);
+}
+
+void TestChangelogParsing() {
+    const std::string text =
+        "# Changelog\n"
+        "\n"
+        "Preamble that is not part of a release.\n"
+        "\n"
+        "## [Unreleased]\n"
+        "\n"
+        "### Added\n"
+        "\n"
+        "- Work in progress.\n"
+        "\n"
+        "## [0.8.0] - 2026-11-01\n"
+        "\n"
+        "### Added\n"
+        "\n"
+        "- New thing.\n"
+        "\n"
+        "## [0.7.0] - 2026-10-27\n"
+        "\n"
+        "### Changed\n"
+        "\n"
+        "- Faster solver.\n"
+        "\n"
+        "[0.8.0]: https://example.invalid/0.8.0\n"
+        "[0.7.0]: https://example.invalid/0.7.0\n";
+
+    const std::vector<ex::app::ChangelogSection> sections =
+        ex::app::ParseChangelog(text);
+    CHECK(sections.size() == 3);
+    CHECK(sections[0].version == "Unreleased");
+    CHECK(sections[1].version == "0.8.0");
+    CHECK(sections[1].date == "2026-11-01");
+    CHECK(sections[1].body.find("New thing") != std::string::npos);
+    CHECK(sections[2].version == "0.7.0");
+    CHECK(sections[2].body.find("Faster solver") != std::string::npos);
+    CHECK(sections[2].body.find("https://example.invalid") == std::string::npos);
+
+    const ex::app::ChangelogSection* current =
+        ex::app::FindSection(sections, "v0.7.0");
+    CHECK(current != nullptr);
+    CHECK(current == &sections[2]);
+    CHECK(ex::app::FindSection(sections, "9.9.9") == nullptr);
+    CHECK(ex::app::CurrentReleaseNotes(sections, "0.8.0").find("New thing") !=
+          std::string::npos);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -1292,6 +1367,8 @@ int main() {
     RUN(TestParallelSceneGeneration);
     RUN(TestSceneReuse);
     RUN(TestSettingsRoundTrip);
+    RUN(TestVersionComparison);
+    RUN(TestChangelogParsing);
     RUN(TestFuseAndDetonation);
     RUN(TestRearmHoldsFuse);
 #undef RUN

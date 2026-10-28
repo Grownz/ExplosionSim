@@ -4,10 +4,13 @@
 
 #include <imgui.h>
 
+#include <shellapi.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <sstream>
 #include <vector>
 
 namespace ex::ui {
@@ -43,6 +46,333 @@ void Hint(const char* text) {
     ImGui::PushStyleColor(ImGuiCol_Text, kMuted);
     ImGui::TextWrapped("%s", text);
     ImGui::PopStyleColor();
+}
+
+void ReplaceAll(std::string& text, const std::string& from, const std::string& to) {
+    if (from.empty()) {
+        return;
+    }
+    size_t position = 0;
+    while ((position = text.find(from, position)) != std::string::npos) {
+        text.replace(position, from.size(), to);
+        position += to.size();
+    }
+}
+
+// Removes the inline markdown markers the changelog uses. The default font has
+// the Latin-1 glyphs, so only typographic punctuation is normalised.
+std::string StripInline(std::string text) {
+    ReplaceAll(text, "**", "");
+    ReplaceAll(text, "`", "");
+    for (size_t open = text.find('['); open != std::string::npos;
+         open = text.find('[', open + 1)) {
+        const size_t close = text.find(']', open + 1);
+        if (close == std::string::npos) {
+            break;
+        }
+        if (close + 1 < text.size() && text[close + 1] == '(') {
+            const size_t end = text.find(')', close + 2);
+            if (end != std::string::npos) {
+                text.replace(open, end - open + 1, text.substr(open + 1, close - open - 1));
+                continue;
+            }
+        }
+    }
+    ReplaceAll(text, "\xE2\x80\x93", "-"); // en dash
+    ReplaceAll(text, "\xE2\x80\x94", "-"); // em dash
+    ReplaceAll(text, "\xE2\x80\x99", "'"); // right single quote
+    ReplaceAll(text, "\xE2\x80\x9C", "\""); // left double quote
+    ReplaceAll(text, "\xE2\x80\x9D", "\""); // right double quote
+    return text;
+}
+
+std::vector<std::string> SplitTableRow(const std::string& line) {
+    std::vector<std::string> cells;
+    std::string cell;
+    for (char character : line) {
+        if (character == '|') {
+            cells.push_back(cell);
+            cell.clear();
+        } else {
+            cell += character;
+        }
+    }
+    cells.push_back(cell);
+
+    if (!cells.empty() && cells.front().find_first_not_of(" \t") == std::string::npos) {
+        cells.erase(cells.begin());
+    }
+    if (!cells.empty() && cells.back().find_first_not_of(" \t") == std::string::npos) {
+        cells.pop_back();
+    }
+    for (std::string& value : cells) {
+        const size_t first = value.find_first_not_of(" \t");
+        if (first == std::string::npos) {
+            value.clear();
+            continue;
+        }
+        const size_t last = value.find_last_not_of(" \t");
+        value = value.substr(first, last - first + 1);
+    }
+    return cells;
+}
+
+bool IsTableSeparator(const std::vector<std::string>& cells) {
+    if (cells.empty()) {
+        return false;
+    }
+    for (const std::string& cell : cells) {
+        if (!cell.empty() && cell.find_first_not_of("-: ") != std::string::npos) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Renders the Markdown subset used by CHANGELOG.md: headings, bullets, bold and
+// inline code, fenced code, and pipe tables.
+void DrawMarkdown(const std::string& text) {
+    std::istringstream stream(text);
+    std::string line;
+    std::vector<std::string> table;
+    int tableId = 0;
+
+    const auto flushTable = [&]() {
+        if (table.empty()) {
+            return;
+        }
+        std::vector<std::vector<std::string>> rows;
+        rows.reserve(table.size());
+        for (const std::string& row : table) {
+            rows.push_back(SplitTableRow(row));
+        }
+        table.clear();
+        if (rows.empty() || rows.front().empty()) {
+            return;
+        }
+
+        const size_t columns = rows.front().size();
+        size_t firstData = 1;
+        if (rows.size() > 1 && IsTableSeparator(rows[1])) {
+            firstData = 2;
+        }
+
+        std::vector<std::string> headers;
+        headers.reserve(columns);
+        for (size_t column = 0; column < columns; ++column) {
+            headers.push_back(StripInline(rows.front()[column]));
+        }
+
+        ImGui::PushID(tableId++);
+        const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                                      ImGuiTableFlags_SizingStretchProp;
+        if (ImGui::BeginTable("##md_table", int(columns), flags)) {
+            for (size_t column = 0; column < columns; ++column) {
+                ImGui::TableSetupColumn(headers[column].c_str(),
+                                        ImGuiTableColumnFlags_WidthStretch);
+            }
+            ImGui::TableHeadersRow();
+            for (size_t row = firstData; row < rows.size(); ++row) {
+                ImGui::TableNextRow();
+                for (size_t column = 0; column < columns; ++column) {
+                    ImGui::TableSetColumnIndex(int(column));
+                    const std::string cell =
+                        column < rows[row].size() ? rows[row][column] : std::string{};
+                    ImGui::TextWrapped("%s", StripInline(cell).c_str());
+                }
+            }
+            ImGui::EndTable();
+        }
+        ImGui::PopID();
+    };
+
+    while (std::getline(stream, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (!line.empty() && line.front() == '|') {
+            table.push_back(line);
+            continue;
+        }
+        flushTable();
+
+        if (line.empty()) {
+            ImGui::Spacing();
+            continue;
+        }
+        if (line.front() == '[' && line.find("]:") != std::string::npos) {
+            continue; // link definition
+        }
+        if (line.rfind("### ", 0) == 0) {
+            ImGui::Spacing();
+            ImGui::TextColored(kAccent, "%s", StripInline(line.substr(4)).c_str());
+        } else if (line.rfind("## ", 0) == 0) {
+            ImGui::Spacing();
+            ImGui::SeparatorText(StripInline(line.substr(3)).c_str());
+        } else if (line.rfind("# ", 0) == 0) {
+            ImGui::TextColored(kAccent, "%s", StripInline(line.substr(2)).c_str());
+        } else if (line.rfind("- ", 0) == 0 || line.rfind("* ", 0) == 0) {
+            ImGui::Bullet();
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", StripInline(line.substr(2)).c_str());
+        } else {
+            ImGui::TextWrapped("%s", StripInline(line).c_str());
+        }
+    }
+    flushTable();
+}
+
+void DrawUpdateBanner(UiContext& context, UiActions& actions) {
+    const UpdateUiState& update = context.update;
+    if (update.downloading) {
+        ImGui::Text("Downloading %s...", update.version.c_str());
+        ImGui::ProgressBar(update.progress, ImVec2(-1.0f, 0.0f));
+        if (update.totalBytes > 0) {
+            ImGui::Text("%.1f / %.1f MB",
+                        double(update.downloadedBytes) / (1024.0 * 1024.0),
+                        double(update.totalBytes) / (1024.0 * 1024.0));
+        }
+        if (ImGui::Button("Cancel##banner_cancel", ImVec2(-1.0f, 0.0f))) {
+            actions.cancelDownload = true;
+        }
+        ImGui::Separator();
+        return;
+    }
+    if (update.available) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
+        ImGui::TextWrapped("Version %s is available.", update.version.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::Button("Download##banner_download", ImVec2(-1.0f, 0.0f))) {
+            actions.downloadUpdate = true;
+        }
+        ImGui::Separator();
+    } else if (update.downloaded) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
+        ImGui::TextWrapped("Version %s downloaded.", update.version.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::Button("Show in folder##banner_folder", ImVec2(-1.0f, 0.0f))) {
+            actions.openDownloadFolder = true;
+        }
+        ImGui::Separator();
+    }
+}
+
+void DrawUpdates(UiContext& context, app::AppSettings& settings, UiActions& actions) {
+    const UpdateUiState& update = context.update;
+    ImGui::Checkbox("Check for updates automatically", &settings.update.checkForUpdates);
+    ImGui::BeginDisabled(update.checking || update.downloading);
+    if (ImGui::Button("Check now", ImVec2(-1.0f, 0.0f))) {
+        actions.checkForUpdates = true;
+    }
+    ImGui::EndDisabled();
+
+    if (update.checking) {
+        ImGui::TextUnformatted("Checking GitHub for a newer release...");
+    } else if (update.failed) {
+        ImGui::PushStyleColor(ImGuiCol_Text, kWarning);
+        ImGui::TextWrapped("Update check failed: %s", update.error.c_str());
+        ImGui::PopStyleColor();
+    } else if (update.upToDate) {
+        ImGui::TextUnformatted("You are running the latest version.");
+    }
+
+    if (update.available) {
+        ImGui::Spacing();
+        ImGui::Text("Version %s is available.", update.version.c_str());
+        if (ImGui::Button("Download", ImVec2(-1.0f, 0.0f))) {
+            actions.downloadUpdate = true;
+        }
+        if (ImGui::Button("Skip this version", ImVec2(-1.0f, 0.0f))) {
+            actions.skipUpdateVersion = true;
+        }
+    }
+    if (update.downloading) {
+        ImGui::ProgressBar(update.progress, ImVec2(-1.0f, 0.0f));
+        if (ImGui::Button("Cancel download", ImVec2(-1.0f, 0.0f))) {
+            actions.cancelDownload = true;
+        }
+    }
+    if (update.downloaded) {
+        ImGui::TextUnformatted("The update zip is ready.");
+        if (ImGui::Button("Show in folder", ImVec2(-1.0f, 0.0f))) {
+            actions.openDownloadFolder = true;
+        }
+    }
+
+    Hint("Checks github.com/Grownz/ExplosionSim once per day. Downloads are saved to "
+         "%LOCALAPPDATA%\\ExplosionSim\\updates and are not installed automatically.");
+}
+
+void DrawUpdateModals(UiContext& context, UiActions& actions) {
+    static bool whatsNewOpened = false;
+    if (context.showWhatsNew && !whatsNewOpened) {
+        ImGui::OpenPopup("What's new##whatsnew");
+        whatsNewOpened = true;
+    } else if (!context.showWhatsNew) {
+        whatsNewOpened = false;
+    }
+
+    bool whatsNewOpen = true;
+    ImGui::SetNextWindowSize(ImVec2(880.0f, 640.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("What's new##whatsnew", &whatsNewOpen,
+                               ImGuiWindowFlags_NoSavedSettings)) {
+        ImGui::TextColored(kAccent, "Explosion Simulator %s", EXPLOSION_VERSION_STRING);
+        ImGui::Separator();
+        ImGui::BeginChild("##whatsnew_scroll",
+                          ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), false);
+        if (context.currentReleaseNotes && !context.currentReleaseNotes->empty()) {
+            DrawMarkdown(*context.currentReleaseNotes);
+        } else {
+            ImGui::TextWrapped("No changelog is bundled with this build.");
+        }
+        ImGui::EndChild();
+        if (ImGui::Button("Close", ImVec2(140.0f, 0.0f))) {
+            whatsNewOpen = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    if (!whatsNewOpen) {
+        actions.dismissWhatsNew = true;
+        whatsNewOpened = false;
+    }
+
+    if (actions.showChangelog) {
+        ImGui::OpenPopup("Changelog##changelog");
+    }
+    ImGui::SetNextWindowSize(ImVec2(940.0f, 700.0f), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Changelog##changelog", nullptr,
+                               ImGuiWindowFlags_NoSavedSettings)) {
+        static bool showAll = true;
+        if (ImGui::RadioButton("Current release", !showAll)) {
+            showAll = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::RadioButton("All releases", showAll)) {
+            showAll = true;
+        }
+        ImGui::Separator();
+        ImGui::BeginChild("##changelog_scroll",
+                          ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), false);
+        const std::string* text =
+            showAll ? context.changelogText : context.currentReleaseNotes;
+        if (text && !text->empty()) {
+            DrawMarkdown(*text);
+        } else {
+            ImGui::TextWrapped("No changelog is bundled with this build.");
+        }
+        ImGui::EndChild();
+        if (ImGui::Button("Open on GitHub", ImVec2(180.0f, 0.0f))) {
+            ShellExecuteW(nullptr, L"open",
+                          L"https://github.com/Grownz/ExplosionSim/releases", nullptr,
+                          nullptr, SW_SHOWNORMAL);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(140.0f, 0.0f))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 }
 
 // Compact TNT-equivalent label for the on-screen data box.
@@ -828,7 +1158,13 @@ UiActions Draw(UiContext& context) {
     ImGui::PopStyleColor();
 
     ImGui::Spacing();
+    DrawUpdateBanner(context, actions);
     ImGui::Separator();
+
+    // Scrollable content with a pinned footer so the changelog button is always
+    // reachable at the very bottom of the panel.
+    const float footerHeight = ImGui::GetFrameHeightWithSpacing() * 3.0f;
+    ImGui::BeginChild("##panel_content", ImVec2(0.0f, -footerHeight), false);
 
     if (ImGui::CollapsingHeader("Detonation", ImGuiTreeNodeFlags_DefaultOpen)) {
         DrawDetonation(settings, context.simulation, actions);
@@ -851,10 +1187,16 @@ UiActions Draw(UiContext& context) {
     if (ImGui::CollapsingHeader("Performance")) {
         DrawPerformance(context);
     }
+    if (ImGui::CollapsingHeader("Updates")) {
+        DrawUpdates(context, settings, actions);
+    }
+    ImGui::EndChild();
 
-    ImGui::Spacing();
     ImGui::Separator();
     Hint("Space pause | D detonate | R rearm | F frame | H cycle UI");
+    if (ImGui::Button("Changelog##footer", ImVec2(-1.0f, 0.0f))) {
+        actions.showChangelog = true;
+    }
     ImGui::End();
     }
 
@@ -994,6 +1336,8 @@ UiActions Draw(UiContext& context) {
                                    top + (height - textSize.y) * 0.5f),
                             IM_COL32(245, 248, 250, 255), label);
     }
+
+    DrawUpdateModals(context, actions);
 
     return actions;
 }

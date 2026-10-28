@@ -1,4 +1,5 @@
 #include "app/App.h"
+#include "Version.h"
 #include "core/Log.h"
 
 #include <shellapi.h>
@@ -16,6 +17,7 @@ using ex::LogInfo;
 struct ParsedArguments {
     LaunchOptions options{};
     bool wantsHelp = false;
+    bool wantsVersion = false;
     bool valid = true;
     std::string error;
 };
@@ -37,6 +39,9 @@ void PrintUsage() {
     LogInfo("  --benchmark           Render frames offscreen and print timing.");
     LogInfo("  --frames <count>      Number of benchmark frames (default 120).");
     LogInfo("  --solver-benchmark    Step the GPU solver only and print per-pass GPU timings.");
+    LogInfo("  --no-update-check     Skip the GitHub update check for this run.");
+    LogInfo("  --check-updates       Check GitHub for a newer release and exit.");
+    LogInfo("  --version             Print the version and exit.");
     LogInfo("  --high-fidelity       Use the GPU Euler solver for the volume.");
     LogInfo("  --reduced-order       Force the reduced-order blast model (overrides settings.ini).");
     LogInfo("  --solver-resolution <n>  Solver grid resolution (64, 96, 128, 192, 256, 512).");
@@ -139,6 +144,13 @@ ParsedArguments ParseCommandLine() {
         } else if (argument == L"--solver-benchmark") {
             result.options.solverBenchmark = true;
             result.options.headless = true;
+        } else if (argument == L"--no-update-check") {
+            result.options.noUpdateCheck = true;
+        } else if (argument == L"--check-updates") {
+            result.options.checkUpdatesNow = true;
+            result.options.headless = true;
+        } else if (argument == L"--version") {
+            result.wantsVersion = true;
         } else if (argument == L"--high-fidelity") {
             result.options.highFidelity = true;
         } else if (argument == L"--reduced-order") {
@@ -221,6 +233,11 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
     const ParsedArguments parsed = ParseCommandLine();
     if (parsed.wantsHelp) {
         PrintUsage();
+        CoUninitialize();
+        return 0;
+    }
+    if (parsed.wantsVersion) {
+        std::printf("ExplosionSim %s\n", EXPLOSION_VERSION_STRING);
         CoUninitialize();
         return 0;
     }
