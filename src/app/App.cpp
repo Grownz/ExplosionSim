@@ -168,7 +168,11 @@ int App::Run(const LaunchOptions& options) {
                                     L"Explosion Simulator",
                                     std::wstring(L"Version ") + EXPLOSION_VERSION_WSTRING);
         if (splashVisible) {
-            splash.SetProgress(0.04f, L"Preparing window...");
+            // Measured stage shares (reference machine): window 0.1 %, device
+            // 2.3 %, shader compilation 96.5 %, interface/simulation/assets
+            // 0.1 %, ready 1.0 %. The expected durations let the bar run
+            // evenly through each stage instead of jumping at the end.
+            splash.SetProgress(0.001f, L"Preparing window...", 0.01f);
         }
     }
 
@@ -177,19 +181,19 @@ int App::Run(const LaunchOptions& options) {
     }
 
     if (splashVisible) {
-        splash.SetProgress(0.16f, L"Initializing Direct3D 11...");
+        splash.SetProgress(0.024f, L"Initializing Direct3D 11...", 0.20f);
     }
     if (!InitializeGraphics()) {
         return 1;
     }
     if (splashVisible) {
-        splash.SetProgress(0.30f, L"Compiling shaders...");
+        splash.SetProgress(0.988f, L"Compiling shaders...", 8.56f);
     }
     if (!InitializeRenderer()) {
         return 1;
     }
     if (splashVisible) {
-        splash.SetProgress(0.58f, L"Preparing simulation...");
+        splash.SetProgress(0.988f, L"Preparing simulation...", 0.01f);
     }
 
     if (settings_.simulation.gpuParticles && !renderer_.SupportsGpuParticles()) {
@@ -198,13 +202,13 @@ int App::Run(const LaunchOptions& options) {
     }
 
     if (splashVisible) {
-        splash.SetProgress(0.62f, L"Initializing interface...");
+        splash.SetProgress(0.988f, L"Initializing interface...", 0.01f);
     }
     if (!options_.headless && !InitializeImGui()) {
         return 1;
     }
     if (splashVisible) {
-        splash.SetProgress(0.72f, L"Preparing simulation...");
+        splash.SetProgress(0.989f, L"Preparing simulation...", 0.01f);
     }
 
     pool_ = std::make_unique<core::ThreadPool>();
@@ -214,7 +218,7 @@ int App::Run(const LaunchOptions& options) {
     simulation_.Initialize(settings_.simulation, *pool_, !options_.headless);
     FrameCamera();
     if (splashVisible) {
-        splash.SetProgress(0.90f, L"Generating city...");
+        splash.SetProgress(0.990f, L"Loading assets...", 0.01f);
     }
 
     const std::wstring changelogPath = gfx::ResolveAssetPath(L"CHANGELOG.md");
@@ -245,7 +249,8 @@ int App::Run(const LaunchOptions& options) {
             int(pool_->WorkerCount()));
 
     if (splashVisible) {
-        splash.SetProgress(1.0f, L"Ready");
+        splash.SetProgress(1.0f, L"Ready", 0.12f);
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
         ShowWindow(window_, SW_SHOW);
         UpdateWindow(window_);
         splash.Close();

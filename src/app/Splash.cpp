@@ -49,13 +49,16 @@ bool Splash::Show(const std::wstring& imagePath, const std::wstring& title,
     return window_.load() != nullptr;
 }
 
-void Splash::SetProgress(float progress, const std::wstring& status) {
+void Splash::SetProgress(float progress, const std::wstring& status,
+                         float expectedSeconds) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         progress_ = std::clamp(progress, 0.0f, 1.0f);
+        targetDuration_ = std::max(expectedSeconds, 0.01f);
         if (!status.empty()) {
             status_ = status;
         }
+        stageChanged_ = true;
     }
     // InvalidateRect is safe from another thread; the splash thread paints it.
     if (HWND window = window_.load()) {
@@ -175,18 +178,20 @@ void Splash::CreateFonts() {
                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, face);
     };
     titleFont_ = makeFont(34, FW_SEMIBOLD, L"Segoe UI Semibold");
-    subtitleFont_ = makeFont(17, FW_NORMAL, L"Segoe UI");
+    subtitleFont_ = makeFont(18, FW_SEMIBOLD, L"Segoe UI Semibold");
     statusFont_ = makeFont(15, FW_NORMAL, L"Segoe UI");
     percentFont_ = makeFont(15, FW_SEMIBOLD, L"Segoe UI Semibold");
 }
 
 void Splash::CreateOverlay() {
-    if (overlay_ || height_ <= 0) {
+    if (overlay_ || width_ <= 0 || height_ <= 0) {
         return;
     }
+    // Full-size overlay instead of a 1-pixel column: GDI's AlphaBlend leaves a
+    // visible horizontal seam when the source is stretched across the width.
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    info.bmiHeader.biWidth = 1;
+    info.bmiHeader.biWidth = width_;
     info.bmiHeader.biHeight = -height_;
     info.bmiHeader.biPlanes = 1;
     info.bmiHeader.biBitCount = 32;
@@ -203,10 +208,15 @@ void Splash::CreateOverlay() {
                                    0.0f, 1.0f);
         const float eased = t * t;
         const uint8_t alpha = uint8_t(225.0f * eased);
-        pixels[y * 4 + 0] = 8;
-        pixels[y * 4 + 1] = 9;
-        pixels[y * 4 + 2] = 11;
-        pixels[y * 4 + 3] = alpha;
+        for (int x = 0; x < width_; ++x) {
+            const size_t index = (size_t(y) * size_t(width_) + size_t(x)) * 4;
+            // AlphaBlend expects premultiplied source colour; a straight-alpha
+            // overlay produced a hard step at its first non-zero row.
+            pixels[index + 0] = uint8_t(8 * alpha / 255);
+            pixels[index + 1] = uint8_t(9 * alpha / 255);
+            pixels[index + 2] = uint8_t(11 * alpha / 255);
+            pixels[index + 3] = alpha;
+        }
     }
     overlayDc_ = CreateCompatibleDC(nullptr);
     if (overlayDc_) {
@@ -274,7 +284,7 @@ void Splash::Paint(HDC target) {
         blend.BlendOp = AC_SRC_OVER;
         blend.SourceConstantAlpha = 255;
         blend.AlphaFormat = AC_SRC_ALPHA;
-        AlphaBlend(memory, 0, 0, width, height, overlayDc_, 0, 0, 1, height_, blend);
+        AlphaBlend(memory, 0, 0, width, height, overlayDc_, 0, 0, width, height, blend);
     }
 
     const int margin = Scale(46, dpi_);
@@ -295,7 +305,7 @@ void Splash::Paint(HDC target) {
     }
     if (subtitleFont_) {
         SelectObject(memory, subtitleFont_);
-        SetTextColor(memory, RGB(188, 182, 173));
+        SetTextColor(memory, RGB(214, 208, 199));
         RECT rect{margin, height - Scale(184, dpi_), width - margin,
                   height - Scale(152, dpi_)};
         DrawTextW(memory, subtitle_.c_str(), -1, &rect,
@@ -338,7 +348,7 @@ void Splash::Paint(HDC target) {
 
         // A slow shimmer inside the filled part shows that the loader is still
         // busy during long stages (shader compilation, town generation).
-        if (stillTicks_ > 8 && fillWidth > barHeight * 3) {
+        if (pulse_ > 0.0f && fillWidth > barHeight * 3) {
             const int highlightWidth = std::min(fillWidth, Scale(74, dpi_));
             const int travel = std::max(1, fillWidth - highlightWidth);
             const int highlightX = margin + int(float(travel) * pulse_);
@@ -381,27 +391,35 @@ LRESULT Splash::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARAM l
     case WM_TIMER:
         if (wParam == kAnimationTimer) {
             float target = 0.0f;
+            float duration = 0.35f;
+            bool changed = false;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 target = progress_;
+                duration = targetDuration_;
+                changed = stageChanged_;
+                stageChanged_ = false;
             }
-            if (target != lastProgress_) {
-                lastProgress_ = target;
-                stillTicks_ = 0;
-                // Allow the displayed bar to creep a little past the current
-                // stage while a long operation (shader compilation, town
-                // generation) is running, so it never looks frozen.
-                creepCeiling_ = std::min(1.0f, target + 0.20f);
-            } else if (stillTicks_ < 1000) {
-                ++stillTicks_;
+            const auto now = std::chrono::steady_clock::now();
+            if (changed || !stageActive_) {
+                stageStart_ = displayProgress_;
+                stageTarget_ = std::max(target, displayProgress_);
+                stageDuration_ = std::max(duration, 0.01f);
+                stageStartTime_ = now;
+                stageActive_ = true;
             }
-            if (displayProgress_ < target) {
-                displayProgress_ = target;
-            } else if (displayProgress_ < creepCeiling_) {
-                displayProgress_ += (creepCeiling_ - displayProgress_) * 0.015f;
+            const double elapsed =
+                std::chrono::duration<double>(now - stageStartTime_).count();
+            const float t = std::clamp(float(elapsed) / stageDuration_, 0.0f, 1.0f);
+            displayProgress_ = stageStart_ + (stageTarget_ - stageStart_) * t;
+            if (t >= 1.0f) {
+                displayProgress_ = stageTarget_;
             }
-            if (stillTicks_ > 8) {
+            // Only show the shimmer when the stage runs longer than measured.
+            if (elapsed > double(stageDuration_) + 0.25) {
                 pulse_ = std::fmod(pulse_ + 0.018f, 1.0f);
+            } else {
+                pulse_ = 0.0f;
             }
             InvalidateRect(window, nullptr, FALSE);
             return 0;

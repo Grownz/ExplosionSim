@@ -68,7 +68,10 @@ the shaders, initialises ImGui and prepares the simulation. The main window is
 created hidden and only shown when the splash closes, so no blank client area is
 visible during loading. Stages: window, Direct3D device, shader compilation,
 interface, simulation, city generation. The town itself is still generated on a
-worker thread; the in-app loading bar takes over once the splash closes.
+worker thread; the in-app loading bar takes over once the splash closes. The
+stage shares follow measured startup times (shader compilation dominates with
+about 96 % on the reference machine), and the bar interpolates over each stage's
+measured duration, so it moves evenly from 0 to 100 %.
 
 ## Frame loop
 

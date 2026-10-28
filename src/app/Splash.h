@@ -3,6 +3,7 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -19,7 +20,10 @@ public:
 
     bool Show(const std::wstring& imagePath, const std::wstring& title,
               const std::wstring& subtitle);
-    void SetProgress(float progress, const std::wstring& status);
+    // expectedSeconds is the measured duration of the stage; the bar
+    // interpolates from its current value to `progress` over that time.
+    void SetProgress(float progress, const std::wstring& status,
+                     float expectedSeconds = 0.35f);
     void Close();
 
 private:
@@ -39,6 +43,8 @@ private:
 
     std::mutex mutex_;
     float progress_ = 0.0f;
+    float targetDuration_ = 0.35f;
+    bool stageChanged_ = false;
     std::wstring status_ = L"Loading...";
 
     // Splash-thread state.
@@ -61,9 +67,11 @@ private:
     int dpi_ = 96;
     float pulse_ = 0.0f;
     float displayProgress_ = 0.0f;
-    float creepCeiling_ = 0.0f;
-    float lastProgress_ = -1.0f;
-    int stillTicks_ = 0;
+    float stageStart_ = 0.0f;
+    float stageTarget_ = 0.0f;
+    float stageDuration_ = 0.35f;
+    std::chrono::steady_clock::time_point stageStartTime_{};
+    bool stageActive_ = false;
     bool classRegistered_ = false;
 };
 

@@ -11,8 +11,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Startup splash** - a borderless splash with the hero image, version, status
   text and an animated progress bar appears immediately at launch. It runs on its
   own thread, so the bar keeps moving while the Direct3D device, the shaders,
-  ImGui and the simulation are prepared. The main window is created hidden and
-  shown when the splash closes, so no blank window is visible during loading.
+  ImGui and the simulation are prepared. The progress shares follow the measured
+  startup times (shader compilation is about 96 % of the load on the reference
+  machine), so the bar traverses the full range evenly instead of jumping from
+  the middle to 100 %. The main window is created hidden and shown when the
+  splash closes, so no blank window is visible during loading. The darkening
+  overlay is premultiplied, which removes the hard seam at its top edge.
 
 ### Fixed
 
