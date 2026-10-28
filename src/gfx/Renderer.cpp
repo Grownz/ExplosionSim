@@ -295,6 +295,8 @@ bool Renderer::CreatePipeline() {
     auto downsampleBlob = compile(bloomFile, "PSDownsample", "ps_5_0");
     auto upsampleBlob = compile(bloomFile, "PSUpsample", "ps_5_0");
     auto compositeBlob = compile(compositeFile, "PSComposite", "ps_5_0");
+    auto volumeBakeBlob =
+        compile(L"assets\\shaders\\volume_bake.hlsl", "CSBake", "cs_5_0");
 
     if (!vsBlob || !skyBlob || !groundBlob || !volumeBlob || !particleVSBlob ||
         !particleAddBlob || !particleAlphaBlob || !particleFireBlob ||
@@ -324,6 +326,25 @@ bool Renderer::CreatePipeline() {
         !createPS(compositeBlob.Get(), compositePS_)) {
         LogError("Failed to create shader objects.");
         return false;
+    }
+
+    // Optional: the GPU volume bake. A compile failure leaves the CPU baker in
+    // charge instead of taking the whole renderer down.
+    if (volumeBakeBlob &&
+        SUCCEEDED(device->CreateComputeShader(volumeBakeBlob->GetBufferPointer(),
+                                              volumeBakeBlob->GetBufferSize(), nullptr,
+                                              &volumeBakeCS_))) {
+        D3D11_BUFFER_DESC bakeDesc{};
+        bakeDesc.ByteWidth = sizeof(VolumeBakeConstants);
+        bakeDesc.Usage = D3D11_USAGE_DYNAMIC;
+        bakeDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        bakeDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(device->CreateBuffer(&bakeDesc, nullptr, &volumeBakeConstantBuffer_))) {
+            LogWarn("GPU volume bake: constant buffer creation failed; using the CPU bake.");
+            volumeBakeCS_.Reset();
+        }
+    } else {
+        LogWarn("GPU volume bake shader unavailable; using the CPU bake.");
     }
 
     return true;
@@ -482,67 +503,93 @@ void Renderer::Resize(int width, int height) {
     EnsureTargets(width, height);
 }
 
+bool Renderer::EnsureVolumeTexture(int resolution, bool halfFloat, bool split) {
+    if (volumeTexture_ && volumeResolution_ == resolution &&
+        volumeHalfFloat_ == halfFloat && volumeSplit_ == split) {
+        return true;
+    }
+
+    volumeSRV_.Reset();
+    volumeUAV_.Reset();
+    volumeTexture_.Reset();
+    volumeAuxSRV_.Reset();
+    volumeAuxTexture_.Reset();
+
+    const DXGI_FORMAT format =
+        split ? DXGI_FORMAT_R8G8_UNORM : DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+    auto createVolume = [this](int res, DXGI_FORMAT textureFormat, bool withUav,
+                               ComPtr<ID3D11Texture3D>& texture,
+                               ComPtr<ID3D11ShaderResourceView>& srv,
+                               ComPtr<ID3D11UnorderedAccessView>* uav) {
+        D3D11_TEXTURE3D_DESC desc{};
+        desc.Width = UINT(res);
+        desc.Height = UINT(res);
+        desc.Depth = UINT(res);
+        desc.MipLevels = 1;
+        desc.Format = textureFormat;
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE |
+                         (withUav ? D3D11_BIND_UNORDERED_ACCESS : 0);
+        if (FAILED(device_->Device()->CreateTexture3D(&desc, nullptr, &texture))) {
+            return false;
+        }
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = textureFormat;
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
+        srvDesc.Texture3D.MipLevels = 1;
+        if (FAILED(device_->Device()->CreateShaderResourceView(texture.Get(), &srvDesc,
+                                                               &srv))) {
+            return false;
+        }
+        if (withUav && uav) {
+            D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+            uavDesc.Format = textureFormat;
+            uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE3D;
+            uavDesc.Texture3D.MipSlice = 0;
+            uavDesc.Texture3D.FirstWSlice = 0;
+            uavDesc.Texture3D.WSize = UINT(res);
+            if (FAILED(device_->Device()->CreateUnorderedAccessView(
+                    texture.Get(), &uavDesc, uav->GetAddressOf()))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    if (!createVolume(resolution, format, !split, volumeTexture_, volumeSRV_,
+                      &volumeUAV_)) {
+        LogError("Failed to create 3D volume texture at %d^3.", resolution);
+        volumeValid_ = false;
+        return false;
+    }
+
+    if (split) {
+        if (!createVolume(resolution, DXGI_FORMAT_R8G8_UNORM, false,
+                          volumeAuxTexture_, volumeAuxSRV_, nullptr)) {
+            LogError("Failed to create the auxiliary 3D volume texture at %d^3.",
+                     resolution);
+            volumeValid_ = false;
+            return false;
+        }
+    } else {
+        volumeAuxSRV_ = volumeDummySRV_;
+    }
+
+    volumeResolution_ = resolution;
+    volumeHalfFloat_ = halfFloat;
+    volumeSplit_ = split;
+    return true;
+}
+
 void Renderer::UploadVolume(const sim::VolumeFrame& frame) {
     if (frame.empty()) {
         volumeValid_ = false;
         return;
     }
 
-    const bool split = frame.split;
-    const bool halfFloat = frame.halfFloat;
-    const DXGI_FORMAT format = split ? DXGI_FORMAT_R8G8_UNORM
-                                     : DXGI_FORMAT_R16G16B16A16_FLOAT;
-
-    if (!volumeTexture_ || volumeResolution_ != frame.resolution ||
-        volumeHalfFloat_ != halfFloat || volumeSplit_ != split) {
-        volumeSRV_.Reset();
-        volumeTexture_.Reset();
-        volumeAuxSRV_.Reset();
-        volumeAuxTexture_.Reset();
-
-        auto createVolume = [this](int resolution, DXGI_FORMAT textureFormat,
-                                   ComPtr<ID3D11Texture3D>& texture,
-                                   ComPtr<ID3D11ShaderResourceView>& srv) {
-            D3D11_TEXTURE3D_DESC desc{};
-            desc.Width = UINT(resolution);
-            desc.Height = UINT(resolution);
-            desc.Depth = UINT(resolution);
-            desc.MipLevels = 1;
-            desc.Format = textureFormat;
-            desc.Usage = D3D11_USAGE_DEFAULT;
-            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-            if (FAILED(device_->Device()->CreateTexture3D(&desc, nullptr, &texture))) {
-                return false;
-            }
-            D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-            srvDesc.Format = textureFormat;
-            srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
-            srvDesc.Texture3D.MipLevels = 1;
-            return SUCCEEDED(
-                device_->Device()->CreateShaderResourceView(texture.Get(), &srvDesc, &srv));
-        };
-
-        if (!createVolume(frame.resolution, format, volumeTexture_, volumeSRV_)) {
-            LogError("Failed to create 3D volume texture at %d^3.", frame.resolution);
-            volumeValid_ = false;
-            return;
-        }
-
-        if (split) {
-            if (!createVolume(frame.resolution, DXGI_FORMAT_R8G8_UNORM, volumeAuxTexture_,
-                              volumeAuxSRV_)) {
-                LogError("Failed to create the auxiliary 3D volume texture at %d^3.",
-                         frame.resolution);
-                volumeValid_ = false;
-                return;
-            }
-        } else {
-            volumeAuxSRV_ = volumeDummySRV_;
-        }
-
-        volumeResolution_ = frame.resolution;
-        volumeHalfFloat_ = halfFloat;
-        volumeSplit_ = split;
+    if (!EnsureVolumeTexture(frame.resolution, frame.halfFloat, frame.split)) {
+        return;
     }
 
     const UINT resolution = UINT(frame.resolution);
@@ -551,7 +598,7 @@ void Renderer::UploadVolume(const sim::VolumeFrame& frame) {
     device_->Context()->UpdateSubresource(volumeTexture_.Get(), 0, nullptr, frame.rgba.data(),
                                           rowPitch, depthPitch);
 
-    if (split && volumeAuxTexture_) {
+    if (frame.split && volumeAuxTexture_) {
         const UINT auxPitch = resolution * 2;
         const UINT auxDepthPitch = auxPitch * resolution;
         device_->Context()->UpdateSubresource(volumeAuxTexture_.Get(), 0, nullptr,
@@ -559,6 +606,69 @@ void Renderer::UploadVolume(const sim::VolumeFrame& frame) {
     }
 
     volumeValid_ = true;
+}
+
+bool Renderer::DispatchGpuVolumeBake(const sim::VolumeBakeRequest& request) {
+    if (!volumeBakeCS_ || !volumeBakeConstantBuffer_ || !request.valid() ||
+        request.split) {
+        return false;
+    }
+    if (!EnsureVolumeTexture(request.resolution, true, false) || !volumeUAV_) {
+        return false;
+    }
+
+    const sim::VolumeFieldParams& p = request.params;
+    VolumeBakeConstants constants{};
+    constants.boundsMin =
+        XMFLOAT4(request.bounds.min.x, request.bounds.min.y, request.bounds.min.z,
+                 float(request.resolution));
+    constants.boundsSize =
+        XMFLOAT4(request.bounds.max.x - request.bounds.min.x,
+                 request.bounds.max.y - request.bounds.min.y,
+                 request.bounds.max.z - request.bounds.min.z, request.voxelSize);
+    constants.fireball =
+        XMFLOAT4(p.fireballX, p.fireballY, p.fireballZ, p.fireballRadius);
+    constants.fireball2 = XMFLOAT4(p.fireballTemperature, p.fireballVisible ? 1.0f : 0.0f,
+                                   p.time, p.ambientTemperature);
+    constants.cloud = XMFLOAT4(p.cloudX, p.cloudY, p.cloudZ, p.cloudRadius);
+    constants.cloud2 =
+        XMFLOAT4(p.cloudTemperature, p.stemRadius, p.cloudStrength, p.dustRingRadius);
+    constants.shock =
+        XMFLOAT4(p.shockRadius, p.shockMach, p.burstY, p.dustIntensity);
+
+    ID3D11DeviceContext* context = device_->Context();
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context->Map(volumeBakeConstantBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD,
+                            0, &mapped))) {
+        return false;
+    }
+    std::memcpy(mapped.pData, &constants, sizeof(constants));
+    context->Unmap(volumeBakeConstantBuffer_.Get(), 0);
+
+    // The texture may still be bound as a pixel-shader resource from the
+    // previous frame; D3D11 refuses a UAV bind while the SRV is active.
+    ID3D11ShaderResourceView* nullSRV = nullptr;
+    context->PSSetShaderResources(0, 1, &nullSRV);
+    context->CSSetShaderResources(0, 1, &nullSRV);
+
+    context->CSSetShader(volumeBakeCS_.Get(), nullptr, 0);
+    ID3D11Buffer* cbuffer = volumeBakeConstantBuffer_.Get();
+    context->CSSetConstantBuffers(0, 1, &cbuffer);
+    ID3D11UnorderedAccessView* uav = volumeUAV_.Get();
+    context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+    const int groups = (request.resolution + 3) / 4;
+    context->Dispatch(groups, groups, groups);
+
+    ID3D11UnorderedAccessView* nullUAV = nullptr;
+    context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+    context->CSSetShader(nullptr, nullptr, 0);
+
+    gpuVolumeBounds_ = request.bounds;
+    gpuVolumeExtinction_ = request.extinctionScale;
+    gpuVolumeBakeActive_ = true;
+    volumeValid_ = true;
+    return true;
 }
 
 void Renderer::UploadParticles(const std::vector<sim::ParticleInstance>& instances,
@@ -1180,19 +1290,43 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         activeVolumeExtinction_ = solver_.ExtinctionScale();
         activeVolumeSplit_ = false;
     } else {
-        // CPU volume bake upload (only when a new bake is available).
-        if (simulation.Volume().HasNewFrame() && !volumeFrame.empty()) {
-            UploadVolume(volumeFrame);
-            simulation.Volume().MarkUploaded(volumeFrame.version);
-        }
-        if (!simulation.Volume().HasData()) {
-            volumeValid_ = false;
+        const sim::SimulationSettings& simSettings = simulation.Settings();
+        bool gpuBake = simSettings.bakeVolume && simSettings.gpuVolumeBake &&
+                       volumeBakeCS_ != nullptr;
+
+        if (gpuBake) {
+            sim::VolumeBakeRequest request;
+            if (simulation.Volume().TakeGpuRequest(request)) {
+                if (!DispatchGpuVolumeBake(request)) {
+                    // Fall back to the CPU baker; it takes over on the next
+                    // scheduled bake.
+                    simulation.Volume().SetGpuBake(false);
+                    gpuBake = false;
+                    gpuVolumeBakeActive_ = false;
+                }
+            }
         }
 
-        activeVolumeValid_ = volumeValid_ && simulation.Volume().HasData();
-        activeVolumeBounds_ = volumeFrame.bounds;
-        activeVolumeExtinction_ = volumeFrame.extinctionScale;
-        activeVolumeSplit_ = volumeSplit_;
+        if (gpuBake) {
+            activeVolumeValid_ = volumeValid_;
+            activeVolumeBounds_ = gpuVolumeBounds_;
+            activeVolumeExtinction_ = gpuVolumeExtinction_;
+            activeVolumeSplit_ = false;
+        } else {
+            // CPU volume bake upload (only when a new bake is available).
+            if (simulation.Volume().HasNewFrame() && !volumeFrame.empty()) {
+                UploadVolume(volumeFrame);
+                simulation.Volume().MarkUploaded(volumeFrame.version);
+            }
+            if (!simulation.Volume().HasData()) {
+                volumeValid_ = false;
+            }
+
+            activeVolumeValid_ = volumeValid_ && simulation.Volume().HasData();
+            activeVolumeBounds_ = volumeFrame.bounds;
+            activeVolumeExtinction_ = volumeFrame.extinctionScale;
+            activeVolumeSplit_ = volumeSplit_;
+        }
     }
 
     // The active volume feeds the raymarch and the smoke shadows on the ground

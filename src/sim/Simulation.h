@@ -48,6 +48,9 @@ struct SimulationSettings {
     int particleBudget = 40000;
     int volumeResolution = 128;
     bool bakeVolume = true;
+    // Evaluate the analytic volume field on the GPU (compute shader) instead of
+    // the CPU thread pool. Falls back automatically if unavailable.
+    bool gpuVolumeBake = true;
     bool autoScaleVolume = true;
 
     // Procedural environment

@@ -97,6 +97,7 @@ void VolumeBaker::Reset() {
     hasData_ = false;
     autoExtent_ = 0.0;
     autoTop_ = 0.0;
+    gpuPending_ = false;
     frame_ = VolumeFrame{};
 }
 
@@ -118,17 +119,7 @@ void VolumeBaker::SetResolution(int resolution) {
     resolution_ = resolution;
 }
 
-void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
-    if (!pool_ || inFlight_.load(std::memory_order_acquire)) {
-        return;
-    }
-    if (ready_.load(std::memory_order_acquire)) {
-        return; // A finished frame is still waiting to be uploaded.
-    }
-    if (frame_.version != uploadedVersion_.load(std::memory_order_acquire)) {
-        return; // The previous frame has not been uploaded yet.
-    }
-
+VolumeBakeRequest VolumeBaker::Prepare(const BlastModel& model) {
     const BlastState& state = model.State();
     const double height = model.GetCharge().heightOfBurstM;
     const double fireballRadius = std::max(state.fireballRadius, 0.05);
@@ -180,14 +171,15 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
         top = std::max(height + maxFireball * 3.2, 1.0);
     }
 
-    VolumeBounds bounds{};
-    bounds.min = XMFLOAT3(centerX - float(halfExtent), 0.0f, centerZ - float(halfExtent));
-    bounds.max = XMFLOAT3(centerX + float(halfExtent), float(top), centerZ + float(halfExtent));
+    VolumeBakeRequest request;
+    request.bounds.min =
+        XMFLOAT3(centerX - float(halfExtent), 0.0f, centerZ - float(halfExtent));
+    request.bounds.max =
+        XMFLOAT3(centerX + float(halfExtent), float(top), centerZ + float(halfExtent));
+    request.resolution = resolution_;
+    request.voxelSize = float(2.0 * halfExtent / double(request.resolution));
 
-    const int resolution = resolution_;
-    const float voxelSize = float(2.0 * halfExtent / double(resolution));
-
-    FieldParams params{};
+    VolumeFieldParams& params = request.params;
     params.time = float(state.time);
     params.ambientTemperature = float(model.GetEnvironment().temperatureK);
     params.fireballX = 0.0f;
@@ -208,33 +200,58 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
     params.shockMach = float(state.shockMach);
     params.burstY = float(height);
     params.extinctionScale = VolumeExtinctionScale(fireballRadius);
-    params.voxelSize = voxelSize;
+    params.voxelSize = request.voxelSize;
 
     // The cloud emerges from the cooling fireball.
     const float capRamp = Saturate((float(state.time) - 0.18f) / 1.2f);
     const float capSize = Saturate(float(cloudRadius) /
                                    std::max(float(fireballRadius) * 1.35f, 0.05f));
     params.cloudStrength = capRamp * capSize;
-
-    job_.params = params;
-    job_.bounds = bounds;
-    job_.extinctionScale = params.extinctionScale;
-    job_.resolution = resolution;
-
-    frame_.resolution = resolution;
-    frame_.bounds = bounds;
-    frame_.extinctionScale = params.extinctionScale;
+    request.extinctionScale = params.extinctionScale;
     // 16-bit half floats up to 512³. 1024³ would exceed the 4 GiB D3D11
     // resource limit as RGBA8, so it is split into two RG8 textures (2 GiB
     // each): RG = density/temperature, RG = dust/soot.
-    frame_.split = resolution >= 1024;
-    frame_.halfFloat = resolution < 1024;
+    request.split = request.resolution >= 1024;
+
+    // Keep the frame metadata in sync for the UI even when the renderer
+    // evaluates the field on the GPU.
+    frame_.resolution = request.resolution;
+    frame_.bounds = request.bounds;
+    frame_.extinctionScale = request.extinctionScale;
+    frame_.split = request.split;
+    frame_.halfFloat = request.resolution < 1024;
     frame_.bytesPerVoxel = frame_.split ? 2 : (frame_.halfFloat ? 8 : 4);
+    return request;
+}
+
+void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
+    if (!pool_ || inFlight_.load(std::memory_order_acquire)) {
+        return;
+    }
+    if (ready_.load(std::memory_order_acquire)) {
+        return; // A finished frame is still waiting to be uploaded.
+    }
+    if (frame_.version != uploadedVersion_.load(std::memory_order_acquire)) {
+        return; // The previous frame has not been uploaded yet.
+    }
+
+    const VolumeBakeRequest request = Prepare(model);
+    if (gpuBake_ && !request.split) {
+        gpuRequest_ = request;
+        gpuPending_ = true;
+        return;
+    }
+
+    job_.params = request.params;
+    job_.bounds = request.bounds;
+    job_.extinctionScale = request.extinctionScale;
+    job_.resolution = request.resolution;
     job_.bytesPerVoxel = frame_.bytesPerVoxel;
     job_.halfFloat = frame_.halfFloat;
-    job_.split = frame_.split;
+    job_.split = request.split;
 
-    const size_t voxelCount = size_t(resolution) * size_t(resolution) * size_t(resolution);
+    const size_t voxelCount = size_t(request.resolution) * size_t(request.resolution) *
+                              size_t(request.resolution);
     try {
         frame_.rgba.resize(voxelCount * size_t(frame_.bytesPerVoxel));
         if (frame_.split) {
@@ -243,7 +260,7 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
             frame_.rgba2.clear();
         }
     } catch (const std::bad_alloc&) {
-        LogError("Volume bake: out of memory for %d^3 (%.2f GB).", resolution,
+        LogError("Volume bake: out of memory for %d^3 (%.2f GB).", request.resolution,
                  double(voxelCount) * double(frame_.bytesPerVoxel) *
                      (frame_.split ? 2.0 : 1.0) / (1024.0 * 1024.0 * 1024.0));
         return;
@@ -256,7 +273,8 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
     ready_.store(false, std::memory_order_release);
 
     const auto start = std::chrono::high_resolution_clock::now();
-    const int sliceChunk = std::max(1, resolution / (int(pool_->WorkerCount()) * 4));
+    const int sliceChunk =
+        std::max(1, request.resolution / (int(pool_->WorkerCount()) * 4));
     BakeJob* job = &job_;
 
     auto finish = [this, start, nextVersion] {
@@ -269,13 +287,13 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
     };
 
     if (synchronous) {
-        pool_->ParallelFor(resolution, sliceChunk, [this, job](int begin, int end) {
+        pool_->ParallelFor(request.resolution, sliceChunk, [this, job](int begin, int end) {
             BakeRange(begin, end, *job);
         });
         finish();
     } else {
         pool_->ParallelForAsync(
-            resolution, sliceChunk,
+            request.resolution, sliceChunk,
             [this, job](int begin, int end) { BakeRange(begin, end, *job); }, finish);
     }
 }
@@ -285,7 +303,29 @@ void VolumeBaker::StartBake(const BlastModel& model) {
 }
 
 void VolumeBaker::BakeNow(const BlastModel& model) {
+    // Synchronous captures must bake the requested state even if an async frame
+    // is still pending; otherwise the final frame can be skipped by the
+    // in-flight guard and the capture shows an older volume.
+    WaitForIdle();
+    ready_.store(false, std::memory_order_release);
+    uploadedVersion_.store(frame_.version, std::memory_order_release);
     Dispatch(model, true);
+}
+
+void VolumeBaker::SetGpuBake(bool enabled) {
+    gpuBake_ = enabled;
+    if (!enabled) {
+        gpuPending_ = false;
+    }
+}
+
+bool VolumeBaker::TakeGpuRequest(VolumeBakeRequest& out) {
+    if (!gpuPending_) {
+        return false;
+    }
+    out = gpuRequest_;
+    gpuPending_ = false;
+    return true;
 }
 
 bool VolumeBaker::Poll() {
@@ -318,7 +358,7 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
     const int resolution = job.resolution;
     const float invResolution = 1.0f / float(resolution);
     const VolumeBounds& bounds = job.bounds;
-    const FieldParams& p = job.params;
+    const VolumeFieldParams& p = job.params;
 
     const float minX = bounds.min.x;
     const float minY = bounds.min.y;

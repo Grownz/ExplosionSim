@@ -26,6 +26,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   27-point binomial filter to the soot channel instead of the axis-only 7-point cross.
   The sweep order alternates per step (X, Y, Z / Z, Y, X) with the source fused into the
   last sweep, which averages the dimensional-splitting error at no extra dispatch cost.
+- **GPU volume bake** - in reduced-order mode the analytic field is now evaluated by a
+  compute shader directly into the volume texture. The CPU only computes the bounds and
+  field parameters, so the per-bake voxel loop and the 16 MB (128³) / 128 MB (256³)
+  upload disappear; the 256³ bake drops from 56 ms on the thread pool to a single GPU
+  dispatch. The CPU baker remains the fallback and still handles the 1024³ split layout.
 
 ## [0.8.0] - 2026-10-28
 

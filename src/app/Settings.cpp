@@ -161,6 +161,8 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
     simulation.volumeResolution =
         std::clamp(ParseInt(values, "volumeResolution", simulation.volumeResolution), 32, 1024);
     simulation.bakeVolume = ParseBool(values, "bakeVolume", simulation.bakeVolume);
+    simulation.gpuVolumeBake =
+        ParseBool(values, "gpuVolumeBake", simulation.gpuVolumeBake);
     simulation.autoScaleVolume = ParseBool(values, "autoScaleVolume", simulation.autoScaleVolume);
 
     simulation.scene.enabled = ParseBool(values, "sceneEnabled", simulation.scene.enabled);
@@ -257,6 +259,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "particleBudget=" << simulation.particleBudget << "\n";
     stream << "volumeResolution=" << simulation.volumeResolution << "\n";
     stream << "bakeVolume=" << (simulation.bakeVolume ? "true" : "false") << "\n";
+    stream << "gpuVolumeBake=" << (simulation.gpuVolumeBake ? "true" : "false") << "\n";
     stream << "autoScaleVolume=" << (simulation.autoScaleVolume ? "true" : "false") << "\n";
     stream << "sceneEnabled=" << (simulation.scene.enabled ? "true" : "false") << "\n";
     stream << "sceneSeed=" << simulation.scene.seed << "\n";

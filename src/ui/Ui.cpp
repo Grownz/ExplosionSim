@@ -1041,6 +1041,9 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
     if (ImGui::Checkbox("Auto-scale volume", &settings.simulation.autoScaleVolume)) {
         actions.applySimulationSettings = true;
     }
+    if (ImGui::Checkbox("GPU volume bake", &settings.simulation.gpuVolumeBake)) {
+        actions.applySimulationSettings = true;
+    }
     ImGui::EndDisabled();
 
     if (highFidelity) {
@@ -1049,7 +1052,7 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
              "applies to the reduced-order volume.");
     } else {
         const sim::VolumeFrame& frame = simulation.Volume().Current();
-        if (!frame.empty()) {
+        if (frame.resolution > 0) {
             const float sizeX = frame.bounds.max.x - frame.bounds.min.x;
             const float sizeY = frame.bounds.max.y - frame.bounds.min.y;
             const float sizeZ = frame.bounds.max.z - frame.bounds.min.z;
@@ -1088,7 +1091,12 @@ void DrawPerformance(UiContext& context) {
     Readout("Frame rate", "%.1f fps", context.fps);
     Readout("Frame time", "%.2f ms", context.frameMs);
     Readout("CPU render", "%.2f ms", context.renderer.Info().cpuRenderMs);
-    Readout("Volume bake", "%.2f ms", context.simulation.Volume().LastBakeMilliseconds());
+    Readout("Volume bake", "%s", context.renderer.GpuVolumeBakeActive()
+                                       ? "GPU"
+                                       : "CPU");
+    if (!context.renderer.GpuVolumeBakeActive()) {
+        Readout("Bake time", "%.2f ms", context.simulation.Volume().LastBakeMilliseconds());
+    }
     Readout("Model", "%s", context.renderer.Info().highFidelity ? "High-fidelity (GPU)"
                                                                 : "Reduced-order");
     Readout("Worker threads", "%d", context.workerThreads);

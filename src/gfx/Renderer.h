@@ -90,6 +90,9 @@ public:
 
     const FrameInfo& Info() const { return info_; }
     int VolumeTextureResolution() const { return volumeResolution_; }
+    // True when the compute-shader volume bake compiled and is available.
+    bool SupportsGpuVolumeBake() const { return volumeBakeCS_ != nullptr; }
+    bool GpuVolumeBakeActive() const { return gpuVolumeBakeActive_; }
 
 private:
     struct Target {
@@ -137,6 +140,17 @@ private:
         DirectX::XMFLOAT4 bloomParams;
     };
 
+    // Must match the cbuffer in volume_bake.hlsl.
+    struct VolumeBakeConstants {
+        DirectX::XMFLOAT4 boundsMin;   // w = resolution
+        DirectX::XMFLOAT4 boundsSize;  // w = voxel size
+        DirectX::XMFLOAT4 fireball;    // w = radius
+        DirectX::XMFLOAT4 fireball2;   // x temp, y visible, z time, w ambient
+        DirectX::XMFLOAT4 cloud;       // w = radius
+        DirectX::XMFLOAT4 cloud2;      // x temp, y stem, z strength, w dust ring
+        DirectX::XMFLOAT4 shock;       // x radius, y mach, z burstY, w dust intensity
+    };
+
     bool CreatePipeline();
     bool CreateStates();
     bool CreateNoiseTexture();
@@ -146,7 +160,9 @@ private:
     bool EnsureSolver(sim::Simulation& simulation);
     void MaybeExpandSolver(const sim::Simulation& simulation);
     void UpdatePlumeModel(sim::Simulation& simulation);
+    bool EnsureVolumeTexture(int resolution, bool halfFloat, bool split);
     void UploadVolume(const sim::VolumeFrame& frame);
+    bool DispatchGpuVolumeBake(const sim::VolumeBakeRequest& request);
     void UploadParticles(const std::vector<sim::ParticleInstance>& instances,
                          ComPtr<ID3D11Buffer>& buffer);
     void UpdateFrameConstants(const sim::Simulation& simulation, const Camera& camera,
@@ -165,13 +181,19 @@ private:
 
     ComPtr<ID3D11Texture3D> volumeTexture_;
     ComPtr<ID3D11ShaderResourceView> volumeSRV_;
+    ComPtr<ID3D11UnorderedAccessView> volumeUAV_;
     ComPtr<ID3D11Texture3D> volumeAuxTexture_;
     ComPtr<ID3D11ShaderResourceView> volumeAuxSRV_;
     ComPtr<ID3D11ShaderResourceView> volumeDummySRV_;
+    ComPtr<ID3D11ComputeShader> volumeBakeCS_;
+    ComPtr<ID3D11Buffer> volumeBakeConstantBuffer_;
+    sim::VolumeBounds gpuVolumeBounds_{};
+    float gpuVolumeExtinction_ = 0.1f;
     int volumeResolution_ = 0;
     bool volumeHalfFloat_ = true;
     bool volumeSplit_ = false;
     bool volumeValid_ = false;
+    bool gpuVolumeBakeActive_ = false;
 
     // Active volume source for the current frame (CPU bake or GPU solver).
     sim::VolumeBounds activeVolumeBounds_{};

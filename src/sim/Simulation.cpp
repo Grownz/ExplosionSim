@@ -261,6 +261,7 @@ void Simulation::ResetInternal(bool holdFuse, bool regenerateScene) {
     particles_.Reset();
     volume_.SetAutoScale(settings_.autoScaleVolume);
     volume_.SetResolution(settings_.volumeResolution);
+    volume_.SetGpuBake(settings_.gpuVolumeBake);
     volume_.Reset();
 
     realTime_ = 0.0;
@@ -313,6 +314,7 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool solverDomainChanged =
         settings_.solverHemisphere != settings.solverHemisphere;
     const bool autoScaleChanged = settings_.autoScaleVolume != settings.autoScaleVolume;
+    const bool gpuBakeChanged = settings_.gpuVolumeBake != settings.gpuVolumeBake;
     // The scene geometry depends on the layout settings and on the charge /
     // environment (the radius and the stored blast fields). Everything else
     // only restarts the simulation and can reuse the generated town.
@@ -325,6 +327,14 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
 
     if (autoScaleChanged) {
         volume_.SetAutoScale(settings_.autoScaleVolume);
+        if (detonated_ && settings_.bakeVolume &&
+            settings_.mode == SimulationMode::ReducedOrder) {
+            volume_.StartBake(blast_);
+        }
+    }
+
+    if (gpuBakeChanged) {
+        volume_.SetGpuBake(settings_.gpuVolumeBake);
         if (detonated_ && settings_.bakeVolume &&
             settings_.mode == SimulationMode::ReducedOrder) {
             volume_.StartBake(blast_);

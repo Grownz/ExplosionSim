@@ -128,6 +128,9 @@ int App::Run(const LaunchOptions& options) {
     if (options_.autoScaleVolumeSet) {
         settings_.simulation.autoScaleVolume = options_.autoScaleVolume;
     }
+    if (options_.gpuVolumeBakeSet) {
+        settings_.simulation.gpuVolumeBake = options_.gpuVolumeBake;
+    }
     if (options_.solverAutoScaleSet) {
         settings_.simulation.solverAutoScale = options_.solverAutoScale;
     }

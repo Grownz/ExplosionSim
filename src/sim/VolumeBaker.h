@@ -19,6 +19,47 @@ struct VolumeBounds {
     DirectX::XMFLOAT3 max{1.0f, 1.0f, 1.0f};
 };
 
+// Analytic field parameters shared by the CPU and GPU bakers. The layout is
+// mirrored by the VolumeBakeConstants buffer in the renderer.
+struct VolumeFieldParams {
+    float time = 0.0f;
+    float ambientTemperature = 288.15f;
+    float fireballX = 0.0f;
+    float fireballY = 0.0f;
+    float fireballZ = 0.0f;
+    float fireballRadius = 1.0f;
+    float fireballTemperature = 288.15f;
+    bool fireballVisible = false;
+    float cloudX = 0.0f;
+    float cloudY = 0.0f;
+    float cloudZ = 0.0f;
+    float cloudRadius = 1.0f;
+    float cloudTemperature = 288.15f;
+    float stemRadius = 1.0f;
+    float cloudStrength = 0.0f;
+    float dustRingRadius = 0.0f;
+    float dustIntensity = 0.0f;
+    float shockRadius = 0.0f;
+    float shockMach = 1.0f;
+    float burstY = 0.0f;
+    float extinctionScale = 0.1f;
+    float voxelSize = 1.0f;
+};
+
+// One bake request: everything needed to produce a volume frame, independent of
+// where it is evaluated. The renderer uses it to dispatch the compute-shader
+// bake; the CPU path uses the same struct.
+struct VolumeBakeRequest {
+    int resolution = 0;
+    VolumeBounds bounds{};
+    float extinctionScale = 0.1f;
+    float voxelSize = 0.0f;
+    bool split = false;
+    VolumeFieldParams params{};
+
+    bool valid() const { return resolution > 0; }
+};
+
 // CPU-side volumetric field in RGBA16F layout:
 //   R = density, G = temperature / 12kK, B = dust mask, A = soot mask.
 // Half precision halves the memory and upload bandwidth compared to RGBA32F,
@@ -56,6 +97,17 @@ public:
     void StartBake(const BlastModel& model);
     void BakeNow(const BlastModel& model);
 
+    // Computes the bounds and field parameters for the current blast state
+    // without evaluating the field. Used by the GPU bake path.
+    VolumeBakeRequest Prepare(const BlastModel& model);
+
+    // When enabled, StartBake/BakeNow only prepare a request; the renderer
+    // evaluates it on the GPU. The CPU bake stays available as a fallback.
+    void SetGpuBake(bool enabled);
+    bool GpuBake() const { return gpuBake_; }
+    // Consumes the pending GPU request (latest wins). Returns false if none.
+    bool TakeGpuRequest(VolumeBakeRequest& out);
+
     bool Poll();
     bool HasNewFrame() const;
     bool CanStartBake() const;
@@ -69,33 +121,8 @@ public:
     void WaitForIdle();
 
 private:
-    struct FieldParams {
-        float time = 0.0f;
-        float ambientTemperature = 288.15f;
-        float fireballX = 0.0f;
-        float fireballY = 0.0f;
-        float fireballZ = 0.0f;
-        float fireballRadius = 1.0f;
-        float fireballTemperature = 288.15f;
-        bool fireballVisible = false;
-        float cloudX = 0.0f;
-        float cloudY = 0.0f;
-        float cloudZ = 0.0f;
-        float cloudRadius = 1.0f;
-        float cloudTemperature = 288.15f;
-        float stemRadius = 1.0f;
-        float cloudStrength = 0.0f;
-        float dustRingRadius = 0.0f;
-        float dustIntensity = 0.0f;
-        float shockRadius = 0.0f;
-        float shockMach = 1.0f;
-        float burstY = 0.0f;
-        float extinctionScale = 0.1f;
-        float voxelSize = 1.0f;
-    };
-
     struct BakeJob {
-        FieldParams params;
+        VolumeFieldParams params;
         VolumeBounds bounds;
         float extinctionScale = 0.1f;
         int resolution = 0;
@@ -122,6 +149,9 @@ private:
     std::atomic<bool> ready_{false};
     std::atomic<uint64_t> uploadedVersion_{0};
     BakeJob job_;
+    bool gpuBake_ = false;
+    bool gpuPending_ = false;
+    VolumeBakeRequest gpuRequest_{};
     float lastBakeMs_ = 0.0f;
 };
 

@@ -111,6 +111,14 @@ the current rigid-body pose, so flames are not hidden inside the mesh.
   for 1024³ (the 4 GiB D3D11 per-resource limit makes a single 1024³ RGBA texture
   impossible)
 - one CPU buffer with an upload handshake; high resolutions are baked at a reduced rate
+- the analytic field is evaluated by the `volume_bake.hlsl` compute shader directly into
+  the `RGBA16F` volume texture (UAV) at up to 30 Hz. The CPU `VolumeBaker` only computes
+  the bounds and field parameters, so there is no voxel loop and no 16 MB (128³) /
+  128 MB (256³) upload per bake. The CPU baker remains as a fallback and owns the 1024³
+  split `RG8` layout, whose format has no typed UAV store
+- *Rendering > GPU volume bake* (default on, `--no-gpu-volume-bake` on the command line)
+  selects the backend; if the shader or the constant buffer cannot be created the
+  renderer falls back to the CPU baker on the next scheduled bake
 - auto-scale bounds (default) follow the fireball, smoke envelope, cap and base dust
   with a 10 % margin; the box only grows and the fixed voxel count means the effective
   accuracy drops as the box grows (the UI shows the box size and voxel size)
