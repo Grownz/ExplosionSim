@@ -18,8 +18,10 @@ namespace ex::gfx {
 // ceiling, so the resolved cloud sat far below the analytic shock front.
 inline double SolverHalfExtentForBurst(double heightOfBurstM, double fireballRadiusM) {
     const double fireball = std::max(fireballRadiusM, 0.1);
+    // 0.55 h keeps the burst and its fireball below the absorbing sponge, which
+    // occupies the outer 6 % of the domain top.
     return std::max(3.0 * fireball,
-                    0.5 * std::max(heightOfBurstM, 0.0) + 1.5 * fireball);
+                    0.55 * std::max(heightOfBurstM, 0.0) + 1.5 * fireball);
 }
 
 // Configuration of the GPU compressible-flow solver. The domain is a cube of
