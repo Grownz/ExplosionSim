@@ -6,6 +6,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Atmospheric shock front** - the pressure wave is now visible in the air as a
+  refracting spherical shell. The index jump follows the Gladstone-Dale relation and
+  the Rankine-Hugoniot density ratio; the scene behind the front is bent in screen
+  space along the projected density gradient, with a faint caustic rim and slight
+  dispersion. The pass runs before bloom, so the smoke and the sky are distorted
+  together, and it uses the far side of the shell after the front has passed the
+  camera.
+- **Directional heat damage on objects** - burning objects no longer glow orange all
+  over. Only the surface facing the burst receives the ember glow and the flame
+  particles, while the leeward side keeps its charred material colour. Short ember
+  streaks leave the two outer edges of the irradiated face and are blown away from
+  the burst.
+
 ### Fixed
 
 - **Bloom no longer lingers after rearm or restart** - the bloom mip chain is

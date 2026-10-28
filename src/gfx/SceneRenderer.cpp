@@ -1142,7 +1142,8 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
 
 void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
                                  const scene::Scene& scene, const ViewInfo& view,
-                                 const XMFLOAT4X4* lightViewProj) {
+                                 const XMFLOAT4X4* lightViewProj,
+                                 const XMFLOAT3& burstCenter) {
     if (!device_ || !context) {
         return;
     }
@@ -1237,7 +1238,24 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         XMStoreFloat4x4(&instance.transform, world);
         instance.color = color;
         instance.params = XMFLOAT4(object.damageAmount, sway, object.swayPhase, type);
-        instance.state = XMFLOAT4(object.burning ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+        // The heat glow is directional: yzw is the unit vector from the object
+        // centre to the burst, so the shader can light only the facing side.
+        XMFLOAT3 blastDirection(0.0f, 0.0f, 1.0f);
+        {
+            const XMFLOAT3 toBlast(burstCenter.x - objectCenter.x,
+                                   burstCenter.y - objectCenter.y,
+                                   burstCenter.z - objectCenter.z);
+            const float blastLength =
+                std::sqrt(toBlast.x * toBlast.x + toBlast.y * toBlast.y +
+                          toBlast.z * toBlast.z);
+            if (blastLength > 1e-4f) {
+                blastDirection = XMFLOAT3(toBlast.x / blastLength,
+                                          toBlast.y / blastLength,
+                                          toBlast.z / blastLength);
+            }
+        }
+        instance.state = XMFLOAT4(object.burning ? 1.0f : 0.0f, blastDirection.x,
+                                  blastDirection.y, blastDirection.z);
         // Building space for the facade (buildings are axis-aligned).
         instance.textureOrigin =
             XMFLOAT4(object.position.x, 0.0f, object.position.z, 0.0f);

@@ -312,6 +312,7 @@ void Scene::Clear() {
     objects_.clear();
     debrisSpawns_.clear();
     fireSpawns_.clear();
+    emberSpawns_.clear();
     pendingFailures_.clear();
     bodyChunk_.clear();
     physics_.Clear();
@@ -340,6 +341,7 @@ void Scene::ResetState() {
     }
     debrisSpawns_.clear();
     fireSpawns_.clear();
+    emberSpawns_.clear();
     pendingFailures_.clear();
     bodyChunk_.clear();
     physics_.Clear();
@@ -375,6 +377,7 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
     objects_.clear();
     debrisSpawns_.clear();
     fireSpawns_.clear();
+    emberSpawns_.clear();
     pendingFailures_.clear();
     bodyChunk_.clear();
     physics_.Clear();
@@ -954,6 +957,8 @@ void Scene::Update(const sim::BlastModel& blast, float dtSim) {
         }
     }
 
+    const DirectX::XMFLOAT3 burst(
+        0.0f, float(blast.GetCharge().heightOfBurstM), 0.0f);
     for (SceneObject& object : objects_) {
         if (!object.burning) {
             continue;
@@ -961,48 +966,74 @@ void Scene::Update(const sim::BlastModel& blast, float dtSim) {
         object.burnTimer += dtSim;
         if (object.burnTimer >= 0.25f) {
             object.burnTimer -= 0.25f;
-            SceneFireSpawn spawn;
-            // Spawn on the visible surface, not at the object centre: a flame
-            // billboard buried inside the mesh is fully hidden by the soft
-            // depth fade. Trees use the canopy rim, vehicles the roof and
-            // buildings the roof rim.
-            const float phase = float(object.id) * 1.7f + float(time_) * 2.3f;
-            DirectX::XMFLOAT3 offset{};
-            if (object.type == SceneObjectType::Tree) {
-                offset = DirectX::XMFLOAT3(std::cos(phase) * object.size.x * 0.62f,
-                                           object.size.y * 0.16f,
-                                           std::sin(phase) * object.size.x * 0.62f);
-                spawn.scale = 0.8f;
-            } else if (object.type == SceneObjectType::Vehicle) {
-                offset = DirectX::XMFLOAT3(std::cos(phase) * object.size.x * 0.30f,
-                                           object.size.y * 0.28f,
-                                           std::sin(phase) * object.size.z * 0.30f);
-                spawn.scale = 0.5f;
-            } else {
-                offset = DirectX::XMFLOAT3(std::cos(phase) * object.size.x * 0.30f,
-                                           object.size.y * 0.38f,
-                                           std::sin(phase) * object.size.z * 0.30f);
-                spawn.scale = 0.5f;
-            }
-
             DirectX::XMFLOAT3 center(object.position.x, object.size.y * 0.5f,
                                      object.position.z);
             if (object.bodyIndex >= 0 &&
                 object.bodyIndex < int(physics_.Bodies().size())) {
                 // Burning trees and vehicles may have been thrown by the
                 // blast; follow their current rigid-body pose.
-                const RigidBody& body = physics_.Bodies()[object.bodyIndex];
-                const DirectX::XMVECTOR rotated = DirectX::XMVector3Rotate(
-                    DirectX::XMLoadFloat3(&offset),
-                    DirectX::XMLoadFloat4(&body.orientation));
-                DirectX::XMStoreFloat3(&offset, rotated);
-                center = body.position;
+                center = physics_.Bodies()[object.bodyIndex].position;
             }
+
+            // Heat arrives from the burst, so the flames and the edge burst
+            // only exist on the blast-facing side of the object.
+            DirectX::XMFLOAT3 toBlast(burst.x - center.x, burst.y - center.y,
+                                      burst.z - center.z);
+            float horizontal =
+                std::sqrt(toBlast.x * toBlast.x + toBlast.z * toBlast.z);
+            DirectX::XMFLOAT3 facing(0.0f, 0.0f, 1.0f);
+            if (horizontal > 1e-3f) {
+                facing = DirectX::XMFLOAT3(toBlast.x / horizontal, 0.0f,
+                                           toBlast.z / horizontal);
+            }
+
+            const float phase = float(object.id) * 1.7f + float(time_) * 2.3f;
+            const DirectX::XMFLOAT3 side(-facing.z, 0.0f, facing.x);
+            const float faceExtent =
+                0.5f * (std::abs(side.x) * object.size.x +
+                        std::abs(side.z) * object.size.z);
+            SceneFireSpawn spawn;
+            spawn.scale = object.type == SceneObjectType::Tree ? 0.8f : 0.5f;
+            // Keep the flame on the irradiated surface: the billboard centre
+            // sits on the blast-facing face and is spread laterally so the
+            // whole side burns, not just a single spot.
+            const float lateral = std::cos(phase) * faceExtent * 0.65f;
+            DirectX::XMFLOAT3 offset(
+                facing.x * object.size.x * 0.5f + side.x * lateral,
+                object.size.y * (object.type == SceneObjectType::Tree
+                                     ? 0.55f
+                                     : 0.42f + 0.22f * (0.5f + 0.5f * std::sin(phase))),
+                facing.z * object.size.z * 0.5f + side.z * lateral);
             spawn.position = DirectX::XMFLOAT3(center.x + offset.x,
                                                center.y + offset.y,
                                                center.z + offset.z);
             spawn.count = object.type == SceneObjectType::Tree ? 3 : 2;
             fireSpawns_.push_back(spawn);
+
+            // Short line bursts leave the two outer vertical edges of the
+            // blast-facing face and are blown away from the burst. Collapsed
+            // objects no longer have that edge, so they keep only the flames.
+            if (!object.collapsed) {
+                const float edgeHeight =
+                    object.size.y *
+                    (0.35f + 0.5f * float((object.id * 37u + 11u) % 7u) / 6.0f);
+                const float emberScale =
+                    std::clamp(std::max(object.size.x, object.size.z) * 0.12f, 0.35f,
+                               1.2f);
+                for (int edge = -1; edge <= 1; edge += 2) {
+                    SceneEmberSpawn ember;
+                    ember.position = DirectX::XMFLOAT3(
+                        center.x + facing.x * object.size.x * 0.5f +
+                            side.x * faceExtent * float(edge),
+                        center.y - object.size.y * 0.5f + edgeHeight,
+                        center.z + facing.z * object.size.z * 0.5f +
+                            side.z * faceExtent * float(edge));
+                    ember.direction = DirectX::XMFLOAT3(-facing.x, 0.35f, -facing.z);
+                    ember.count = 1;
+                    ember.scale = emberScale;
+                    emberSpawns_.push_back(ember);
+                }
+            }
         }
     }
 
@@ -1468,6 +1499,12 @@ std::vector<SceneDebrisSpawn> Scene::ConsumeDebrisSpawns() {
 std::vector<SceneFireSpawn> Scene::ConsumeFireSpawns() {
     std::vector<SceneFireSpawn> result = std::move(fireSpawns_);
     fireSpawns_.clear();
+    return result;
+}
+
+std::vector<SceneEmberSpawn> Scene::ConsumeEmberSpawns() {
+    std::vector<SceneEmberSpawn> result = std::move(emberSpawns_);
+    emberSpawns_.clear();
     return result;
 }
 

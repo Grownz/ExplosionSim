@@ -26,6 +26,7 @@ struct ParticleOutput
     float size : TEXCOORD5;
     float intensity : TEXCOORD6;
     float3 worldPosition : TEXCOORD7;
+    float streak : TEXCOORD8;
 };
 
 ParticleOutput VSParticle(uint vertexID : SV_VertexID, uint instanceID : SV_InstanceID)
@@ -47,7 +48,6 @@ ParticleOutput VSParticle(uint vertexID : SV_VertexID, uint instanceID : SV_Inst
                    (CameraRight.xyz * rotated.x + CameraUp.xyz * rotated.y) * max(size, 0.02);
 
     ParticleOutput output;
-    output.position = mul(ViewProj, float4(world, 1.0));
     output.uv = rotated;
     output.color = instance.color;
     output.opacity = instance.opacity;
@@ -57,6 +57,38 @@ ParticleOutput VSParticle(uint vertexID : SV_VertexID, uint instanceID : SV_Inst
     output.intensity = instance.padding.x > 0.0 ? instance.padding.x : 1.0;
     // Fragment world position, used to keep the flame pattern world-anchored.
     output.worldPosition = world;
+    output.streak = 0.0;
+
+    if (instance.padding.y > 0.5)
+    {
+        // Edge ember: a short screen-space line along the velocity direction.
+        // The colour slot carries the direction, the size is the length.
+        const float4 clipStart = mul(ViewProj, float4(instance.position, 1.0));
+        const float4 clipEnd =
+            mul(ViewProj, float4(instance.position + instance.color * instance.size, 1.0));
+        const float2 start = clipStart.xy / max(clipStart.w, 1e-4);
+        const float2 end = clipEnd.xy / max(clipEnd.w, 1e-4);
+
+        // Build the quad in pixels so the width stays constant at any aspect.
+        const float2 sizePixels = ScreenParams.xy;
+        const float2 startPixels = (start * 0.5 + 0.5) * sizePixels;
+        const float2 endPixels = (end * 0.5 + 0.5) * sizePixels;
+        const float2 delta = endPixels - startPixels;
+        const float lengthPixels = max(length(delta), 4.0);
+        const float2 axis = length(delta) > 0.01 ? delta / length(delta)
+                                                 : float2(0.0, 1.0);
+        const float2 perpendicular = float2(-axis.y, axis.x);
+        const float2 pixels = startPixels + axis * corner.y * lengthPixels * 0.5 +
+                              perpendicular * corner.x * 1.6;
+        const float2 ndc = pixels * ScreenParams.zw * 2.0 - 1.0;
+
+        output.position = float4(ndc, clipStart.z / max(clipStart.w, 1e-4), 1.0);
+        output.streak = 1.0;
+    }
+    else
+    {
+        output.position = mul(ViewProj, float4(world, 1.0));
+    }
     return output;
 }
 
@@ -80,6 +112,19 @@ float3 ParticleLighting(float2 uv)
 // Glowing sparks, hot debris and flame tongues (additive).
 float4 PSAdditive(ParticleOutput input) : SV_Target
 {
+    if (input.streak > 0.5)
+    {
+        // Edge line burst: bright core, soft sides and a fade towards both
+        // ends so the streak does not read as a hard rectangle.
+        const float across = saturate(1.0 - abs(input.uv.x));
+        const float along = abs(input.uv.y);
+        const float body = across * across * smoothstep(1.0, 0.45, along);
+        const float3 color = lerp(float3(1.0, 0.30, 0.04), float3(1.0, 0.86, 0.62),
+                                  smoothstep(0.0, 0.7, across) * (1.0 - along));
+        const float fade = SoftDepthFade(input);
+        return float4(color * input.intensity * input.opacity * body * fade * 2.4, 1.0);
+    }
+
     float radiusSquared = dot(input.uv, input.uv);
     if (radiusSquared > 1.0)
     {

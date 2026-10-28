@@ -280,6 +280,7 @@ bool Renderer::CreatePipeline() {
     const wchar_t* skyFile = L"assets\\shaders\\sky.hlsl";
     const wchar_t* groundFile = L"assets\\shaders\\ground.hlsl";
     const wchar_t* volumeFile = L"assets\\shaders\\volume.hlsl";
+    const wchar_t* shockFile = L"assets\\shaders\\shock.hlsl";
     const wchar_t* particlesFile = L"assets\\shaders\\particles.hlsl";
     const wchar_t* bloomFile = L"assets\\shaders\\bloom.hlsl";
     const wchar_t* compositeFile = L"assets\\shaders\\composite.hlsl";
@@ -288,6 +289,7 @@ bool Renderer::CreatePipeline() {
     auto skyBlob = compile(skyFile, "PSSky", "ps_5_0");
     auto groundBlob = compile(groundFile, "PSGround", "ps_5_0");
     auto volumeBlob = compile(volumeFile, "PSVolume", "ps_5_0");
+    auto shockBlob = compile(shockFile, "PSShock", "ps_5_0");
     auto particleVSBlob = compile(particlesFile, "VSParticle", "vs_5_0");
     auto particleAddBlob = compile(particlesFile, "PSAdditive", "ps_5_0");
     auto particleAlphaBlob = compile(particlesFile, "PSAlpha", "ps_5_0");
@@ -306,9 +308,9 @@ bool Renderer::CreatePipeline() {
     auto particleResetBlob =
         compile(L"assets\\shaders\\particles_gpu.hlsl", "CSReset", "cs_5_0");
 
-    if (!vsBlob || !skyBlob || !groundBlob || !volumeBlob || !particleVSBlob ||
-        !particleAddBlob || !particleAlphaBlob || !particleFireBlob ||
-        !downsampleBlob || !upsampleBlob || !compositeBlob) {
+    if (!vsBlob || !skyBlob || !groundBlob || !volumeBlob || !shockBlob ||
+        !particleVSBlob || !particleAddBlob || !particleAlphaBlob ||
+        !particleFireBlob || !downsampleBlob || !upsampleBlob || !compositeBlob) {
         LogError("One or more shaders failed to compile.");
         return false;
     }
@@ -325,6 +327,7 @@ bool Renderer::CreatePipeline() {
 
     if (!createVS(vsBlob.Get(), fullscreenVS_) || !createPS(skyBlob.Get(), skyPS_) ||
         !createPS(groundBlob.Get(), groundPS_) || !createPS(volumeBlob.Get(), volumePS_) ||
+        !createPS(shockBlob.Get(), shockPS_) ||
         !createVS(particleVSBlob.Get(), particleVS_) ||
         !createPS(particleAddBlob.Get(), particleAdditivePS_) ||
         !createPS(particleAlphaBlob.Get(), particleAlphaPS_) ||
@@ -504,6 +507,9 @@ bool Renderer::EnsureTargets(int width, int height) {
     }
 
     if (!CreateTarget(hdr_, width, height)) {
+        return false;
+    }
+    if (!CreateTarget(hdrCopy_, width, height)) {
         return false;
     }
 
@@ -1075,6 +1081,11 @@ void Renderer::UpdateFrameConstants(const sim::Simulation& simulation, const Cam
     frameConstants_.misc3 = XMFLOAT4(float(state.time), float(state.time - lastSimTime_),
                                      float(frameIndex_), float(state.shockRadius));
     lastSimTime_ = state.time;
+
+    // Burst centre and shock strength for the atmospheric refraction pass.
+    frameConstants_.blast =
+        XMFLOAT4(0.0f, float(blast.GetCharge().heightOfBurstM), 0.0f,
+                 float(state.shockMach));
 
     frameConstants_.wind = XMFLOAT4(float(environment.WindX()), 0.0f,
                                     float(environment.WindZ()), float(environment.windSpeedMs));
@@ -1877,8 +1888,10 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     sceneRenderer_.RenderStaticShadow(context, simulation.Scene(),
                                       shadowConstants_.staticLightViewProj,
                                       staticShadowKey);
+    const XMFLOAT3 burstCenter(
+        0.0f, float(simulation.Blast().GetCharge().heightOfBurstM), 0.0f);
     sceneRenderer_.RenderShadow(context, simulation.Scene(), sceneView,
-                                shadowConstants_.lightViewProj);
+                                shadowConstants_.lightViewProj, burstCenter);
 
     // --- Ground ------------------------------------------------------------
     if (settings.enableGround) {
@@ -2069,6 +2082,32 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
         context->VSSetShaderResources(0, 1, nullSRVs);
         context->PSSetShaderResources(0, 2, nullSRVs);
+    }
+
+    // --- Shock-front refraction ---------------------------------------------
+    // The air compressed by the blast front has a higher refractive index
+    // (Gladstone-Dale: n - 1 = K rho), so the front acts as a thin spherical
+    // lens. The pass bends the already rendered scene along the projected
+    // density gradient. It runs before bloom so the distorted image is what
+    // gets bloomed.
+    const sim::BlastState& shockState = simulation.Blast().State();
+    if (shockState.time > 1e-4 && shockState.shockRadius > 0.5 &&
+        shockState.shockMach > 1.01 && hdrCopy_.texture) {
+        // The source is still bound as a render target; unbind it before the
+        // copy so the runtime does not see a read/write conflict.
+        context->OMSetRenderTargets(0, nullptr, nullptr);
+        context->CopyResource(hdrCopy_.texture.Get(), hdr_.texture.Get());
+        context->OMSetRenderTargets(1, &hdrRTV, nullptr);
+        context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+        context->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xffffffff);
+        SetViewport(hdr_.width, hdr_.height);
+        ID3D11ShaderResourceView* shockInputs[2] = {hdrCopy_.srv.Get(), depthSample};
+        context->PSSetShaderResources(0, 2, shockInputs);
+        context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
+        context->PSSetShader(shockPS_.Get(), nullptr, 0);
+        context->Draw(3, 0);
+        ID3D11ShaderResourceView* nullShock[2] = {nullptr, nullptr};
+        context->PSSetShaderResources(0, 2, nullShock);
     }
 
     // --- Post processing ---------------------------------------------------

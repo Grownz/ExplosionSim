@@ -60,6 +60,7 @@ static const uint kSpark = 1;
 static const uint kFire = 2;
 static const uint kSmoke = 3;
 static const uint kDust = 4;
+static const uint kEmber = 5;
 
 float HashNoise(float x, float y, float z)
 {
@@ -200,6 +201,17 @@ void CSIntegrate(uint3 id : SV_DispatchThreadID)
         p.opacity = clamp((p.temperature - 800.0f) / 1200.0f, 0.0f, 1.0f) *
                     (1.0f - lifeRatio * lifeRatio);
     }
+    else if (p.kind == kEmber)
+    {
+        const float speed = length(p.velocity);
+        const float dragMagnitude = p.drag * speed;
+        p.velocity += p.velocity * (-dragMagnitude * dt);
+        p.velocity.y -= gravity * dt;
+        p.position += p.velocity * dt;
+
+        p.temperature = ambient + (p.temperature - ambient) * exp(-dt / 0.8f);
+        p.opacity = pow(max(0.0f, 1.0f - lifeRatio), 1.2f);
+    }
     else if (p.kind == kFire)
     {
         const float speed = length(p.velocity);
@@ -277,6 +289,19 @@ void CSIntegrate(uint3 id : SV_DispatchThreadID)
     if (p.kind == kDebris || p.kind == kSpark)
     {
         instance.color = BlackbodyColor(p.temperature);
+        AppendInstance(0, instance);
+    }
+    else if (p.kind == kEmber)
+    {
+        // Streak instances: the colour slot carries the velocity direction,
+        // pad1 marks the stretched line and the variation carries the fade.
+        const float speed = length(p.velocity);
+        const float inverse = speed > 1e-4f ? 1.0f / speed : 0.0f;
+        instance.color = p.velocity * inverse;
+        instance.rotation = 0.0f;
+        instance.variation = p.opacity;
+        instance.pad0 = 1.8f;
+        instance.pad1 = 1.0f;
         AppendInstance(0, instance);
     }
     else if (p.kind == kFire)

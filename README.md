@@ -19,6 +19,11 @@ start-up at 0.4 m above the ground**.
 - **Real-time volumetric rendering** – the fireball, shock front and smoke field are
   baked into a 3D texture (64³–1024³) on a worker pool and ray-marched on the GPU with
   emission/absorption, blackbody colour, single scattering and HDR bloom.
+- **Atmospheric shock-front refraction** – the pressure front is a thin spherical shell
+  around the burst. Its Gladstone-Dale index jump is computed from the Rankine-Hugoniot
+  density ratio, and the resulting lens bends the rendered scene in screen space along
+  the projected density gradient. A faint caustic rim keeps the front visible against
+  the sky, and the far side is used once the front has passed the camera.
 - **Sub-voxel detail** – a tileable 3D noise texture warps the volume sample position
   and adds fine structure, so even moderate volume resolutions look turbulent.
 - **Multithreading** – a work-stealing thread pool parallelises particle integration and
@@ -30,10 +35,10 @@ start-up at 0.4 m above the ground**.
   Rearm, Reset and loop restarts reuse the generated town instead of rebuilding it.
 - **Cinematic particles** – instanced billboards for glowing debris, sparks,
   soot and shock-driven ground dust. Fire is rendered by a GPU flame shader that adds
-  fbm turbulence, a heat ramp and soft depth fading in one instanced draw call; burning
-  objects spawn their flames on the visible canopy or roof surface and keep them in both
-  render modes. Flames are drawn before the smoke volume, so the cloud occludes and
-  scatters over them.
+  fbm turbulence, a heat ramp and soft depth fading in one instanced draw call. Burning
+  objects keep their glow and flames on the blast-facing surface only, and short ember
+  streaks leave the two outer edges of that face. Flames are drawn before the smoke
+  volume, so the cloud occludes and scatters over them.
 - **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
   1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
   pressure waveform.

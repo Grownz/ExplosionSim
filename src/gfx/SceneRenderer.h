@@ -51,7 +51,8 @@ public:
     // them when the scene is disabled. Must run before the ground pass.
     void RenderShadow(ID3D11DeviceContext* context, const scene::Scene& scene,
                       const ViewInfo& view,
-                      const DirectX::XMFLOAT4X4* lightViewProj);
+                      const DirectX::XMFLOAT4X4* lightViewProj,
+                      const DirectX::XMFLOAT3& burstCenter);
 
     // Main opaque scene pass. Must run after the ground pass and before the
     // depth snapshot / volumetric pass.

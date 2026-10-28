@@ -558,10 +558,17 @@ float4 PSScene(VSOutput input) : SV_Target
     float3 ambient = float3(0.16, 0.17, 0.20);
     float3 color = baseColor * (SunColor.rgb * sunAmount * 1.15 + ambient);
 
-    // Burning objects glow with a flickering ember tint.
+    // Burning objects glow with a flickering ember tint. The heat arrives from
+    // the burst, so only the surface that faces it is irradiated; the leeward
+    // side keeps the charred material colour.
     float burning = saturate(input.State.x);
+    float3 toBurst = normalize(input.State.yzw + float3(1e-5, 0.0, 0.0));
+    float facing = saturate(dot(normal, toBurst));
+    float heat = burning * smoothstep(0.05, 0.65, facing);
     float ember = 0.35 + 0.35 * saturate(sin(Misc3.x * 3.0 + input.WorldPosition.y * 0.6));
-    color += float3(1.0, 0.35, 0.08) * burning * ember;
+    color += float3(1.0, 0.35, 0.08) * heat * ember;
+    // A thin hotter rim where the facing surface turns away from the blast.
+    color += float3(1.0, 0.55, 0.16) * heat * pow(1.0 - facing, 4.0) * ember * 0.6;
 
     // Distance haze, matching the ground and sky.
     float3 viewDirection = toCamera / max(viewDistance, 1e-4);

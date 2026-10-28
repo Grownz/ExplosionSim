@@ -142,6 +142,7 @@ private:
         DirectX::XMFLOAT4 volumeParams2;
         DirectX::XMFLOAT4 lightVolumeMin;
         DirectX::XMFLOAT4 lightVolumeMax;
+        DirectX::XMFLOAT4 blast;
     };
 
     struct BloomConstants {
@@ -194,6 +195,9 @@ private:
     double lastSimTime_ = 0.0;
 
     Target hdr_;
+    // Snapshot of the HDR buffer for the shock-front refraction pass, which
+    // samples the scene while writing back into hdr_.
+    Target hdrCopy_;
     static constexpr int kBloomLevels = 5;
     Target bloom_[kBloomLevels];
 
@@ -288,6 +292,7 @@ private:
     ComPtr<ID3D11PixelShader> particleAdditivePS_;
     ComPtr<ID3D11PixelShader> particleAlphaPS_;
     ComPtr<ID3D11PixelShader> particleFirePS_;
+    ComPtr<ID3D11PixelShader> shockPS_;
     ComPtr<ID3D11PixelShader> downsamplePS_;
     ComPtr<ID3D11PixelShader> upsamplePS_;
     ComPtr<ID3D11PixelShader> compositePS_;

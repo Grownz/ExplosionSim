@@ -455,6 +455,7 @@ void Simulation::UpdateScene(double dtSim) {
 
     const std::vector<scene::SceneDebrisSpawn> spawns = scene_.ConsumeDebrisSpawns();
     const std::vector<scene::SceneFireSpawn> fires = scene_.ConsumeFireSpawns();
+    const std::vector<scene::SceneEmberSpawn> embers = scene_.ConsumeEmberSpawns();
     if (settings_.mode == SimulationMode::ReducedOrder) {
         for (const scene::SceneDebrisSpawn& spawn : spawns) {
             particles_.SpawnSceneDebris(spawn.position, spawn.count, spawn.scale,
@@ -465,6 +466,10 @@ void Simulation::UpdateScene(double dtSim) {
     // both modes; the high-fidelity solver only replaces the blast particles.
     for (const scene::SceneFireSpawn& fire : fires) {
         particles_.SpawnSceneFire(fire.position, fire.count, fire.scale);
+    }
+    for (const scene::SceneEmberSpawn& ember : embers) {
+        particles_.SpawnSceneEmbers(ember.position, ember.direction, ember.count,
+                                    ember.scale);
     }
 }
 

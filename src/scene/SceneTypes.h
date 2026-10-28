@@ -90,6 +90,15 @@ struct SceneFireSpawn {
     float scale = 0.5f;
 };
 
+// Short line burst that leaves the outer edge of a burning object. `direction`
+// points away from the burst (the direction the embers are blown).
+struct SceneEmberSpawn {
+    DirectX::XMFLOAT3 position{};
+    DirectX::XMFLOAT3 direction{};
+    int count = 1;
+    float scale = 0.5f;
+};
+
 // Generation summary, mainly used for logging and benchmarks.
 struct SceneStats {
     int buildings = 0;
@@ -168,6 +177,7 @@ public:
     // Damage events accumulated since the last call (drained by Simulation).
     std::vector<SceneDebrisSpawn> ConsumeDebrisSpawns();
     std::vector<SceneFireSpawn> ConsumeFireSpawns();
+    std::vector<SceneEmberSpawn> ConsumeEmberSpawns();
 
     const PhysicsWorld& Physics() const { return physics_; }
 
@@ -199,6 +209,7 @@ private:
     std::vector<SceneObject> objects_;
     std::vector<SceneDebrisSpawn> debrisSpawns_;
     std::vector<SceneFireSpawn> fireSpawns_;
+    std::vector<SceneEmberSpawn> emberSpawns_;
     std::vector<PendingJointFailure> pendingFailures_;
     // Maps a physics body index back to (object, chunk) for contact damage.
     std::vector<std::pair<int, int>> bodyChunk_;

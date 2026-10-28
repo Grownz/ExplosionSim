@@ -28,6 +28,7 @@ cbuffer FrameConstants : register(b0)
     float4 VolumeParams2;    // x = scattering gain, y = emission gain, z = fireball light, w = use light volume
     float4 LightVolumeMin;   // xyz = solver-frame light volume minimum
     float4 LightVolumeMax;   // xyz = solver-frame light volume maximum
+    float4 Blast;            // xyz = burst centre, w = shock Mach number
 };
 
 cbuffer BloomConstants : register(b1)

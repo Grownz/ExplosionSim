@@ -70,11 +70,12 @@ void ParticleSystem::Initialize(int capacity) {
     particles_.assign(size_t(capacity), Particle{});
 
     // Species ranges. The split favours the visually dominant fire and smoke.
-    const int debris = int(capacity * 0.05f);
-    const int sparks = int(capacity * 0.12f);
-    const int fire = int(capacity * 0.26f);
-    const int smoke = int(capacity * 0.31f);
-    const int dust = capacity - debris - sparks - fire - smoke;
+    const int debris = int(capacity * 0.04f);
+    const int sparks = int(capacity * 0.11f);
+    const int fire = int(capacity * 0.25f);
+    const int smoke = int(capacity * 0.30f);
+    const int embers = int(capacity * 0.04f);
+    const int dust = capacity - debris - sparks - fire - smoke - embers;
 
     rangeBegin_[int(ParticleKind::Debris)] = 0;
     rangeEnd_[int(ParticleKind::Debris)] = debris;
@@ -86,6 +87,9 @@ void ParticleSystem::Initialize(int capacity) {
     rangeEnd_[int(ParticleKind::Smoke)] = debris + sparks + fire + smoke;
     rangeBegin_[int(ParticleKind::Dust)] = debris + sparks + fire + smoke;
     rangeEnd_[int(ParticleKind::Dust)] = rangeBegin_[int(ParticleKind::Dust)] + dust;
+    rangeBegin_[int(ParticleKind::Ember)] = rangeEnd_[int(ParticleKind::Dust)];
+    rangeEnd_[int(ParticleKind::Ember)] =
+        rangeBegin_[int(ParticleKind::Ember)] + embers;
 
     additive_.reserve(size_t(capacity));
     alpha_.reserve(size_t(capacity));
@@ -355,6 +359,36 @@ void ParticleSystem::SpawnSceneFire(const DirectX::XMFLOAT3& center, int count,
     }
 }
 
+void ParticleSystem::SpawnSceneEmbers(const DirectX::XMFLOAT3& position,
+                                      const DirectX::XMFLOAT3& direction,
+                                      int count, float scale) {
+    for (int i = 0; i < count; ++i) {
+        const int slot = AcquireSlot(ParticleKind::Ember);
+        if (slot < 0) {
+            return;
+        }
+        Particle& p = particles_[slot];
+        const XMFLOAT3 jitter = rng_.UnitVector();
+        p.position = Add(position, Scale(jitter, rng_.Range(0.0f, 0.35f) * scale));
+        const float speed = rng_.Range(7.0f, 16.0f);
+        p.velocity = XMFLOAT3(direction.x * speed + jitter.x * 2.0f,
+                              direction.y * speed + rng_.Range(1.0f, 3.5f),
+                              direction.z * speed + jitter.z * 2.0f);
+        // The streak length is the billboard size; short lifetimes keep the
+        // burst local to the edge instead of turning into a spark shower.
+        p.size = rng_.Range(1.4f, 3.2f) * scale;
+        p.life = 0.0f;
+        p.maxLife = rng_.Range(0.22f, 0.48f);
+        p.temperature = rng_.Range(2200.0f, 3200.0f);
+        p.opacity = 1.0f;
+        p.growth = 0.0f;
+        p.drag = 2.4f;
+        p.seed = rng_.Float01() * 1000.0f;
+        p.kind = ParticleKind::Ember;
+        p.alive = true;
+    }
+}
+
 void ParticleSystem::UpdateSpawners(float dt, const BlastModel& model) {
     const BlastState& state = model.State();
     const float time = float(state.time);
@@ -572,6 +606,18 @@ void ParticleSystem::IntegrateRange(int begin, int end, float dt, const Forces& 
                         (1.0f - lifeRatio * lifeRatio);
             break;
         }
+        case ParticleKind::Ember: {
+            const float speed = Length(p.velocity);
+            const float dragMagnitude = p.drag * speed;
+            p.velocity = Add(p.velocity, Scale(p.velocity, -dragMagnitude * dt));
+            p.velocity.y -= forces.gravity * dt;
+            p.position = Add(p.position, Scale(p.velocity, dt));
+
+            p.temperature = forces.ambientTemperature +
+                            (p.temperature - forces.ambientTemperature) * std::exp(-dt / 0.8f);
+            p.opacity = std::pow(std::max(0.0f, 1.0f - lifeRatio), 1.2f);
+            break;
+        }
         case ParticleKind::Fire: {
             const float speed = Length(p.velocity);
             const float dragMagnitude = p.drag * speed;
@@ -674,6 +720,19 @@ void ParticleSystem::BuildBatches() {
             const XMFLOAT3 color = BlackbodyColor(p.temperature);
             instance.color = color;
             instance.pad0 = 1.0f;
+            additive_.push_back(instance);
+        } else if (p.kind == ParticleKind::Ember) {
+            // Streaks reuse the additive batch: the velocity direction goes
+            // into the colour slot, pad1 marks the stretched line, the size is
+            // the streak length and the variation carries the life fade.
+            const float speed = Length(p.velocity);
+            const float inverse = speed > 1e-4f ? 1.0f / speed : 0.0f;
+            instance.color = XMFLOAT3(p.velocity.x * inverse, p.velocity.y * inverse,
+                                      p.velocity.z * inverse);
+            instance.rotation = 0.0f;
+            instance.variation = p.opacity;
+            instance.pad0 = 1.8f;
+            instance.pad1 = 1.0f;
             additive_.push_back(instance);
         } else if (p.kind == ParticleKind::Fire) {
             instance.color = BlackbodyColor(p.temperature);

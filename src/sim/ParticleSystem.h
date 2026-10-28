@@ -20,7 +20,8 @@ enum class ParticleKind : uint8_t {
     Fire = 2,
     Smoke = 3,
     Dust = 4,
-    Count = 5,
+    Ember = 5,
+    Count = 6,
 };
 
 // GPU-facing instance data (48 bytes, std430-friendly).
@@ -108,6 +109,11 @@ public:
                           float speed);
     // Spawns a small fire burst for a burning scene object (main thread).
     void SpawnSceneFire(const DirectX::XMFLOAT3& center, int count, float scale);
+    // Spawns short glowing streaks that leave the blast-facing edge of a
+    // burning object. `direction` points away from the burst.
+    void SpawnSceneEmbers(const DirectX::XMFLOAT3& position,
+                          const DirectX::XMFLOAT3& direction, int count,
+                          float scale);
 
     const std::vector<ParticleInstance>& AdditiveBatch() const { return additive_; }
     const std::vector<ParticleInstance>& AlphaBatch() const { return alpha_; }

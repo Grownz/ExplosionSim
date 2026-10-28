@@ -210,6 +210,36 @@ T₂/T₁ = [(2γM² - (γ-1))((γ-1)M² + 2)] / [(γ+1)² M²]
 
 the cap is a torus, the stem a tapered column, and the ground ring an expanding annulus.
 
+### Shock-front refraction
+
+The compressed air behind the front has a higher refractive index than the ambient
+atmosphere. The Gladstone-Dale relation gives
+
+```
+n - 1 = K_GD · ρ,        K_GD = 2.26e-4 m³/kg (air, 589 nm)
+```
+
+and the Rankine-Hugoniot density ratio across the front is
+
+```
+ρ₂/ρ₁ = (γ + 1) M² / ((γ - 1) M² + 2)
+```
+
+so the index jump is `Δn = K_GD · ρ₀ · (ρ₂/ρ₁ - 1)`. A ray crossing the spherical
+shell is deflected towards the density gradient; the chord through the compressed
+layer is longest at the limb, where the shell acts like a weak positive lens. The
+renderer traces the analytic sphere (centre at the burst, radius `R_shock`), computes
+the shell entry/exit point, the density jump and the limb factor, and applies the
+resulting screen-space displacement along the projected radial gradient. A small
+per-channel spread models the dispersion of the compressed air. The physical
+deflection is far below one pixel at the displayed distances, so the gain is
+exaggerated the same way high-speed schlieren footage amplifies the density gradient.
+A faint caustic rim keeps the front readable against the smooth sky, where pure
+distortion has little contrast to work with. The pass runs after the scene and the
+volume and before bloom, so the smoke and the sky behind the front are bent together.
+When the camera is inside the sphere the far side of the shell is used, which keeps
+the front visible after it has passed the observer.
+
 ## 8. High-fidelity GPU solver
 
 The optional high-fidelity mode replaces the analytic volume with a finite-volume
@@ -322,7 +352,9 @@ decays with receiver height. The averaged transmission scales pressure, impulse 
 thermal fluence.
 
 Thermal ignition uses material thresholds; burning is visual (ember tint and particles),
-not a combustion simulation.
+not a combustion simulation. The heat arrives from the burst, so the ember glow, the
+flame billboards and the short edge streaks are limited to the blast-facing surface of
+an object; the leeward side keeps its charred material colour.
 
 Limitations: no soil/structure interaction, the remaining structure is static (it can be
 damaged by debris but does not redistribute load), the shielding model is a
