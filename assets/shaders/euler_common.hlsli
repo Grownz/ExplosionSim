@@ -34,11 +34,13 @@ cbuffer SolverConstants : register(b0)
     float4 Ambient;     // rho0, p0, T0, gamma
     float4 Charge;      // mass, energy, radius, height of burst
     float4 Physics;     // gravity, gas constant, cooling, simulation time
-    float4 Extra;       // x = cap radius, y = cap centre height, z = hemisphere, w = cap height threshold
+    float4 Extra;       // x = plume radius for the entrainment drag, z = hemisphere flag
     float4 OldDomainMin; // xyz = old lower corner, w = old dx (for rescaling)
     float4 OldDomainMax; // xyz = old upper corner
     float4 SunDirection; // xyz = normalized direction to the sun
     float4 LightParams;  // x = extinction scale, y = light raymarch steps
+    float4 CapParams;    // x = cap radius, y = cap centre, z = cap top, w = cap height threshold
+    float4 EnvParams;    // x = stable layer height, y = initial domain top
 };
 
 SamplerState LinearSampler : register(s0);
@@ -416,24 +418,31 @@ void ApplySource(inout float4 a, inout float2 b, int3 cell)
     a.yzw -= rho * velocity * drag * plumeMask * DomainMax.w;
     energy -= rho * dot(velocity, velocity) * drag * plumeMask * DomainMax.w;
 
-    // Sub-grid cap closure. The unresolved vortex ring is replaced by a
-    // toroidal force around the analytic cap: outward at the top, downward
-    // outside, inward at the bottom and upward inside. This spins the cap into
-    // a mushroom instead of letting it rise as a column.
+    // Sub-grid cap closure. The mushroom head is a toroidal vortex: the ring
+    // core sits at the vertical centre of the head, the flow curls outward over
+    // the top and back down the outside, and the inner branch feeds the stem.
+    //
+    // Geometry follows Glasstone & Dolan (The Effects of Nuclear Weapons,
+    // 2.17): for a cloud that has not reached the tropopause the base of the
+    // head is roughly at half the altitude of the top. A developed head
+    // therefore spans [0.5 T, T] with its core at 0.75 T. A young, still
+    // spherical head keeps the thermal scaling C = T - R; capping the offset at
+    // T/4 blends between the two without a special case.
     float3 radial = float3(world.x, 0.0, world.z);
     float radialLength = length(radial);
     float3 radialDirection = radial / max(radialLength, 1e-3);
-    float targetRadius = max(Extra.x, 2.0 * DomainMin.w);
-    float targetCenterY = Extra.y;
+    const float capTop = max(CapParams.z, 2.0 * DomainMin.w);
+    const float targetRadius = max(CapParams.x, 2.0 * DomainMin.w);
+    const float upperHalf = max(min(targetRadius, 0.25 * capTop), 2.0 * DomainMin.w);
+    const float targetCenterY = capTop - upperHalf;
     float dr = radialLength - targetRadius;
     float dy = world.y - targetCenterY;
-    // The unresolved cap vortex is oblate: wide across the cap, thin in the
-    // vertical. A circular ring would spin the head into a ball, so the ring
-    // distance is stretched vertically (aspect > 1) to keep the vortex flat.
-    const float ringAspect = 1.50;
+    // The vortex tube is slightly oblate: wide across the head, a little
+    // thinner vertically, which keeps the cap from spinning into a ball.
+    const float ringAspect = 1.25;
     const float aspectSq = ringAspect * ringAspect;
     float ringDistance = sqrt(dr * dr + dy * dy * aspectSq);
-    float ringWidth = max(0.60 * targetRadius, 2.0 * DomainMin.w);
+    float ringWidth = max(0.45 * targetRadius, 2.0 * DomainMin.w);
     float ring = exp(-pow(ringDistance / ringWidth, 2.0));
     float2 tangent = float2(dy * aspectSq, -dr) /
                      max(sqrt(dr * dr + dy * dy * aspectSq * aspectSq), 1e-3);
@@ -445,8 +454,7 @@ void ApplySource(inout float4 a, inout float2 b, int3 cell)
     energy += impulse * (tangent.x * dot(radialDirection, velocity) +
                          tangent.y * velocity.y);
 
-    float above =
-        saturate((world.y - (targetCenterY + targetRadius)) / targetRadius);
+    float above = saturate((world.y - capTop) / max(upperHalf, 2.0 * DomainMin.w));
     float verticalDamping = 4.0 * above;
     a.z -= rho * max(velocity.y, 0.0) * verticalDamping * DomainMax.w;
     energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) *
@@ -456,27 +464,22 @@ void ApplySource(inout float4 a, inout float2 b, int3 cell)
     // ring distance is roughly one cap radius there, so the central column can
     // keep rising and round the head off. This band damps the upward motion at
     // the top near the axis.
-    const float capTop = targetCenterY + targetRadius;
     const float topBand =
-        exp(-pow((world.y - capTop) / max(0.25 * targetRadius, 2.0 * DomainMin.w), 2.0));
+        exp(-pow((world.y - capTop) / max(0.5 * upperHalf, 2.0 * DomainMin.w), 2.0));
     const float axisBand =
-        exp(-pow(radialLength / max(0.70 * targetRadius, 2.0 * DomainMin.w), 2.0));
+        exp(-pow(radialLength / max(0.90 * targetRadius, 2.0 * DomainMin.w), 2.0));
     const float flatten = 8.0 * topBand * axisBand * plumeMask;
     a.z -= rho * max(velocity.y, 0.0) * flatten * DomainMax.w;
     energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) * flatten *
               DomainMax.w;
 
-    // Stable-layer surrogate: a sub-grid inversion just below the cap top damps
-    // the plume above it. This mimics the stable ambient layer that flattens a
-    // real mushroom cloud without disturbing the hydrostatic balance of the
-    // uniform ambient (a full stratified atmosphere would need a well-balanced
-    // pressure treatment). It is anchored to the cap rather than the domain:
-    // auto-scale grows the box purely as a numerical budget, so a fixed domain
-    // fraction would slide off the head as soon as the solver expands.
-    const float stableHeight = targetCenterY + 0.85 * targetRadius;
+    // Stable-layer surrogate at a fixed altitude (set at Reset from the initial
+    // domain). A real inversion does not travel with the cloud; keeping it at a
+    // fixed height means the head can rise through the box instead of being
+    // held down by a layer glued to its own top.
     const float stableBand =
-        saturate((world.y - stableHeight) / max(0.30 * targetRadius, 2.0 * DomainMin.w));
-    const float stableDamping = 5.0 * stableBand * plumeMask;
+        saturate((world.y - EnvParams.x) / max(0.10 * EnvParams.y, 2.0 * DomainMin.w));
+    const float stableDamping = 3.0 * stableBand * plumeMask;
     a.z -= rho * max(velocity.y, 0.0) * stableDamping * DomainMax.w;
     energy -= 0.5 * rho * max(velocity.y, 0.0) * max(velocity.y, 0.0) * stableDamping *
               DomainMax.w;

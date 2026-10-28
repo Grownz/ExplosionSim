@@ -257,16 +257,21 @@ hemisphere.
 
 The coarse grid cannot resolve the vortex ring that forms the mushroom head. The source
 pass adds a drag term `0.6 v|v| / (2R)` (the same entrainment closure as the analytic
-cloud) and a toroidal force around the measured cap: outward at the cap top, downward
-outside, inward at the bottom and upward inside. The ring is vertically stretched (aspect
-1.5), so it spins a flat, oblate cap instead of a ball. Two extra bands damp the upward
-motion at the cap top and just below it (the stable-layer surrogate), which flattens the
-head. All three terms are anchored to the measured cap radius and top rather than the
-domain or the analytic cloud: the reduction measures the cap radius only above 55 % of
-the measured top, so the ground-hugging base surge no longer widens or lowers the ring,
-and auto-scale can grow the box without sliding the closure off the head. The render
-conversion uses a lower soot threshold for the diluted smoke than for the incandescent
-products, and the camera frames the analytic cloud rather than the solver domain.
+cloud) and a toroidal force around the measured head: outward at the cap top, downward
+outside, inward at the bottom and upward inside. The head geometry follows Glasstone &
+Dolan (*The Effects of Nuclear Weapons*, 2.17): for a cloud that has not reached the
+tropopause the base of the head is roughly at half the altitude of the top, so a
+developed head spans `[0.5 T, T]` and its vortex-ring core sits at `0.75 T`. A young,
+still spherical head keeps the thermal scaling `C = T - R`; the offset is capped at
+`T/4`, which blends continuously between the two regimes. The ring radius and the
+measured top come from the reduction: the cap radius is measured only above 70 % of the
+top, so the ground-hugging base surge can neither widen nor lower the closure. The ring
+is slightly oblate (aspect 1.25) and the top band damps the central overshoot, which
+flattens the head. The stable-layer surrogate sits at a fixed altitude derived from the
+initial domain (0.95 × its top), not at a fraction of the growing box or of the cap, so
+it acts like a tropopause lid instead of a brake glued to the head. The camera frames
+the resolved field once the reduction has measured it, so the head is not left low in a
+frame sized by the analytic cloud.
 
 ### Auto-scale (domain expansion)
 

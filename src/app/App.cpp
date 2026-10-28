@@ -345,20 +345,31 @@ void App::FrameCamera() {
     const sim::Charge& charge = blast.GetCharge();
 
     if (simulation_.Settings().mode == sim::SimulationMode::HighFidelity) {
-        // Frame the analytic cloud rather than the (much larger) solver domain:
-        // otherwise the mushroom cap shrinks to a dot in the wide frame.
+        // Prefer the cloud the solver actually produced. The analytic model
+        // runs ahead of the resolved plume, so framing it leaves the real head
+        // sitting low in the view. Fall back to the analytic cloud only before
+        // the first reduction has measured anything.
+        const gfx::SolverStats& solverStats = renderer_.Solver();
         const sim::BlastState& state = blast.State();
-        const float fireball = float(blast.FireballMaxRadiusM());
-        const float cloudRadius = std::max(float(state.cloudRadius), 3.0f * fireball);
-        const float cloudTop = float(state.cloudCenterY) + 2.4f * cloudRadius;
-        const float half = std::max(cloudRadius * 1.6f, 3.0f * fireball);
-        const float top = std::max(cloudTop, 2.0f * half);
-        const float centerY = float(state.cloudCenterY);
         const float sceneExtent = simulation_.Scene().Extent();
+        float centerY = float(state.cloudCenterY);
+        float top = 0.0f;
+        float half = 0.0f;
+        if (solverStats.active && solverStats.fieldBoundsValid &&
+            solverStats.plumeTop > 1e-3f) {
+            top = solverStats.plumeTop;
+            half = std::max(solverStats.plumeRadius, 0.5f * top);
+            centerY = 0.5f * top;
+        } else {
+            const float fireball = float(blast.FireballMaxRadiusM());
+            const float cloudRadius = std::max(float(state.cloudRadius), 3.0f * fireball);
+            top = float(state.cloudCenterY) + 2.4f * cloudRadius;
+            half = std::max(cloudRadius * 1.6f, 3.0f * fireball);
+            top = std::max(top, 2.0f * half);
+        }
         const float distance =
             std::max({top * 1.15f, half * 2.6f, sceneExtent * 0.9f, 8.0f}) *
             std::max(0.1f, options_.distanceScale);
-        const gfx::SolverStats& solverStats = renderer_.Solver();
 
         // Match the wind drift applied to the rendered volume in Renderer::Render
         // so "Frame camera" follows the downwind cloud instead of the origin.

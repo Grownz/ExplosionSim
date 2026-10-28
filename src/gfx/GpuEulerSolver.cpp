@@ -313,6 +313,9 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
         XMFLOAT4(oldBounds_.max.x, oldBounds_.max.y, oldBounds_.max.z, 0.0f);
     constants_.sunDirection = XMFLOAT4(sunDirection_.x, sunDirection_.y, sunDirection_.z, 0.0f);
     constants_.lightParams = XMFLOAT4(extinctionScale_, 24.0f, 0.0f, 0.0f);
+    constants_.capParams =
+        XMFLOAT4(plumeRadius_, plumeCenterY_, plumeTop_, capThreshold_);
+    constants_.envParams = XMFLOAT4(stableLayerY_, initialTop_, 0.0f, 0.0f);
 
     D3D11_MAPPED_SUBRESOURCE mapped{};
     ID3D11Buffer* buffer = constantBuffers_[constantBufferIndex_].Get();
@@ -588,7 +591,7 @@ void GpuEulerSolver::ConsumeStaging() {
     // Measure the cap radius above the base surge next time. The threshold is
     // derived from the measured top, so it follows the rising plume.
     if (stats_.plumeTop > 0.0f) {
-        capThreshold_ = 0.55f * stats_.plumeTop;
+        capThreshold_ = 0.70f * stats_.plumeTop;
     }
     if (values[1] > 0 || values[2] > 0) {
         stats_.fieldBoundsValid = true;
@@ -612,6 +615,9 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     bounds_.min = XMFLOAT3(float(-half), 0.0f, float(-half));
     bounds_.max = XMFLOAT3(float(half), float(2.0 * half), float(half));
     dx_ = float(2.0 * half / double(resolution_));
+    initialTop_ = bounds_.max.y;
+    stableLayerY_ = 0.95f * initialTop_;
+    plumeTop_ = 0.0f;
 
     const double chargeRadius =
         std::cbrt(3.0 * std::max(config.chargeMassKg, 1e-6) / (4.0 * 3.14159265358979 * 1630.0));

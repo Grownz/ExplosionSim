@@ -5,7 +5,7 @@
 //   [1] = max product height      (fixed point, 1/512 m)
 //   [2] = max product radius      (fixed point, 1/512 m)
 //   [3] = max normalized dome fill (fixed point, 1/512)
-//   [4] = max cap radius          (fixed point, 1/512 m, above Extra.w)
+//   [4] = max cap radius          (fixed point, 1/512 m, above CapParams.w)
 RWStructuredBuffer<uint> ReduceOutput : register(u2);
 
 groupshared uint gMaxSpeed;
@@ -85,10 +85,10 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
             {
                 const float horizontal = max(abs(world.x), abs(world.z));
                 radius = Quantize(horizontal);
-                // Cap radius: the widest part of the upper plume. Extra.w is a
-                // height derived from the measured top, so the base surge does
-                // not widen the cap closure ring.
-                if (Extra.w > 0.0 && world.y > Extra.w)
+                // Cap radius: the widest part of the upper plume. CapParams.w
+                // is a height derived from the measured top, so the base surge
+                // does not widen the cap closure ring.
+                if (CapParams.w > 0.0 && world.y > CapParams.w)
                 {
                     capRadius = Quantize(horizontal);
                 }

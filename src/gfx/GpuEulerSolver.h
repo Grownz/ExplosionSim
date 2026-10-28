@@ -109,9 +109,10 @@ public:
 
     // Analytic cloud radius and centre used by the sub-grid entrainment/cap
     // closure. Call before stepping with the current reduced-order cloud state.
-    void SetPlumeModel(float radius, float centerY) {
+    void SetPlumeModel(float radius, float centerY, float top) {
         plumeRadius_ = radius > 0.0f ? radius : 0.0f;
         plumeCenterY_ = centerY;
+        plumeTop_ = top > 0.0f ? top : 0.0f;
     }
 
     // Simulated time advanced since the last call (used to keep the reduced
@@ -146,6 +147,8 @@ private:
         DirectX::XMFLOAT4 oldDomainMax;
         DirectX::XMFLOAT4 sunDirection;
         DirectX::XMFLOAT4 lightParams;
+        DirectX::XMFLOAT4 capParams;
+        DirectX::XMFLOAT4 envParams;
     };
 
     struct VolumeTexture {
@@ -242,6 +245,12 @@ private:
     float lastDt_ = 0.0f;
     float plumeRadius_ = 0.0f;
     float plumeCenterY_ = 0.0f;
+    float plumeTop_ = 0.0f;
+    // Fixed-altitude inversion surrogate (world units). Set at Reset from the
+    // initial domain and kept across auto-scale expansions: the box height is a
+    // numerical budget, not a physical tropopause.
+    float stableLayerY_ = 0.0f;
+    float initialTop_ = 0.0f;
     // Height above which the reduction measures the cap radius (0 = no cap
     // split, use the full field). Derived from the last measured plume top.
     float capThreshold_ = 0.0f;

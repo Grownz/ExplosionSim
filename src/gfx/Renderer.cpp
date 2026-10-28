@@ -863,21 +863,27 @@ void Renderer::UpdatePlumeModel(sim::Simulation& simulation) {
     const sim::BlastState& state = simulation.Blast().State();
     float radius = float(state.cloudRadius);
     float centerY = float(state.cloudCenterY);
+    // Before the first reduction, use the analytic sphere as the cap: its top
+    // is centre + radius.
+    float capTop = centerY + radius;
 
     // The analytic cloud grows faster than the resolved plume, and the measured
     // full radius includes the ground-hugging base surge. Both would place the
     // cap ring around the whole base instead of the head. Use the measured cap
-    // radius (upper plume only) and follow the measured top once the reduction
-    // has produced them.
+    // radius (upper plume only) and the measured top.
     if (solver_.HasFieldBounds()) {
         const float capRadius = solver_.FieldCapRadius();
         const float measuredTop = solver_.FieldTop();
-        if (capRadius > 0.0f && measuredTop > capRadius) {
+        if (capRadius > 0.0f && measuredTop > 0.5f * capRadius) {
             radius = capRadius;
-            centerY = measuredTop - capRadius;
+            capTop = measuredTop;
+            // The vortex core sits at the vertical centre of the head. A
+            // developed head spans [0.5 T, T] (Glasstone & Dolan 2.17), a young
+            // spherical one C = T - R; the T/4 cap blends between them.
+            centerY = capTop - std::min(capRadius, 0.25f * capTop);
         }
     }
-    solver_.SetPlumeModel(radius, centerY);
+    solver_.SetPlumeModel(radius, centerY, capTop);
 }
 
 bool Renderer::EnsureSolver(sim::Simulation& simulation) {
