@@ -368,9 +368,12 @@ plus a structural term for weakly loaded joints (up to ~0.6 s). Even overstresse
 scheduled instead of broken in the same frame, so a destroyed building crumbles instead of
 detaching every chunk at once. A priority list of pending failures is processed every
 update: the joints are broken, the support graph is flood-filled once per affected object,
-and only the chunks that lost their connection detach. Detached chunks inherit the local
-wave impulse (outward, small) rather than a radial explosion, so they fall and pile up
-instead of springing apart. Chunks that are still standing are registered as static
+and only the chunks that lost their connection detach. Each detached chunk is loaded by
+the wave over its whole positive phase: its arrival time follows from its own distance to
+the burst (the shock crosses the building at the shock speed), and a triangular profile
+normalised to the blast impulse applies `F dt = m * targetDv * p / I`, so the total
+velocity change over the phase is the impulse-derived `targetDv` instead of a single kick.
+The chunks fall and pile up instead of springing apart. Chunks that are still standing are registered as static
 collision boxes, so debris piles up against the remaining structure; a heavy impact
 reports a contact impulse back to the scene, which damages the struck chunk's joints and
 can start a local cascade.

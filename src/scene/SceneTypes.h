@@ -187,6 +187,7 @@ private:
     void UpdateSupport(SceneObject& object);
     std::vector<uint8_t> ComputeSupport(const SceneObject& object) const;
     void DetachChunk(SceneObject& object, int index);
+    void ApplyBlastForces(const sim::BlastModel& blast, float dtSim);
     void BreakJoint(SceneObject& object, int a, int b);
     void ProcessJointFailures();
     void RegisterStructureBodies(SceneObject& object,

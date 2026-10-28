@@ -885,7 +885,7 @@ bool Scene::GenerateLayout(const SceneSettings& settings,
     return GenerateInternal(settings, blast, progress, nullptr, true);
 }
 
-void Scene::Update(const sim::BlastModel&, float dtSim) {
+void Scene::Update(const sim::BlastModel& blast, float dtSim) {
     if (dtSim > 0.0f) {
         time_ += double(dtSim);
     }
@@ -1006,6 +1006,7 @@ void Scene::Update(const sim::BlastModel&, float dtSim) {
         }
     }
 
+    ApplyBlastForces(blast, dtSim);
     StepPhysics(dtSim);
 }
 
@@ -1112,7 +1113,7 @@ void Scene::StartCollapse(SceneObject& object) {
                 std::clamp(0.5f * (chunk.center.y + object.chunks[j].center.y) /
                                std::max(object.size.y, 0.1f),
                            0.0f, 1.0f);
-            const float waveDelay = 0.03f + 0.15f * jointAlong + 0.08f * jointHeight;
+            const float waveDelay = 0.10f * jointAlong + 0.05f * jointHeight;
             const float structuralDelay =
                 ratio >= 1.0f ? 0.0f : 0.35f * (1.0f - ratio);
             PendingJointFailure failure;
@@ -1204,25 +1205,15 @@ void Scene::DetachChunk(SceneObject& object, int index) {
     object.collapsed = true;
 
     // The chunk is torn off by the passing wave, not blown out of the
-    // building. Give it the wave velocity at the object (outward) and let
-    // gravity, contacts and the remaining joints separate the pieces. The old
-    // code added a radial "explosion" impulse and a spin around the object
-    // centre, which made the chunks spring apart instead of crumbling.
-    const bool destroyed = object.damage == DamageState::Destroyed;
-    const float radialLength = std::sqrt(object.position.x * object.position.x +
-                                         object.position.z * object.position.z);
-    const float waveX = radialLength > 1e-3f ? object.position.x / radialLength : 1.0f;
-    const float waveZ = radialLength > 1e-3f ? object.position.z / radialLength : 0.0f;
-    // Impulse-driven: heavy masonry is barely pushed, light debris more. The
-    // shock reflection adds a small upward component at ground level.
-    const float waveSpeed =
-        std::clamp(object.impulsePaS / 700.0f, 0.5f, 6.0f) * (destroyed ? 1.0f : 0.6f);
+    // building. It starts at rest and is carried by the continuous blast
+    // loading in ApplyBlastForces() while the positive phase lasts; gravity,
+    // contacts and the remaining joints then separate the pieces. No radial
+    // "explosion" impulse: that made the chunks spring apart.
     const float volume = chunk.volume > 0.0f
                              ? chunk.volume
                              : 8.0f * chunk.half.x * chunk.half.y * chunk.half.z;
     const float mass = std::clamp(volume * 350.0f, 80.0f, 15000.0f);
-    const DirectX::XMFLOAT3 velocity(waveX * waveSpeed, waveSpeed * 0.12f,
-                                     waveZ * waveSpeed);
+    const DirectX::XMFLOAT3 velocity(0.0f, 0.0f, 0.0f);
     // A small, deterministic tumble so the pieces do not fall like rigid
     // blocks, but nothing that reads as an outward blast.
     const float spin = ((object.id + uint32_t(index)) & 1u) ? 0.45f : -0.45f;
@@ -1252,6 +1243,84 @@ void Scene::DetachChunk(SceneObject& object, int index) {
         bodyChunk_.resize(chunk.bodyIndex + 1, std::pair<int, int>(-1, -1));
     }
     bodyChunk_[chunk.bodyIndex] = {objectIndex, index};
+}
+
+void Scene::ApplyBlastForces(const sim::BlastModel& blast, float dtSim) {
+    if (dtSim <= 0.0f) {
+        return;
+    }
+    const float burstY = float(blast.GetCharge().heightOfBurstM);
+    for (SceneObject& object : objects_) {
+        if (object.chunks.empty() ||
+            (!object.collapsed && !object.collapsing)) {
+            continue;
+        }
+        const double duration = blast.PositivePhaseDurationS(object.distanceToBurst);
+        if (duration <= 1e-4) {
+            continue;
+        }
+        // The wave crosses the building at the shock speed; each chunk has its
+        // own arrival time so the blast-facing side is loaded first.
+        const double shockSpeed =
+            std::max(340.0, double(object.distanceToBurst) /
+                                std::max(double(object.arrivalTime), 1e-4));
+        const double impulse = std::max(double(object.impulsePaS), 1.0);
+        const std::vector<RigidBody>& bodies = physics_.Bodies();
+
+        for (const SceneChunk& chunk : object.chunks) {
+            if (!chunk.detached || chunk.bodyIndex < 0 ||
+                chunk.bodyIndex >= int(bodies.size())) {
+                continue;
+            }
+            const RigidBody& body = bodies[chunk.bodyIndex];
+            if (body.isStatic || body.mass <= 0.0f) {
+                continue;
+            }
+
+            float dx = chunk.center.x;
+            float dy = chunk.center.y - burstY;
+            float dz = chunk.center.z;
+            const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+            if (distance < 1e-3f) {
+                dx = 0.0f;
+                dy = 1.0f;
+                dz = 0.0f;
+            } else {
+                dx /= distance;
+                dy /= distance;
+                dz /= distance;
+            }
+
+            const double chunkArrival =
+                object.arrivalTime + (double(distance) - object.distanceToBurst) / shockSpeed;
+            const double local = time_ - chunkArrival;
+            if (local < 0.0 || local > duration) {
+                continue;
+            }
+
+            // Triangular positive phase normalised to the impulse; the shape is
+            // evaluated per chunk so the wave is carried across the building.
+            const double t = std::clamp(local / duration, 0.0, 1.0);
+            const double pressure = 2.0 * impulse / duration * (1.0 - t);
+            if (pressure <= 1.0) {
+                continue;
+            }
+            const float pressureScale = float(pressure / impulse) * dtSim;
+
+            // Average projected area of the chunk (Cauchy: surface / 4).
+            const float area =
+                chunk.surfaceArea > 0.0f
+                    ? chunk.surfaceArea * 0.25f
+                    : 0.5f * (chunk.half.x * chunk.half.y +
+                              chunk.half.y * chunk.half.z +
+                              chunk.half.x * chunk.half.z);
+            const float targetDv = std::clamp(
+                float(impulse) * area / body.mass * 0.5f, 0.2f, 6.0f);
+            const float scale = body.mass * targetDv * pressureScale;
+            physics_.AddImpulse(chunk.bodyIndex,
+                                DirectX::XMFLOAT3(dx * scale, dy * scale, dz * scale));
+        }
+    }
 }
 
 void Scene::RegisterStructureBodies(SceneObject& object,

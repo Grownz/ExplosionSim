@@ -61,6 +61,8 @@ public:
     // Converts a static structure body into a dynamic one (chunk detachment).
     void SetBodyDynamic(int index, float mass, const DirectX::XMFLOAT3& velocity,
                         const DirectX::XMFLOAT3& angularVelocity);
+    // Applies an impulse to a dynamic body (blast wave loading).
+    void AddImpulse(int index, const DirectX::XMFLOAT3& impulse);
     const std::vector<ContactEvent>& ContactEvents() const { return contactEvents_; }
 
 private:

@@ -12,9 +12,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   overstressed joint in one frame and give each chunk a radial explosion impulse plus a
   spin around the object centre. The chunks now detach from the passing wave: joint
   failures are staggered from the blast-facing side to the far side (0.03-0.26 s) plus a
-  structural delay for weakly loaded joints, and a detached chunk inherits the local blast
-  impulse (outward, small) instead of an explosion. The support flood fill runs once per
-  affected object per frame, so the staggered collapse stays cheap.
+  structural delay for weakly loaded joints, and each detached chunk is loaded by the wave
+  over its whole positive phase (per-chunk arrival time, triangular profile normalised to
+  the blast impulse) instead of receiving one velocity kick. The support flood fill runs
+  once per affected object per frame, so the staggered collapse stays cheap.
 
 ### Changed
 
