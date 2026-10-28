@@ -1193,7 +1193,8 @@ UiActions Draw(UiContext& context) {
     const float margin = ImGui::GetFontSize() * 0.85f;
 
     // Animate the control panel to the right when it is collapsed. The handle
-    // stays at the window edge, so the panel can be reopened with a click.
+    // rides on the panel's left edge, so it moves with the menu and still sits
+    // at the window edge when the panel is fully closed.
     static bool panelSlideInitialized = false;
     static float panelSlide = 0.0f;
     if (!panelSlideInitialized) {
@@ -1207,14 +1208,13 @@ UiActions Draw(UiContext& context) {
         panelSlide = targetSlide;
     }
     const float panelOffset = panelSlide * (panelWidth + margin);
+    const float panelLeft =
+        viewport->WorkPos.x + viewport->WorkSize.x - panelWidth - margin + panelOffset;
     const bool drawPanel = settings.showUi || panelSlide < 0.999f;
 
     if (drawPanel) {
-        ImGui::SetNextWindowPos(
-            ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - panelWidth - margin +
-                       panelOffset,
-                   viewport->WorkPos.y + margin),
-            ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImVec2(panelLeft, viewport->WorkPos.y + margin),
+                                ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(panelWidth, viewport->WorkSize.y - margin * 2.0f));
 
         const ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -1276,9 +1276,11 @@ UiActions Draw(UiContext& context) {
     }
 
     // --- Panel handle ------------------------------------------------------
+    // Attached to the panel's left edge instead of the window edge, so it
+    // travels with the menu while collapsing and expanding.
     const float handleWidth = ImGui::GetFontSize() * 1.15f;
     const float handleHeight = ImGui::GetFontSize() * 5.2f;
-    const ImVec2 handlePos(viewport->WorkPos.x + viewport->WorkSize.x - handleWidth,
+    const ImVec2 handlePos(panelLeft - handleWidth,
                            viewport->WorkPos.y + viewport->WorkSize.y * 0.5f -
                                handleHeight * 0.5f);
     ImGui::SetNextWindowPos(handlePos, ImGuiCond_Always);

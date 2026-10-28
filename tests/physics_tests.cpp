@@ -427,6 +427,44 @@ void TestSceneGeneration() {
     CHECK(second.GenerationHash() == 0);
 }
 
+void TestSceneDensityIsContinuous() {
+    // Regression: the density slider used to change the object budget while
+    // the block fill stayed quantised at ceil(density), so the visible object
+    // count jumped at 1.0, 2.0, ... and stayed flat in between.
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 0.2;
+    charge.heightOfBurstM = 0.4;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 42;
+    auto count = [&](float density) {
+        settings.density = density;
+        ex::scene::Scene scene;
+        scene.Generate(settings, model);
+        return int(scene.Objects().size());
+    };
+
+    const int quarter = count(0.25f);
+    const int half = count(0.5f);
+    const int one = count(1.0f);
+    const int oneHalf = count(1.5f);
+    const int two = count(2.0f);
+
+    CHECK(quarter < half);
+    CHECK(half < one);
+    CHECK(one < oneHalf);
+    CHECK(oneHalf < two);
+
+    // The count follows the slider instead of jumping between integer slots.
+    CHECK(half >= int(0.35f * float(one)) && half <= int(0.65f * float(one)));
+    CHECK(oneHalf >= int(1.15f * float(one)) &&
+          oneHalf <= int(1.85f * float(one)));
+    CHECK(two >= int(1.60f * float(one)) && two <= int(2.40f * float(one)));
+}
+
 void TestBodyPositionRoundTrip() {
     // Regression: the Jolt boundary mirrors Z, so a body must come back at the
     // same world position it was created at.
@@ -1417,6 +1455,7 @@ int main() {
     RUN(TestVolumeBakerAutoScale);
     RUN(TestVolumeBakeDeterminism);
     RUN(TestSceneGeneration);
+    RUN(TestSceneDensityIsContinuous);
     RUN(TestSceneDamage);
     RUN(TestSceneFire);
     RUN(TestFrustumCulling);

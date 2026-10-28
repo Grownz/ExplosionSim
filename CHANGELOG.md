@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Menu handle follows the panel** - the handle was pinned to the right window
+  edge. It now sits on the panel's left edge and slides with the menu, while
+  still remaining at the window edge when the panel is fully closed.
+- **Scene density scales continuously** - the density slider changed the object
+  budget while the per-block fill stayed quantised at `ceil(density)`, so the
+  visible object count jumped at 1.0, 2.0, ... and stayed flat in between.
+  Fractional slots and placement probabilities now scale the town smoothly over
+  the whole slider range.
+
 ## [0.10.0] - 2026-10-28
 
 0.10.0 makes the pressure wave visible in the air and ties the heat damage to

@@ -406,47 +406,21 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
     const double baseExtent = std::clamp(10.0 * fireball + 20.0, 45.0, 160.0);
     const double radiusExtent = minRadius * 1.4 + 2.0 * double(pitch);
     const double squareExtent = std::max(baseExtent, radiusExtent);
-    constexpr double kCircleAreaRatio = 1.5707963267948966; // pi / 2
     const double townRadius = squareExtent * 1.4142135623730951; // sqrt(2)
     extent_ = float(townRadius);
 
     // Keep roughly the same object density as the old 160 m square town, but cap
-    // the budget so a 100 kt scene still generates in a fraction of a second.
+    // the object count so a 100 kt scene still generates in a fraction of a
+    // second. Density is fractional: below 1 a block is populated with
+    // probability density, above 1 the integer slots are filled and the
+    // remaining fraction adds one more slot with that probability.
     const double density = double(std::clamp(settings_.density, 0.0f, 4.0f));
-    const double extentScale = std::max(1.0, squareExtent / 160.0);
-    const int maxBudget = 3200;
-    const int budget = std::clamp(
-        int(800.0 * density * extentScale * extentScale * kCircleAreaRatio), 0,
-        maxBudget);
-    if (budget == 0) {
-        report(1.0f);
-        return true;
-    }
-
-    const int buildingBudget = settings_.buildings ? int(budget * 0.45f) : 0;
-    const int vehicleBudget = settings_.vehicles ? int(budget * 0.20f) : 0;
-    const int treeBudget = settings_.vegetation
-                               ? std::max(0, budget - buildingBudget - vehicleBudget)
-                               : 0;
 
     core::Rng rng(uint64_t(settings_.seed) * 0x9E3779B97F4A7C15ull + 0xC0FFEEull);
 
     const int cells = int(extent_ / pitch) + 1;
     const double burstHeight = charge.heightOfBurstM;
 
-    // Density > 1 packs several objects into every block; their footprint is
-    // shrunk accordingly so they still fit without overlapping heavily.
-    const int perBlock =
-        std::max(1, int(std::ceil(std::clamp(settings_.density, 0.0f, 4.0f))));
-    const int slotsPerAxis = int(std::ceil(std::sqrt(float(perBlock))));
-    const float slotSize = block / float(slotsPerAxis);
-    const float shrink = 1.0f / std::sqrt(float(perBlock));
-
-    // For large scenes the budget is smaller than the block grid. Sample blocks
-    // uniformly instead of filling one corner row by row until the budget runs
-    // out, so the town surrounds the burst instead of clustering in a corner.
-    // The per-type base rates (empty lots, parked cars, tree spacing) keep the
-    // sampler from undershooting the category budget.
     int blockCount = 0;
     for (int ix = -cells; ix <= cells; ++ix) {
         for (int iz = -cells; iz <= cells; ++iz) {
@@ -457,18 +431,35 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
             }
         }
     }
-    const int blockSlots = std::max(1, blockCount * perBlock);
-    const auto keepChance = [&](int categoryBudget, float baseKeep) {
-        if (categoryBudget <= 0) {
+    if (density <= 0.0 || blockCount == 0) {
+        report(1.0f);
+        return true;
+    }
+
+    // Fractional slots per block: density 1 = one slot, 1.5 = one slot plus a
+    // second in half of the blocks, 2 = two slots. The footprint follows the
+    // continuous density so the transition does not jump.
+    const int fullSlots = int(std::floor(density));
+    const float slotFraction = float(density - double(fullSlots));
+    const int perBlock = std::max(1, int(std::ceil(density)));
+    const int slotsPerAxis = int(std::ceil(std::sqrt(float(perBlock))));
+    const float slotSize = block / float(slotsPerAxis);
+    const float shrink = 1.0f / std::sqrt(float(perBlock));
+
+    // Hard object budget for very large towns. It scales every placement
+    // probability uniformly, so the town still fills the whole disc instead of
+    // clustering in the first blocks.
+    constexpr int kSceneObjectBudget = 3200;
+    const float sceneScale =
+        std::min(1.0f, float(kSceneObjectBudget) /
+                           float(std::max(1, blockCount * perBlock * 3)));
+    const auto slotKeep = [&](int slot) {
+        if (slot > fullSlots) {
             return 0.0f;
         }
-        const float target = 0.9f * float(categoryBudget) /
-                             (float(blockSlots) * baseKeep);
-        return std::min(1.0f, target);
+        const float chance = slot < fullSlots ? 1.0f : slotFraction;
+        return chance * sceneScale;
     };
-    const float buildingChance = keepChance(buildingBudget, 0.85f);
-    const float vehicleChance = keepChance(vehicleBudget, 0.45f);
-    const float treeChance = keepChance(treeBudget, 0.55f);
     if (!report(0.02f)) {
         return false;
     }
@@ -529,41 +520,47 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
     };
 
     int buildings = 0;
-    for (int ix = -cells; ix <= cells && buildings < buildingBudget; ++ix) {
-        for (int iz = -cells; iz <= cells && buildings < buildingBudget; ++iz) {
-            const float cx = ix * pitch + block * 0.5f;
-            const float cz = iz * pitch + block * 0.5f;
-            if (cx * cx + cz * cz > extent_ * extent_) {
-                continue;
-            }
-            if (buildingChance < 1.0f && rng.Float01() >= buildingChance) {
-                continue;
-            }
-            if (rng.Float01() < 0.15f) {
-                continue; // occasional empty lot
-            }
+    if (settings_.buildings) {
+        for (int ix = -cells; ix <= cells; ++ix) {
+            for (int iz = -cells; iz <= cells; ++iz) {
+                const float cx = ix * pitch + block * 0.5f;
+                const float cz = iz * pitch + block * 0.5f;
+                if (cx * cx + cz * cz > extent_ * extent_) {
+                    continue;
+                }
+                if (rng.Float01() < 0.15f) {
+                    continue; // occasional empty lot
+                }
 
-            // Density > 1 packs several smaller buildings into one block.
-            for (int slot = 0; slot < perBlock && buildings < buildingBudget; ++slot) {
-                float slotX = 0.0f;
-                float slotZ = 0.0f;
-                SlotOffset(slot, slotsPerAxis, slotSize, block, slotX, slotZ);
-                const float jitterX = rng.Range(-3.0f, 3.0f) * shrink;
-                const float jitterZ = rng.Range(-3.0f, 3.0f) * shrink;
-                const float width = rng.Range(6.0f, 12.0f) * shrink;
-                const float depth = rng.Range(6.0f, 12.0f) * shrink;
-                const float height = rng.Range(6.0f, 26.0f);
-                const float yaw = 0.0f;
-                addObject(SceneObjectType::Building, cx + slotX + jitterX,
-                          cz + slotZ + jitterZ, yaw,
-                          DirectX::XMFLOAT3(width, height, depth),
-                          int(rng.NextU32() % 4));
-                ++buildings;
+                // Density > 1 packs several smaller buildings into one block.
+                for (int slot = 0; slot < perBlock; ++slot) {
+                    const float keep = slotKeep(slot);
+                    if (keep <= 0.0f) {
+                        continue;
+                    }
+                    if (keep < 1.0f && rng.Float01() >= keep) {
+                        continue;
+                    }
+                    float slotX = 0.0f;
+                    float slotZ = 0.0f;
+                    SlotOffset(slot, slotsPerAxis, slotSize, block, slotX, slotZ);
+                    const float jitterX = rng.Range(-3.0f, 3.0f) * shrink;
+                    const float jitterZ = rng.Range(-3.0f, 3.0f) * shrink;
+                    const float width = rng.Range(6.0f, 12.0f) * shrink;
+                    const float depth = rng.Range(6.0f, 12.0f) * shrink;
+                    const float height = rng.Range(6.0f, 26.0f);
+                    const float yaw = 0.0f;
+                    addObject(SceneObjectType::Building, cx + slotX + jitterX,
+                              cz + slotZ + jitterZ, yaw,
+                              DirectX::XMFLOAT3(width, height, depth),
+                              int(rng.NextU32() % 4));
+                    ++buildings;
+                }
             }
-        }
-        if (!report(0.02f + 0.04f * float(ix + cells + 1) /
-                                 float(2 * cells + 1))) {
-            return false;
+            if (!report(0.02f + 0.04f * float(ix + cells + 1) /
+                                     float(2 * cells + 1))) {
+                return false;
+            }
         }
     }
     if (!report(0.06f)) {
@@ -571,38 +568,45 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
     }
 
     int vehicles = 0;
-    for (int ix = -cells; ix <= cells && vehicles < vehicleBudget; ++ix) {
-        for (int iz = -cells; iz <= cells && vehicles < vehicleBudget; ++iz) {
-            if (vehicleChance < 1.0f && rng.Float01() >= vehicleChance) {
-                continue;
+    if (settings_.vehicles) {
+        for (int ix = -cells; ix <= cells; ++ix) {
+            for (int iz = -cells; iz <= cells; ++iz) {
+                if (rng.Float01() < 0.55f) {
+                    continue;
+                }
+                const bool alongX = rng.Float01() < 0.5f;
+                const float x = alongX ? ix * pitch + block + road * 0.5f
+                                       : ix * pitch + rng.Range(0.0f, block);
+                const float z = alongX ? iz * pitch + rng.Range(0.0f, block)
+                                       : iz * pitch + block + road * 0.5f;
+                if (x * x + z * z > extent_ * extent_) {
+                    continue;
+                }
+                const float yaw = alongX ? 90.0f : 0.0f;
+                for (int slot = 0; slot < perBlock; ++slot) {
+                    const float keep = slotKeep(slot);
+                    if (keep <= 0.0f) {
+                        continue;
+                    }
+                    if (keep < 1.0f && rng.Float01() >= keep) {
+                        continue;
+                    }
+                    const float spread = slot * 1.4f;
+                    addObject(SceneObjectType::Vehicle,
+                              x + (alongX ? 0.0f : spread) - (alongX ? spread : 0.0f),
+                              z + (alongX ? spread : 0.0f) - (alongX ? 0.0f : spread),
+                              yaw,
+                              DirectX::XMFLOAT3(rng.Range(1.7f, 2.2f),
+                                                rng.Range(1.3f, 2.4f),
+                                                rng.Range(3.8f, 6.5f)),
+                              int(rng.NextU32() % 3));
+                    ++vehicles;
+                }
             }
-            if (rng.Float01() < 0.55f) {
-                continue;
+            if (!report(0.06f + 0.02f * float(ix + cells + 1) /
+                                     float(2 * cells + 1))) {
+                return false;
             }
-            const bool alongX = rng.Float01() < 0.5f;
-            const float x = alongX ? ix * pitch + block + road * 0.5f
-                                   : ix * pitch + rng.Range(0.0f, block);
-            const float z = alongX ? iz * pitch + rng.Range(0.0f, block)
-                                   : iz * pitch + block + road * 0.5f;
-            if (x * x + z * z > extent_ * extent_) {
-                continue;
-            }
-            const float yaw = alongX ? 90.0f : 0.0f;
-            for (int slot = 0; slot < perBlock && vehicles < vehicleBudget; ++slot) {
-                const float spread = slot * 1.4f;
-                addObject(SceneObjectType::Vehicle,
-                          x + (alongX ? 0.0f : spread) - (alongX ? spread : 0.0f),
-                          z + (alongX ? spread : 0.0f) - (alongX ? 0.0f : spread),
-                          yaw,
-                          DirectX::XMFLOAT3(rng.Range(1.7f, 2.2f), rng.Range(1.3f, 2.4f),
-                                            rng.Range(3.8f, 6.5f)),
-                          int(rng.NextU32() % 3));
-                ++vehicles;
-            }
-        }
-        if (!report(0.06f + 0.02f * float(ix + cells + 1) /
-                                 float(2 * cells + 1))) {
-            return false;
         }
     }
     if (!report(0.08f)) {
@@ -610,37 +614,43 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
     }
 
     int trees = 0;
-    for (int ix = -cells; ix <= cells && trees < treeBudget; ++ix) {
-        for (int iz = -cells; iz <= cells && trees < treeBudget; ++iz) {
-            if (treeChance < 1.0f && rng.Float01() >= treeChance) {
-                continue;
+    if (settings_.vegetation) {
+        for (int ix = -cells; ix <= cells; ++ix) {
+            for (int iz = -cells; iz <= cells; ++iz) {
+                if (rng.Float01() < 0.45f) {
+                    continue;
+                }
+                const float x = ix * pitch + block + road * 0.5f +
+                                rng.Range(-road * 0.4f, road * 0.4f);
+                const float z = iz * pitch + block + road * 0.5f +
+                                rng.Range(-road * 0.4f, road * 0.4f);
+                if (x * x + z * z > extent_ * extent_) {
+                    continue;
+                }
+                for (int slot = 0; slot < perBlock; ++slot) {
+                    const float keep = slotKeep(slot);
+                    if (keep <= 0.0f) {
+                        continue;
+                    }
+                    if (keep < 1.0f && rng.Float01() >= keep) {
+                        continue;
+                    }
+                    float slotX = 0.0f;
+                    float slotZ = 0.0f;
+                    SlotOffset(slot, slotsPerAxis, slotSize, block, slotX, slotZ);
+                    const float height = rng.Range(5.0f, 12.0f);
+                    addObject(SceneObjectType::Tree, x + slotX * 0.5f,
+                              z + slotZ * 0.5f, rng.Range(0.0f, 360.0f),
+                              DirectX::XMFLOAT3(rng.Range(2.0f, 4.5f), height,
+                                                rng.Range(0.25f, 0.45f)),
+                              int(rng.NextU32() % 3));
+                    ++trees;
+                }
             }
-            if (rng.Float01() < 0.45f) {
-                continue;
+            if (!report(0.08f + 0.02f * float(ix + cells + 1) /
+                                     float(2 * cells + 1))) {
+                return false;
             }
-            const float x = ix * pitch + block + road * 0.5f +
-                            rng.Range(-road * 0.4f, road * 0.4f);
-            const float z = iz * pitch + block + road * 0.5f +
-                            rng.Range(-road * 0.4f, road * 0.4f);
-            if (x * x + z * z > extent_ * extent_) {
-                continue;
-            }
-            for (int slot = 0; slot < perBlock && trees < treeBudget; ++slot) {
-                float slotX = 0.0f;
-                float slotZ = 0.0f;
-                SlotOffset(slot, slotsPerAxis, slotSize, block, slotX, slotZ);
-                const float height = rng.Range(5.0f, 12.0f);
-                addObject(SceneObjectType::Tree, x + slotX * 0.5f, z + slotZ * 0.5f,
-                          rng.Range(0.0f, 360.0f),
-                          DirectX::XMFLOAT3(rng.Range(2.0f, 4.5f), height,
-                                            rng.Range(0.25f, 0.45f)),
-                          int(rng.NextU32() % 3));
-                ++trees;
-            }
-        }
-        if (!report(0.08f + 0.02f * float(ix + cells + 1) /
-                                 float(2 * cells + 1))) {
-            return false;
         }
     }
     if (!report(0.10f)) {
