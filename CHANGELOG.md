@@ -4,7 +4,34 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-10-28
+
+0.9.0 focuses on the high-fidelity solver, the rendering budget and the startup
+experience. The Euler plume now follows the analytic reference cloud, the mushroom head
+is placed from the measured geometry, and the lighting is view-independent. The
+reduced-order volume bake and the particle system moved to the GPU, buildings now crumble
+under the blast wave instead of springing apart, and a splash screen covers the long
+shader compilation.
+
+### Highlights
+
+- **View-independent high-fidelity lighting** - a precomputed sun-transmittance volume,
+  fixed-step raymarching with empty-space skipping, a multiple-scattering floor and an
+  isotropic 27-point shading normal.
+- **Mushroom head on the analytic trajectory** - the cap closure uses the analytic
+  reference cloud, the drag uses the analytic radius and a one-sided rise guide keeps the
+  resolved head on the same path; the camera frames the resolved field.
+- **GPU volume bake** - the reduced-order analytic field is evaluated by a compute shader
+  directly into the volume texture. The 256³ bake drops from 56 ms on the thread pool to
+  a single dispatch, and the 16 MB (128³) / 128 MB (256³) upload disappears.
+- **GPU particles** - state, integration and the three instance batches live in
+  structured buffers; the CPU only spawns and uploads the new particles, and the draws
+  use `DrawInstancedIndirect`.
+- **Buildings crumble with the wave** - joint failures are staggered from the blast-facing
+  side, and detached chunks are loaded over the whole positive phase instead of receiving
+  one explosion impulse.
+- **Startup splash** - a threaded splash with the hero image, measured progress shares and
+  an animated bar; the main window is only shown when loading finishes.
 
 ### Added
 
@@ -624,7 +651,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.6.0
