@@ -7,82 +7,88 @@
 
 ![Explosion Simulator: mushroom cloud over a destroyed town](docs/screenshots/hero.png)
 
-A native C++20 application that couples a reduced-order blast model with a Direct3D 11
-volumetric renderer. The reference scenario is a **200 g TNT charge detonated 2 s after
-start-up at 0.4 m above the ground**.
+A native C++20 / Direct3D 11 application that couples an engineering blast model
+with a volumetric renderer and an optional GPU compressible-flow solver. The
+reference scenario is a **200 g TNT charge at 0.4 m height of burst**; the charge,
+atmosphere and environment are fully interactive.
 
-## Features
+## What makes it different
 
-- **Physically grounded blast model** – Brode overpressure fit, Rankine-Hugoniot shock
-  speed, Sedov-like fireball growth, buoyant mushroom-cloud dynamics, thermal radiation
-  and Gurney-driven debris. All parameters are in SI units and exposed in the UI.
-- **Real-time volumetric rendering** – the fireball, shock front and smoke field are
-  baked into a 3D texture (64³–1024³) on a worker pool and ray-marched on the GPU with
-  emission/absorption, blackbody colour, single scattering and HDR bloom.
-- **Atmospheric shock-front refraction** – the pressure front is a thin spherical shell
-  around the burst. Its Gladstone-Dale index jump is computed from the Rankine-Hugoniot
-  density ratio, and the resulting lens bends the rendered scene in screen space along
-  the projected density gradient. A faint caustic rim keeps the front visible against
-  the sky, and the far side is used once the front has passed the camera.
-- **Sub-voxel detail** – a tileable 3D noise texture warps the volume sample position
-  and adds fine structure, so even moderate volume resolutions look turbulent.
-- **Multithreading** – a work-stealing thread pool parallelises particle integration and
-  volume baking; the render thread always participates in the work.
-- **Fast scene generation** - placement is serial and deterministic, while the Voronoi
-  fracture runs on the thread pool. The intact layout appears in ~10 ms while the chunks
-  are fractured; the previous town stays visible during regeneration. The default 20 t
-  town (9,595 chunks) generates in ~0.15 s; the 32,000-chunk budget takes ~0.77 s.
-  Rearm, Reset and loop restarts reuse the generated town instead of rebuilding it.
-- **Cinematic particles** – instanced billboards for glowing debris, sparks,
-  soot and shock-driven ground dust. Fire is rendered by a GPU flame shader that adds
-  fbm turbulence, a heat ramp and soft depth fading in one instanced draw call. Burning
-  objects keep their glow and flames on the blast-facing surface only, and short ember
-  streaks leave the two outer edges of that face. Flames are drawn before the smoke
-  volume, so the cloud occludes and scatters over them.
-- **Physical analysis panel** – live shock radius/Mach, peak overpressure, 5 psi and
-  1 psi damage radii, thermal burn radius, observer arrival time and a Friedlander
-  pressure waveform.
-- **Fire and smoke** – the fireball emits Planckian blackbody radiation from a hot,
-  filamentary core through a cooler, soot-rich surface. A growing smoke envelope and a
-  shock-lifted dust skirt progressively obscure the cooling fireball, as in real
-  detonations. The smoke cloud also casts a volumetric shadow on the ground and the
-  scene, and self-shadows towards the sun.
-- **Auto-scale volume** – the baked volume box follows the fireball and the growing
-  smoke cloud. It only grows; with a fixed voxel count the effective accuracy drops by
-  the same factor, keeping the bake cost constant. Can be disabled in the Rendering
-  panel for a fixed box.
-- **Procedural environment** – a deterministic circular town of buildings, vehicles and
-  trees around ground zero. The analytic blast field drives pressure-impulse damage, window
-  and facade charring, rigid-body motion for vehicles/trees and progressive building
-  collapse into pre-fractured chunks; burning objects glow and emit embers. Buildings
-  shield each other from the blast, the rubble uses true oriented-box contacts, and a
-  directional shadow map lets the town cast shadows on the terrain. Seed, density and
-  chunk quality are configurable; *Environment > Voronoi chunks* switches between
-  convex Voronoi cells (default) and the jittered grid, and **Chunk size** continuously
-  scales the average cell size from 0.25x to 2x; `--no-scene` disables the scene.
-  Facades use four high-resolution procedural styles (glass, brick, concrete,
-  industrial); vehicles get paint, glass, lamp and tire detail, and trees get bark and
-  foliage variation.
-- **Grid overlay with an adaptive metre scale** – the scale bar snaps to a 1-2-5
-  sequence and keeps a readable size while zooming.
-- **Anisotropic filtering** - Off, 2x, 4x or 8x under *Rendering > Anisotropic
-  filtering*. It filters the volumetric raymarch, the procedural surface grain and
-  supersamples facade patterns along the major footprint axis.
-- **Frame-rate cap** – limit the interactive renderer to 30, 60, 90, 120 or 144 fps
-  under *Performance → Max FPS*.
-- **High-fidelity GPU mode** – an optional 3D compressible Euler solver (HLLC fluxes,
-  MUSCL reconstruction, CFL-adaptive time step) runs on the GPU at 64³–128³ and drives
-  the volumetric field. Selectable under *Physics & Effects → Simulation model* in cube or hemisphere mode.
-- **Manual detonation** - the charge starts armed and waits for **Detonate** (or **D**).
-  The fuse setting still applies to automatic restarts; playback uses the adjustable time
-  scale (1.0 = real time), and the high-fidelity solver follows the same scale.
-- **Headless capture** - reproducible PNG screenshots and a benchmark mode without a
-  window, ideal for CI and documentation. Scene generation and rendering are deterministic;
-  the multithreaded physics solver can vary the exact debris layout between runs.
-- **No runtime dependencies** – static MSVC runtime, no VC++ redistributable, single
-  executable plus the shader folder.
+- **The pressure wave is visible in the air** – the compressed shell around the
+  front is rendered as a weak lens. Its refractive-index jump follows the
+  Gladstone-Dale relation and the Rankine-Hugoniot density ratio, so the sky,
+  smoke and town behind the front are bent in screen space. A faint caustic rim
+  and slight dispersion keep the front readable.
+- **Two physically consistent models** – a validated reduced-order blast model
+  covers the complete event, while an optional 3D compressible Euler solver
+  (HLLC fluxes, MUSCL reconstruction, CFL time step) resolves the early shock
+  and fireball on the GPU. Both share the same atmosphere, charge and camera.
+- **A town that actually breaks** – a deterministic procedural town is fractured
+  into Voronoi chunks, shielded by neighbouring buildings and collapsed
+  progressively by the analytic pressure-impulse field. Vehicles and trees
+  become rigid bodies; debris piles up on the remaining structure.
+- **Heat has a direction** – only the surface facing the burst glows and emits
+  flames. Short ember streaks leave the outer edges of that face; the leeward
+  side keeps its charred material colour.
+- **Volumetric fire and smoke** – the fireball, shock shell and mushroom cloud
+  live in a 64³–1024³ volume with Planckian emission, absorption, single
+  scattering, self-shadowing and a GPU bake that follows the growing cloud.
+- **Live physical analysis** – shock radius and Mach number, peak overpressure,
+  5 psi / 1 psi damage radii, thermal burn radius, observer arrival time and a
+  Friedlander pressure waveform.
+- **No runtime dependencies** – static MSVC runtime, no VC++ redistributable,
+  one executable plus the shader assets.
 
-## Requirements
+## Physics
+
+The reduced-order model reproduces the integral behaviour of a blast at
+interactive rates; it is not a CFD solve. The high-fidelity mode is a genuine
+finite-volume Euler solution. Equations, assumptions and references are in
+[docs/physics.md](docs/physics.md).
+
+| Principle | Used for |
+|---|---|
+| Hopkinson-Cranz scaling and Brode's fit | Incident overpressure versus distance |
+| Rankine-Hugoniot relations | Shock Mach number, density and temperature jump |
+| Sedov-like fireball growth and Planckian blackbody | Fireball radius, surface temperature and colour |
+| Buoyant thermal with entrainment and wind | Mushroom-cloud rise, cap and drift |
+| Thermal fluence | Burn radius and ignition of scene objects |
+| Friedlander waveform | Pressure history at a fixed observer |
+| Gurney velocity and quadratic drag | Debris, sparks and ground dust |
+| Gladstone-Dale relation | Atmospheric shock-front refraction |
+| Moist-air density and Sachs scaling | Sound speed, humidity and altitude effects |
+
+## Simulation modes
+
+| Model | Description | Best for |
+|---|---|---|
+| **Reduced-order** (default) | Engineering blast model with analytic fireball, cloud, debris, sparks, smoke and dust. Covers the full timeline. | Overview, complete event, particles |
+| **High-fidelity (GPU Euler)** | 3D compressible Euler finite-volume solver in D3D11 compute shaders. Cube or masked hemisphere, 64³–512³, with GPU domain auto-scaling. | Early blast, shock structure, fireball dynamics |
+
+The high-fidelity solver follows the playback time scale and disables particle
+rendering because the volume is the physical solution. A sub-grid entrainment and
+vortex-ring closure represents the mushroom cap that the coarse grid cannot
+resolve. Use `--high-fidelity --time 0.005` for a headless early-blast capture.
+
+![High-fidelity mushroom cloud](docs/screenshots/high_fidelity_35000.png)
+
+*GPU Euler solver, 128³, 1 t surface burst, 1920×1080 headless capture.*
+
+## Rendering
+
+- GPU ray marching through the volume with jittered sampling, emission/absorption,
+  Henyey-Greenstein scattering and gradient-based sun shading.
+- Auto-scaling volume box: it grows with the fireball and cloud while the voxel
+  count stays fixed, so the bake cost remains constant.
+- Opaque procedural scene (instanced buildings, vehicles, trees and rubble)
+  before the volume, so depth correctly occludes the fireball and smoke.
+- Directional shadow map, procedural sky and terrain, scorch marks, blast ring,
+  ground lighting, instanced particles, HDR bloom and ACES tonemapping.
+- Dedicated atmospheric-refraction pass between the scene/volume and bloom.
+
+Implementation details are in [docs/architecture.md](docs/architecture.md).
+
+## Requirements and build
 
 | | |
 |---|---|
@@ -91,29 +97,16 @@ start-up at 0.4 m above the ground**.
 | Build | Visual Studio 2022 Build Tools (MSVC), CMake ≥ 3.21 |
 | Network | required once, to download Dear ImGui and Jolt Physics |
 
-## Build
-
 ```powershell
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release --parallel
-```
-
-The executable is written to `build\Release\ExplosionSim.exe`; the `assets` folder is
-copied next to it automatically. The first configure downloads Dear ImGui and Jolt
-Physics (MIT) into `build\_deps`; later builds reuse the cached copies.
-
-Run the tests:
-
-```powershell
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-`physics` covers the blast model, atmosphere, volume baker, thread pool, procedural
-scene (generation, damage, fire, rigid bodies) and a settings save/load round-trip.
-`gpu` creates a Direct3D 11 device (hardware, then WARP) and exercises the
-high-fidelity Euler solver; it is skipped when no device is available. The build
-enables warnings-as-errors by default (`-DEXPLOSION_WARNINGS_AS_ERRORS=OFF` disables
-it).
+The executable is written to `build\Release\ExplosionSim.exe`; the `assets`
+folder is copied next to it. `physics` covers the blast model, atmosphere,
+volume baker, scene and settings; `gpu` exercises the Euler solver and is
+skipped when no Direct3D 11 device is available.
 
 ## Run
 
@@ -121,8 +114,9 @@ it).
 .\build\Release\ExplosionSim.exe
 ```
 
-The application opens a window and arms the 200 g charge. It waits in the ready state
-until you press **Detonate** (or **D**).
+The application opens armed and waits for **Detonate** (or **D**). The charge,
+height of burst, atmosphere, fuse, scene and rendering settings are in the
+control panel.
 
 ### Controls
 
@@ -138,47 +132,24 @@ until you press **Detonate** (or **D**).
 | H | Collapse panel, hide overlays, restore (cycles) |
 | F12 | Save a PNG screenshot next to the executable |
 
-The orbit and pan controls stop at the ground plane: the camera stays at least 0.4 m above
-it and the look-at target cannot be pushed below it, so the view never ends up under the
-terrain.
+The camera stays at least 0.4 m above the ground; the view never ends up under
+the terrain.
 
 ### Command line
 
-```text
---screenshot <path>   render a deterministic PNG and exit (headless)
---time <seconds>      simulation time after detonation (default 0.12)
---width <pixels>      output width (default 1600)
---height <pixels>     output height (default 900)
---charge <kg>         TNT equivalent mass
---hob <metres>        height of burst
---azimuth <degrees>   camera azimuth for headless captures
---elevation <degrees> camera elevation for headless captures (clamped to the
-                      ground clearance, like the interactive orbit)
---benchmark           render frames offscreen and print timing
---frames <count>      number of benchmark frames (default 120)
---solver-benchmark    step the GPU solver only and print per-pass GPU timings
---no-update-check     skip the GitHub update check for this run
---check-updates       check GitHub for a newer release and exit
---version             print the version and exit
---high-fidelity       use the GPU Euler solver for the volume
---solver-resolution   solver grid resolution (64, 96, 128, 192, 256, 512)
---solver-steps        max solver steps per frame (default 96)
---solver-time <s>     solver time for headless captures
---solver-step-count <n>  capture at an exact solver step count
---solver-auto-scale   expand the Euler domain before the field hits the edge
---no-solver-auto-scale  keep a fixed Euler domain
---reduced-order       force the reduced-order model (overrides settings.ini)
---volume-resolution <n>  volume grid: 64, 96, 128, 160, 192, 256, 512 or 1024
---no-auto-scale       keep a fixed volume box instead of following the cloud
---no-vsync            disable vertical synchronisation
---scene-seed <n>      seed for the procedural environment
---scene-density <x>   environment density multiplier
---no-scene            disable the procedural environment
---debug               enable the D3D11 debug layer
---help                show all options
-```
-
-Examples:
+| Option | Purpose |
+|---|---|
+| `--screenshot <path>` | Render a deterministic PNG and exit (headless) |
+| `--time <s>` | Simulation time after detonation (default 0.12) |
+| `--width <px>` / `--height <px>` | Output size (default 1600×900) |
+| `--charge <kg>` / `--hob <m>` | TNT-equivalent mass and height of burst |
+| `--high-fidelity` | Use the GPU Euler solver for the volume |
+| `--solver-resolution <n>` / `--solver-time <s>` | Solver grid and capture time |
+| `--benchmark` / `--frames <n>` | Offscreen render benchmark |
+| `--solver-benchmark` | Solver-only GPU timings |
+| `--scene-seed <n>` / `--scene-density <x>` / `--no-scene` | Procedural environment |
+| `--no-update-check` / `--check-updates` / `--version` | Update handling and version |
+| `--help` | Show every option |
 
 ```powershell
 # 1920x1080 hero image, 100 ms after detonation
@@ -188,186 +159,16 @@ Examples:
 .\build\Release\ExplosionSim.exe --benchmark --frames 300 --width 1920 --height 1080
 ```
 
-## Scenario defaults
-
-| Parameter | Value |
-|---|---|
-| Charge | 200 g TNT equivalent (837 kJ) |
-| Height of burst | 0.4 m |
-| Fuse | 2.0 s (held until Detonate) |
-| Ambient conditions | 15 °C, 1013 hPa, 1 m/s wind |
-| Scene seed | 69707 |
-| Time scale | 0.06 (slow motion; 1.0 = real time) |
-| Loop | off |
-| Grid overlay | on |
-| Loop duration | 0.55 s of simulated time |
-
-The charge, height of burst, atmosphere and fuse can be changed in the control panel.
-Presets from 20 g to 10,000 t are included; the charge slider goes up to 100,000 t and
-shows whole kilograms from 100 kg upward. The model remains continuous over the full
-range.
-
-## Simulation models
-
-| Model | Description | Best for |
-|---|---|---|
-| **Reduced-order** (default) | Validated engineering blast model with analytic fireball, cloud, debris, sparks, smoke and dust. Covers the complete timeline. | Overview, full event, particles |
-| **High-fidelity (GPU Euler)** | 3D compressible Euler finite-volume solver with HLLC fluxes and MUSCL reconstruction, running in D3D11 compute shaders. | Early blast (0–50 ms), shock structure, fireball dynamics |
-
-The high-fidelity mode is a genuine finite-volume Euler solution for the blast, with a
-sub-grid entrainment and vortex-ring closure for the mushroom cap that the coarse grid
-cannot resolve. The domain can be a cube or a masked hemisphere: the hemisphere keeps the
-uniform Cartesian grid and only excludes the corners, so memory use is unchanged. It
-follows the playback time scale: at 1.0 the solver advances one
-simulated second per real second. The CFL step adapts to the grid (up to 1 ms), so coarse
-auto-scaled grids can keep up; fine grids or large charges lower the frame rate. Particle
-rendering is disabled in this mode because the volume is the physical solution. For a
-headless capture use e.g.
-`--high-fidelity --time 0.005`.
-
-Since 0.7.0 the solver is ~40 % faster at 96³-192³ (source terms fused into the Z sweep,
-per-direction entry points and 4×4×4 thread groups); `--solver-benchmark` reports the
-per-pass GPU timings and the CPU submission time.
-
-![High-fidelity mushroom cloud](docs/screenshots/high_fidelity_35000.png)
-
-*GPU Euler solver, 128³, solver step 35 000 (t = 1.74 s) for a 1 t surface burst after
-four auto-scale domain expansions (0.68 m voxels, accuracy ×2.86). 1920×1080 headless
-capture without the interface.*
-
-High-fidelity settings (Physics & Effects panel):
-
-- Grid resolution: 64³ / 96³ / 128³ / 192³ / 256³ / 512³ (256³ and 512³ need several GB
-  of VRAM and are not real-time)
-- Max solver steps per frame: 8–256 (the playback time scale is the target; lower
-  caps keep the frame rate up but play the explosion slower)
-- Domain shape: cube or hemisphere (the hemisphere masks the Cartesian volume to a
-  semi-ellipsoidal dome; the cubic texture/memory layout is unchanged)
-- Domain: six times the analytic fireball radius (half extent 3×), cubic, with a
-  reflecting ground and an absorbing sponge at the lateral/top boundaries
-- Uses the moist-air density and virtual temperature; wind drifts the rendered volume
-- Shares the domain-warped detail noise with the reduced-order volume
-- **Solver auto-scale** – a GPU reduction measures the visible detonation products and
-  expands the domain when the plume approaches 78 % of the boundary (12 % margin), so the
-  grid stays as fine as possible while the vortex ring forms. The analytic cloud is only a
-  fallback until the first reduction result is available. The radial measurement ignores the base surge below
-  25 % of the domain height, so the low ground surge no longer coarsens the grid during
-  the plume rise. When the criterion fires, the domain grows by 1.3× and the
-  conservative state is resampled onto the new grid on the GPU. Several steps can run in
-  one frame, so a fast plume rise is caught before it clips. The voxel count stays fixed,
-  so the effective accuracy drops while the CFL step grows; the UI shows the domain,
-  voxel size, measured plume top/radius, accuracy factor and number of expansions. The
-  accuracy budget is ×16. Can be disabled in the high-fidelity panel or with
-  `--no-solver-auto-scale`.
-- **Sub-grid cap closure** - the coarse grid cannot resolve the vortex ring that forms
-  the mushroom head. A drag term (`0.6 v|v| / 2R`) and a toroidal force around the
-  analytic cloud radius spin the rising plume into a cap; the render uses a separate low
-  soot threshold for the diluted smoke, and the camera frames the analytic cloud.
-- 1024³ is not available for the solver: two RGBA32F and two RG32F ping-pong state
-  volumes plus the render volume would need about 60 GB of VRAM
-
-## Physics
-
-The simulation is a **reduced-order model**, not a computational fluid dynamics solve:
-it reproduces the integral behaviour of a blast (front trajectory, overpressure,
-fireball growth, cloud rise, thermal output) at interactive rates. The equations and the
-underlying references are documented in [docs/physics.md](docs/physics.md).
-
-Implemented effects:
-
-- Hopkinson-Cranz scaled distance and Brode's incident overpressure fit
-- Rankine-Hugoniot shock Mach number and adaptive shock-front integration
-- Fireball growth, surface temperature and Planckian (blackbody) emission
-- Buoyant thermal cloud with entrainment drag and wind advection
-- Thermal radiation fluence and burn radius
-- Drag/gravity/bounce debris, sparks, soot and shock-lifted dust
-- Friedlander blast waveform for an observer at a chosen distance
-
-## Atmosphere
-
-Temperature, pressure, humidity and wind are physically active:
-
-- **Density** uses the moist-air equation with the Magnus-Tetens vapour pressure.
-- **Speed of sound** is derived from `sqrt(gamma p / rho)`, so humidity and temperature
-  change the shock Mach number and propagation speed.
-- **Pressure** drives the Sachs scaling: the effective scaled distance shrinks with
-  `(p/p0)^(1/3)`, and the fireball radius grows at altitude. Absolute overpressure at a
-  fixed range is lower in thin air.
-- **Wind** advects the rising cloud, the smoke and the dust (the shock model itself
-  assumes still air).
-
-The Atmosphere panel shows the resulting density, sound speed, vapour pressure and
-virtual temperature.
-
-## Rendering
-
-- 128³ (configurable) RGBA32F volume, baked on the worker pool at up to 30 Hz
-- GPU ray marching with jittered sampling, emission/absorption and Henyey-Greenstein
-  scattering
-- Opaque procedural scene pass (instanced buildings, vehicles, trees and rubble) before
-  the volumetric pass, so the depth buffer correctly occludes the fireball/smoke
-- Directional shadow map (2048², 3×3 PCF) rendered from the scene casters; both the
-  terrain and the scene sample it
-- Instanced billboard particles with soft depth fade
-- Procedural sky, terrain, scorch marks, blast ring and fireball ground lighting
-- HDR render target, 5-level bloom pyramid, ACES filmic tonemap
-
-The renderer is described in [docs/architecture.md](docs/architecture.md).
-
-## Roadmap
-
-The remaining limitations of the procedural environment (broadphase, contact manifolds,
-progressive collapse, blast shielding, shadow cascades, fire spread, wind and soil) are
-planned in [docs/roadmap.md](docs/roadmap.md), including the chosen algorithms,
-performance budgets and acceptance criteria.
-
-## Packaging a release
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
-```
-
-This builds the Release configuration and creates
-`build\ExplosionSim-0.10.0-win64.zip` plus `ExplosionSim-0.10.0-win64.zip.sha256`, containing
-the executable, the updater, the shader assets and the documentation.
-
-## Updates
-
-The app checks the GitHub releases API in the background once per day and shows a banner
-when a newer release is available. The Win64 zip is downloaded only on request to
-`%LOCALAPPDATA%\ExplosionSim\updates`. **Install and restart** replaces the executable and
-assets via a small helper, keeps `settings.ini` and rolls back on failure. The download is
-verified against the SHA-256 digest published by GitHub; the helper verifies the checksum
-again and checks the Authenticode signature of the new executable (unsigned builds are
-accepted with a warning). An optional HTTP proxy can be set in the Updates section, and
-check/download failures show a retry action. The first start after an update shows the
-current release notes, and the **Changelog** button at the bottom of the control panel
-opens the full release history. `--no-update-check` skips the check for one run,
-`--check-updates` performs it without a window, and `--version` prints the version.
-
-## Project layout
-```
-assets/shaders/     HLSL shaders (loaded at runtime)
-docs/               physics and architecture documentation
-src/app/            window, frame loop, settings persistence
-src/core/           thread pool, RNG, logging
-src/gfx/            D3D11 device, renderer, camera, shaders, image I/O
-src/sim/            blast model, particles, volume baking, simulation
-src/scene/          procedural environment, P-I damage, rigid bodies
-src/ui/             Dear ImGui interface
-tests/              physics, settings and GPU tests
-```
-
 ## License
 
-MIT - see [LICENSE](LICENSE).
-
-Third-party components: Dear ImGui (MIT), Jolt Physics (MIT), nlohmann/json (MIT) and
-miniz (MIT). The miniz license is included as `LICENSE-miniz.txt` in the release archive.
+MIT – see [LICENSE](LICENSE). Third-party components: Dear ImGui (MIT), Jolt
+Physics (MIT), nlohmann/json (MIT) and miniz (MIT); the miniz license is included
+as `LICENSE-miniz.txt` in the release archive.
 
 ## Versioning
 
-The project uses [Semantic Versioning](https://semver.org/). The current version is
-**0.10.0**; see [CHANGELOG.md](CHANGELOG.md) for the release history. Version information
-is generated by CMake from the `project()` declaration and embedded in the executable.
-
+The project uses [Semantic Versioning](https://semver.org/). The current version
+is **0.10.0**; see [CHANGELOG.md](CHANGELOG.md) for the release history. Version
+information is generated by CMake from the `project()` declaration and embedded
+in the executable. The app checks the GitHub releases API once per day and can
+install a newer Win64 build after verifying its SHA-256 digest and signature.
