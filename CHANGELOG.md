@@ -4,7 +4,28 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-10-28
+
+This release brings updates and the changelog into the app. The app checks GitHub in the
+background, downloads the Win64 zip on request, verifies it against the published SHA-256
+digest and installs it with a small helper that preserves `settings.ini` and rolls back on
+failure. The first start after an update shows the release notes, and a **Changelog** button
+at the bottom of the panel opens the full history.
+
+### Highlights
+
+- **In-app updates** - background GitHub check, update banner, download with progress and
+  cancel, SHA-256 verification, an optional HTTP proxy and retry actions.
+- **Install and restart** - a standalone helper waits for the app to exit, extracts the
+  zip with miniz, replaces the executable and assets, keeps the settings and restores the
+  previous files if anything fails.
+- **Verified downloads** - the SHA-256 digest is checked after the download and again by
+  the installer; the helper also verifies the Authenticode signature of the new executable
+  (unsigned builds are accepted with a warning, invalid signatures abort).
+- **Changelog in the UI** - a What's-new modal on the first start after an update and a
+  Changelog button at the bottom of the control panel, with the current release or the
+  full history. The changelog text is two points larger than the rest of the UI.
+- **Smaller updater** - the standalone helper dropped from 328 KB to 251 KB.
 
 ### Added
 
@@ -15,13 +36,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   that waits for the app to exit, replaces the executable and assets, keeps `settings.ini`
   and rolls back on failure. The first start after an update shows the current release
   notes, and a **Changelog** button at the bottom of the panel opens the full release
-  history. `--check-updates` runs the check without a window, `--no-update-check` skips it
-  for one run and `--version` prints the version.
+  history.
 - **Update verification and proxy support** - the download is verified against the SHA-256
   digest published by GitHub (or a `<zip>.sha256` asset), the updater verifies it again
-  before installing and checks the Authenticode signature of the new executable (unsigned
-  builds are accepted with a warning, invalid signatures abort). An optional HTTP proxy can
-  be configured in the Updates section, and failed checks/downloads show a retry action.
+  before installing and checks the Authenticode signature of the new executable. An
+  optional HTTP proxy can be configured in the Updates section, and failed checks/downloads
+  show a retry action.
+- `--check-updates` runs the update check without a window, `--no-update-check` skips it
+  for one run and `--version` prints the version.
+- `[update]` settings: `checkForUpdates`, `lastSeenVersion`, `skippedVersion`, `proxy` and
+  `lastCheckUnix`.
+- The release archive now contains `ExplosionSimUpdater.exe` and `LICENSE-miniz.txt`, and
+  the packaging script writes a `.sha256` file next to the zip.
+
+### Security
+
+- The download is verified against the GitHub asset `digest` (or a `<zip>.sha256` asset)
+  before it is finalised; the helper verifies it again before installing.
+- The helper runs `WinVerifyTrust` on the extracted executable. Unsigned builds are
+  accepted with a warning; invalid signatures abort the installation.
+- The download host and asset name are validated, and the zip is extracted with a
+  Zip-Slip check.
 
 ### Changed
 
@@ -532,7 +567,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.7.0
 [0.6.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.6.0
 [0.5.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.5.5
