@@ -20,11 +20,11 @@ enum class UpdateStatus {
 };
 
 struct ReleaseInfo {
-    std::string version;   // "0.9.0"
-    std::string tag;       // "v0.9.0"
-    std::string name;      // "Explosion Simulator 0.9.0"
+    std::string version;   // "0.10.0"
+    std::string tag;       // "v0.10.0"
+    std::string name;      // "Explosion Simulator 0.10.0"
     std::string notes;     // release body (markdown)
-    std::string assetName; // "ExplosionSim-0.9.0-win64.zip"
+    std::string assetName; // "ExplosionSim-0.10.0-win64.zip"
     std::string assetUrl;
     std::string sha256;    // normalized lower-case digest, may be empty
     std::string sha256Url; // optional <zip>.sha256 asset

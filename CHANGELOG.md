@@ -4,7 +4,28 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-10-28
+
+0.10.0 makes the pressure wave visible in the air and ties the heat damage to
+the surface that actually faces the burst. It also makes the height of burst
+exact for every charge, including the high-fidelity solver domain, restores the
+hotkeys after menu interaction and clears the bloom when the simulation is
+rearmed.
+
+### Highlights
+
+- **Atmospheric shock front** - the compressed air behind the front is rendered
+  as a refracting spherical shell. The Gladstone-Dale index jump from the
+  Rankine-Hugoniot density ratio bends the scene in screen space, with a faint
+  caustic rim and slight dispersion.
+- **Directional heat damage** - only the blast-facing surface of a burning object
+  glows and emits flames; short ember streaks leave the outer edges of that face.
+  The leeward side keeps its charred material colour.
+- **Exact height of burst** - the fireball stays at the configured height for
+  every charge, and the high-fidelity solver domain is sized to contain the burst
+  point, so the resolved cloud and the pressure front coincide.
+- **Hotkeys and bloom** - the shortcuts work after clicking a menu control, and
+  rearming or restarting clears the previous explosion's bloom.
 
 ### Added
 
@@ -42,6 +63,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   while a text field has focus (`io.WantTextInput`) instead of whenever the
   interface captures the keyboard, so `D`, `R`, `F`, `H`, `Space` and `F12` keep
   working after clicking a menu control.
+
+### Changed
+
+- **CI actions** - `actions/checkout@v5` and `actions/upload-artifact@v6` run on
+  Node.js 24, which removes the Node 20 deprecation annotation from the Windows
+  workflow. The build, test and package steps are unchanged.
 
 ## [0.9.0] - 2026-10-28
 
@@ -690,7 +717,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.8.0
 [0.7.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.7.0
