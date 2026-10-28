@@ -37,6 +37,7 @@ bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool
                             bool holdFuse) {
     pool_ = &pool;
     settings_ = settings;
+    particles_.SetGpuMode(settings.gpuParticles);
     particles_.Initialize(settings.particleBudget);
     volume_.Initialize(pool_, settings.volumeResolution);
     initialized_ = true;
@@ -306,6 +307,7 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool physicsChanged = PhysicsChanged(settings_, settings);
     const bool sceneChanged = SceneChanged(settings_, settings);
     const bool budgetChanged = settings_.particleBudget != settings.particleBudget;
+    const bool gpuParticlesChanged = settings_.gpuParticles != settings.gpuParticles;
     const bool volumeChanged = settings_.volumeResolution != settings.volumeResolution;
     const bool fuseChanged = settings_.fuseSeconds != settings.fuseSeconds;
     const bool modeChanged = settings_.mode != settings.mode;
@@ -321,7 +323,7 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
     const bool needsScene = sceneChanged || physicsChanged;
     const bool needsReset = physicsChanged || budgetChanged || fuseChanged ||
                             modeChanged || solverResolutionChanged ||
-                            solverDomainChanged;
+                            solverDomainChanged || gpuParticlesChanged;
 
     settings_ = settings;
 
@@ -343,6 +345,9 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
 
     if (budgetChanged) {
         particles_.Initialize(settings_.particleBudget);
+    }
+    if (gpuParticlesChanged) {
+        particles_.SetGpuMode(settings_.gpuParticles);
     }
     if (needsReset) {
         ResetInternal(false, needsScene);

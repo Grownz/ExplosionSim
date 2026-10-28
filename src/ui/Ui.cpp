@@ -1044,6 +1044,9 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
     if (ImGui::Checkbox("GPU volume bake", &settings.simulation.gpuVolumeBake)) {
         actions.applySimulationSettings = true;
     }
+    if (ImGui::Checkbox("GPU particles", &settings.simulation.gpuParticles)) {
+        actions.applySimulationSettings = true;
+    }
     ImGui::EndDisabled();
 
     if (highFidelity) {
@@ -1102,6 +1105,8 @@ void DrawPerformance(UiContext& context) {
     Readout("Worker threads", "%d", context.workerThreads);
     Readout("Particles", "%d / %d", context.simulation.Particles().AliveCount(),
             context.simulation.Particles().Capacity());
+    Readout("Particle backend", "%s",
+            context.simulation.Particles().GpuMode() ? "GPU" : "CPU");
     Readout("Debris", "%d", context.simulation.Particles().AliveCount(sim::ParticleKind::Debris));
     Readout("Sparks", "%d", context.simulation.Particles().AliveCount(sim::ParticleKind::Spark));
     Readout("Fire", "%d", context.simulation.Particles().AliveCount(sim::ParticleKind::Fire));

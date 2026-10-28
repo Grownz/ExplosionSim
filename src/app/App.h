@@ -42,6 +42,8 @@ struct LaunchOptions {
     bool autoScaleVolumeSet = false;
     bool gpuVolumeBake = true;
     bool gpuVolumeBakeSet = false;
+    bool gpuParticles = true;
+    bool gpuParticlesSet = false;
     bool solverAutoScale = true;
     bool solverAutoScaleSet = false;
     long long solverStepCount = 0;

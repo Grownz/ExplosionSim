@@ -297,6 +297,14 @@ bool Renderer::CreatePipeline() {
     auto compositeBlob = compile(compositeFile, "PSComposite", "ps_5_0");
     auto volumeBakeBlob =
         compile(L"assets\\shaders\\volume_bake.hlsl", "CSBake", "cs_5_0");
+    auto particleGpuBlob =
+        compile(L"assets\\shaders\\particles_gpu.hlsl", "CSIntegrate", "cs_5_0");
+    auto particleSpawnBlob =
+        compile(L"assets\\shaders\\particles_gpu.hlsl", "CSApplySpawns", "cs_5_0");
+    auto particleFinalizeBlob =
+        compile(L"assets\\shaders\\particles_gpu.hlsl", "CSFinalize", "cs_5_0");
+    auto particleResetBlob =
+        compile(L"assets\\shaders\\particles_gpu.hlsl", "CSReset", "cs_5_0");
 
     if (!vsBlob || !skyBlob || !groundBlob || !volumeBlob || !particleVSBlob ||
         !particleAddBlob || !particleAlphaBlob || !particleFireBlob ||
@@ -345,6 +353,40 @@ bool Renderer::CreatePipeline() {
         }
     } else {
         LogWarn("GPU volume bake shader unavailable; using the CPU bake.");
+    }
+
+    // Optional: GPU particles. As with the volume bake, a failure leaves the
+    // CPU path in charge.
+    const bool particleShaders =
+        particleGpuBlob && particleSpawnBlob && particleFinalizeBlob &&
+        particleResetBlob &&
+        SUCCEEDED(device->CreateComputeShader(particleGpuBlob->GetBufferPointer(),
+                                              particleGpuBlob->GetBufferSize(), nullptr,
+                                              &particleIntegrateCS_)) &&
+        SUCCEEDED(device->CreateComputeShader(particleSpawnBlob->GetBufferPointer(),
+                                              particleSpawnBlob->GetBufferSize(), nullptr,
+                                              &particleSpawnCS_)) &&
+        SUCCEEDED(device->CreateComputeShader(particleFinalizeBlob->GetBufferPointer(),
+                                              particleFinalizeBlob->GetBufferSize(), nullptr,
+                                              &particleFinalizeCS_)) &&
+        SUCCEEDED(device->CreateComputeShader(particleResetBlob->GetBufferPointer(),
+                                              particleResetBlob->GetBufferSize(), nullptr,
+                                              &particleResetCS_));
+    if (particleShaders) {
+        D3D11_BUFFER_DESC cb{};
+        cb.ByteWidth = sizeof(ParticleUpdateConstants);
+        cb.Usage = D3D11_USAGE_DYNAMIC;
+        cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        cb.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(device->CreateBuffer(&cb, nullptr, &particleUpdateCB_))) {
+            LogWarn("GPU particles: constant buffer creation failed; using the CPU path.");
+            particleSpawnCS_.Reset();
+            particleIntegrateCS_.Reset();
+            particleFinalizeCS_.Reset();
+            particleFinalizeCS_.Reset();
+        }
+    } else {
+        LogWarn("GPU particle shader unavailable; using the CPU path.");
     }
 
     return true;
@@ -684,6 +726,277 @@ void Renderer::UploadParticles(const std::vector<sim::ParticleInstance>& instanc
     }
     memcpy(mapped.pData, instances.data(), instances.size() * kParticleStride);
     context->Unmap(buffer.Get(), 0);
+}
+
+bool Renderer::CreateParticleGpuResources(int capacity) {
+    if (capacity <= 0 || !particleSpawnCS_ || !particleIntegrateCS_ ||
+        !particleFinalizeCS_ || !particleUpdateCB_) {
+        return false;
+    }
+
+    particleStateBuffer_.Reset();
+    particleStateUAV_.Reset();
+    particleSpawnBuffer_.Reset();
+    particleSpawnSRV_.Reset();
+    particleCounterBuffer_.Reset();
+    particleCounterUAV_.Reset();
+    particleIndirectBuffer_.Reset();
+    particleIndirectUAV_.Reset();
+    particleCounterStaging_.Reset();
+    particleReadbackQuery_.Reset();
+    particleUAVAdditive_.Reset();
+    particleUAVAlpha_.Reset();
+    particleUAVFire_.Reset();
+    particleReadbackPending_ = false;
+
+    ID3D11Device* device = device_->Device();
+
+    auto createBuffer = [device](UINT bytes, UINT stride, D3D11_USAGE usage, UINT bind,
+                                 UINT cpuAccess, UINT misc, ComPtr<ID3D11Buffer>& buffer) {
+        D3D11_BUFFER_DESC desc{};
+        desc.ByteWidth = bytes;
+        desc.Usage = usage;
+        desc.BindFlags = bind;
+        desc.CPUAccessFlags = cpuAccess;
+        desc.MiscFlags = misc | D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+        desc.StructureByteStride = stride;
+        return SUCCEEDED(device->CreateBuffer(&desc, nullptr, &buffer));
+    };
+    auto createUav = [device](ID3D11Buffer* buffer, UINT elements,
+                              ComPtr<ID3D11UnorderedAccessView>& uav) {
+        D3D11_UNORDERED_ACCESS_VIEW_DESC desc{};
+        desc.Format = DXGI_FORMAT_UNKNOWN;
+        desc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+        desc.Buffer.NumElements = elements;
+        return SUCCEEDED(device->CreateUnorderedAccessView(buffer, &desc, &uav));
+    };
+    auto createSrv = [device](ID3D11Buffer* buffer, UINT elements,
+                              ComPtr<ID3D11ShaderResourceView>& srv) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC desc{};
+        desc.Format = DXGI_FORMAT_UNKNOWN;
+        desc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        desc.Buffer.NumElements = elements;
+        return SUCCEEDED(device->CreateShaderResourceView(buffer, &desc, &srv));
+    };
+
+    const UINT stateStride = UINT(sizeof(sim::ParticleGpuState));
+    const UINT spawnStride = UINT(sizeof(sim::ParticleSpawn));
+    if (!createBuffer(UINT(capacity) * stateStride, stateStride, D3D11_USAGE_DEFAULT,
+                      D3D11_BIND_UNORDERED_ACCESS, 0, 0, particleStateBuffer_) ||
+        !createUav(particleStateBuffer_.Get(), UINT(capacity), particleStateUAV_)) {
+        LogError("GPU particles: state buffer creation failed (%d elements).", capacity);
+        return false;
+    }
+    if (!createBuffer(UINT(capacity) * spawnStride, spawnStride, D3D11_USAGE_DYNAMIC,
+                      D3D11_BIND_SHADER_RESOURCE, D3D11_CPU_ACCESS_WRITE, 0,
+                      particleSpawnBuffer_) ||
+        !createSrv(particleSpawnBuffer_.Get(), UINT(capacity), particleSpawnSRV_)) {
+        LogError("GPU particles: spawn buffer creation failed (%d elements).", capacity);
+        return false;
+    }
+    if (!createBuffer(4 * sizeof(uint32_t), sizeof(uint32_t), D3D11_USAGE_DEFAULT,
+                      D3D11_BIND_UNORDERED_ACCESS, 0, 0, particleCounterBuffer_) ||
+        !createUav(particleCounterBuffer_.Get(), 4, particleCounterUAV_)) {
+        LogError("GPU particles: counter buffer creation failed.");
+        return false;
+    }
+    // Indirect args must be a raw buffer; a structured buffer cannot carry
+    // DRAWINDIRECT_ARGS.
+    {
+        D3D11_BUFFER_DESC desc{};
+        desc.ByteWidth = 12 * sizeof(uint32_t);
+        desc.Usage = D3D11_USAGE_DEFAULT;
+        desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+        desc.MiscFlags = D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
+        if (FAILED(device->CreateBuffer(&desc, nullptr, &particleIndirectBuffer_))) {
+            LogError("GPU particles: indirect args buffer creation failed.");
+            return false;
+        }
+        D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+        uavDesc.Format = DXGI_FORMAT_R32_UINT;
+        uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+        uavDesc.Buffer.NumElements = 12;
+        if (FAILED(device->CreateUnorderedAccessView(particleIndirectBuffer_.Get(),
+                                                     &uavDesc, &particleIndirectUAV_))) {
+            LogError("GPU particles: indirect args UAV creation failed.");
+            return false;
+        }
+    }
+    if (!createBuffer(4 * sizeof(uint32_t), sizeof(uint32_t), D3D11_USAGE_STAGING, 0,
+                      D3D11_CPU_ACCESS_READ, 0, particleCounterStaging_)) {
+        LogError("GPU particles: counter staging buffer creation failed.");
+        return false;
+    }
+
+    D3D11_QUERY_DESC queryDesc{};
+    queryDesc.Query = D3D11_QUERY_EVENT;
+    if (FAILED(device->CreateQuery(&queryDesc, &particleReadbackQuery_))) {
+        LogError("GPU particles: readback query creation failed.");
+        return false;
+    }
+
+    // Instance buffers for the GPU path: the compute shader writes them and the
+    // vertex shader reads them.
+    auto createInstanceBuffer = [&](ComPtr<ID3D11Buffer>& buffer,
+                                    ComPtr<ID3D11ShaderResourceView>& srv,
+                                    ComPtr<ID3D11UnorderedAccessView>& uav) {
+        if (!createBuffer(UINT(capacity) * kParticleStride, kParticleStride,
+                          D3D11_USAGE_DEFAULT,
+                          D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS, 0, 0,
+                          buffer) ||
+            !createSrv(buffer.Get(), UINT(capacity), srv) ||
+            !createUav(buffer.Get(), UINT(capacity), uav)) {
+            return false;
+        }
+        return true;
+    };
+    if (!createInstanceBuffer(particleBufferAdditive_, particleSRVAdditive_,
+                              particleUAVAdditive_) ||
+        !createInstanceBuffer(particleBufferAlpha_, particleSRVAlpha_, particleUAVAlpha_) ||
+        !createInstanceBuffer(particleBufferFire_, particleSRVFire_, particleUAVFire_)) {
+        LogError("GPU particles: instance buffer creation failed.");
+        return false;
+    }
+
+    ID3D11DeviceContext* context = device_->Context();
+    const UINT zeros[4] = {0, 0, 0, 0};
+    context->ClearUnorderedAccessViewUint(particleCounterUAV_.Get(), zeros);
+    return true;
+}
+
+void Renderer::StepGpuParticles(sim::Simulation& simulation) {
+    sim::ParticleSystem& particles = simulation.Particles();
+    if (!particles.GpuMode() || !SupportsGpuParticles()) {
+        return;
+    }
+    const int capacity = particles.Capacity();
+    if (capacity != particleCapacity_ || !particleGpuMode_) {
+        if (!CreateParticleGpuResources(capacity)) {
+            particles.SetGpuMode(false);
+            return;
+        }
+        particleCapacity_ = capacity;
+        particleGpuMode_ = true;
+    }
+    UpdateGpuParticles(simulation);
+}
+
+void Renderer::UpdateGpuParticles(sim::Simulation& simulation) {
+    sim::ParticleSystem& particles = simulation.Particles();    if (particleReadbackPending_) {
+        ReadParticleCounters(particles);
+    }
+
+    ID3D11DeviceContext* context = device_->Context();
+    const bool reset = particles.ConsumeGpuReset();
+    const float dt = particles.ConsumeGpuDt();
+    if (!reset && dt <= 0.0f) {
+        return;
+    }
+    const UINT zeros[4] = {0, 0, 0, 0};
+
+    const std::vector<sim::ParticleSpawn>& spawns = particles.PrepareGpuSpawns();
+    if (!spawns.empty()) {
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (SUCCEEDED(context->Map(particleSpawnBuffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0,
+                                   &mapped))) {
+            memcpy(mapped.pData, spawns.data(),
+                   spawns.size() * sizeof(sim::ParticleSpawn));
+            context->Unmap(particleSpawnBuffer_.Get(), 0);
+        }
+    }
+
+    const sim::ParticleGpuParams& gp = particles.GpuParams();
+    ParticleUpdateConstants constants{};
+    constants.windTime = XMFLOAT4(gp.wind.x, gp.wind.y, gp.wind.z, gp.time);
+    constants.params = XMFLOAT4(gp.ambientTemperature, gp.gravity, dt,
+                                float(particleCapacity_));    constants.counts = XMFLOAT4(float(spawns.size()), 0.0f, 0.0f, 0.0f);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context->Map(particleUpdateCB_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0,
+                            &mapped))) {
+        return;
+    }
+    memcpy(mapped.pData, &constants, sizeof(constants));
+    context->Unmap(particleUpdateCB_.Get(), 0);
+
+    // Clear the counters for this frame.
+    context->ClearUnorderedAccessViewUint(particleCounterUAV_.Get(), zeros);
+
+    // A structured-buffer UAV clear only writes the first 16 bytes of each
+    // element, so the state reset needs a real pass.
+    if (reset) {
+        ID3D11Buffer* cbuffer = particleUpdateCB_.Get();
+        context->CSSetConstantBuffers(0, 1, &cbuffer);
+        ID3D11UnorderedAccessView* stateUav = particleStateUAV_.Get();
+        context->CSSetUnorderedAccessViews(0, 1, &stateUav, nullptr);
+        context->CSSetShader(particleResetCS_.Get(), nullptr, 0);
+        context->Dispatch(UINT((particleCapacity_ + 63) / 64), 1, 1);
+        ID3D11UnorderedAccessView* nullUav = nullptr;
+        context->CSSetUnorderedAccessViews(0, 1, &nullUav, nullptr);
+        context->CSSetShader(nullptr, nullptr, 0);
+    }
+
+    ID3D11Buffer* cbuffer = particleUpdateCB_.Get();
+    context->CSSetConstantBuffers(0, 1, &cbuffer);
+    ID3D11UnorderedAccessView* uavs[6] = {
+        particleStateUAV_.Get(), particleUAVAdditive_.Get(), particleUAVAlpha_.Get(),
+        particleUAVFire_.Get(), particleCounterUAV_.Get(), particleIndirectUAV_.Get()};
+    context->CSSetUnorderedAccessViews(0, 6, uavs, nullptr);
+    ID3D11ShaderResourceView* spawnView = particleSpawnSRV_.Get();
+    context->CSSetShaderResources(0, 1, &spawnView);
+
+    if (!spawns.empty()) {
+        context->CSSetShader(particleSpawnCS_.Get(), nullptr, 0);
+        const UINT groups = UINT((spawns.size() + 63) / 64);
+        context->Dispatch(groups, 1, 1);
+    }
+    context->CSSetShader(particleIntegrateCS_.Get(), nullptr, 0);
+    const UINT integrateGroups = UINT((particleCapacity_ + 63) / 64);
+    context->Dispatch(integrateGroups, 1, 1);
+    context->CSSetShader(particleFinalizeCS_.Get(), nullptr, 0);
+    context->Dispatch(1, 1, 1);
+
+    ID3D11UnorderedAccessView* nullUavs[6] = {nullptr, nullptr, nullptr,
+                                              nullptr, nullptr, nullptr};
+    context->CSSetUnorderedAccessViews(0, 6, nullUavs, nullptr);
+    ID3D11ShaderResourceView* nullSrv = nullptr;
+    context->CSSetShaderResources(0, 1, &nullSrv);
+    context->CSSetShader(nullptr, nullptr, 0);
+
+    // The counts feed the UI and the first-frame log; the draws use the indirect
+    // args, so they never depend on this readback. Only one copy may be in
+    // flight: re-ending a pending event query would never signal.
+    if (!particleReadbackPending_) {
+        context->CopyResource(particleCounterStaging_.Get(), particleCounterBuffer_.Get());
+        context->End(particleReadbackQuery_.Get());
+        particleReadbackPending_ = true;
+    }
+}
+
+void Renderer::ReadParticleCounters(sim::ParticleSystem& particles) {
+    if (!particleReadbackPending_) {
+        return;
+    }
+    ID3D11DeviceContext* context = device_->Context();
+    BOOL done = FALSE;
+    const HRESULT result = context->GetData(particleReadbackQuery_.Get(), &done,
+                                            sizeof(done), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (result != S_OK || !done) {
+        return;
+    }
+    particleReadbackPending_ = false;
+
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context->Map(particleCounterStaging_.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+        return;
+    }
+    uint32_t values[4] = {0, 0, 0, 0};
+    memcpy(values, mapped.pData, sizeof(values));
+    context->Unmap(particleCounterStaging_.Get(), 0);
+
+    info_.additiveParticles = int(values[0]);
+    info_.alphaParticles = int(values[1]);
+    info_.fireParticles = int(values[2]);
+    particles.SetGpuAliveCount(int(values[3]));
 }
 
 void Renderer::UpdateBloomConstants(float sourceWidth, float sourceHeight, float threshold,
@@ -1335,35 +1648,64 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         highFidelity ? solverVolume : volumeSRV_.Get();
 
     const int capacity = simulation.Particles().Capacity();
-    if (capacity != particleCapacity_) {
+    bool gpuParticles = simulation.Particles().GpuMode() && SupportsGpuParticles();
+    if (capacity != particleCapacity_ || gpuParticles != particleGpuMode_) {
         particleCapacity_ = capacity;
-        if (!CreateStructuredBuffer(device_->Device(), capacity, particleBufferAdditive_,
-                                    particleSRVAdditive_) ||
-            !CreateStructuredBuffer(device_->Device(), capacity, particleBufferFire_,
-                                    particleSRVFire_) ||
-            !CreateStructuredBuffer(device_->Device(), capacity, particleBufferAlpha_,
-                                    particleSRVAlpha_)) {
-            LogError("Failed to create particle instance buffers.");
-            return;
+        particleGpuMode_ = gpuParticles;
+        bool ok = false;
+        if (gpuParticles) {
+            ok = CreateParticleGpuResources(capacity);
+        }
+        if (!ok) {
+            // Fall back to the CPU path. The particle system switches back so
+            // its update loop integrates and builds the batches again.
+            gpuParticles = false;
+            particleGpuMode_ = false;
+            simulation.Particles().SetGpuMode(false);
+            if (!CreateStructuredBuffer(device_->Device(), capacity, particleBufferAdditive_,
+                                        particleSRVAdditive_) ||
+                !CreateStructuredBuffer(device_->Device(), capacity, particleBufferFire_,
+                                        particleSRVFire_) ||
+                !CreateStructuredBuffer(device_->Device(), capacity, particleBufferAlpha_,
+                                        particleSRVAlpha_)) {
+                LogError("Failed to create particle instance buffers.");
+                return;
+            }
         }
     }
 
-    if (!highFidelity) {
-        UploadParticles(simulation.Particles().AdditiveBatch(), particleBufferAdditive_);
-        UploadParticles(simulation.Particles().AlphaBatch(), particleBufferAlpha_);
+    if (gpuParticles) {
+        UpdateGpuParticles(simulation);
+    } else {
+        if (!highFidelity) {
+            UploadParticles(simulation.Particles().AdditiveBatch(), particleBufferAdditive_);
+            UploadParticles(simulation.Particles().AlphaBatch(), particleBufferAlpha_);
+        }
+        // Scene fires are rendered in both modes; in high-fidelity mode the
+        // batch contains only the fires on burning scene objects.
+        UploadParticles(simulation.Particles().FireBatch(), particleBufferFire_);
     }
-    // Scene fires are rendered in both modes; in high-fidelity mode the batch
-    // contains only the fires on burning scene objects.
-    UploadParticles(simulation.Particles().FireBatch(), particleBufferFire_);
 
     if (frameIndex_ == 0) {
         const auto& state = simulation.Blast().State();
+        const int additive = gpuParticles ? info_.additiveParticles
+                                          : int(simulation.Particles().AdditiveBatch().size());
+        const int alpha = gpuParticles ? info_.alphaParticles
+                                       : int(simulation.Particles().AlphaBatch().size());
+        const int fire = gpuParticles ? info_.fireParticles
+                                      : int(simulation.Particles().FireBatch().size());
         LogInfo("First frame: t=%.3fs fireball=%.2fm (%.0f K) shock=%.1fm volume=%d "
                 "particles=%d+%d fire=%d highFidelity=%d",
                 state.time, state.fireballRadius, state.fireballTemperatureK, state.shockRadius,
-                activeVolumeValid_ ? 1 : 0, int(simulation.Particles().AdditiveBatch().size()),
-                int(simulation.Particles().AlphaBatch().size()),
-                int(simulation.Particles().FireBatch().size()), highFidelity ? 1 : 0);
+                activeVolumeValid_ ? 1 : 0, additive, alpha, fire, highFidelity ? 1 : 0);
+    }
+
+    if (frameIndex_ == 0) {
+        LogInfo("Volume active: valid=%d bounds=(%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f) split=%d",
+                activeVolumeValid_ ? 1 : 0, activeVolumeBounds_.min.x,
+                activeVolumeBounds_.min.y, activeVolumeBounds_.min.z,
+                activeVolumeBounds_.max.x, activeVolumeBounds_.max.y,
+                activeVolumeBounds_.max.z, activeVolumeSplit_ ? 1 : 0);
     }
 
     UpdateFrameConstants(simulation, camera, settings);
@@ -1598,18 +1940,20 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     context->CopyResource(depthCopyTexture_.Get(), device_->DepthTexture());
     ID3D11ShaderResourceView* depthSample = depthCopySRV_.Get();
 
-    info_.additiveParticles =
-        highFidelity ? 0 : int(simulation.Particles().AdditiveBatch().size());
-    info_.fireParticles = int(simulation.Particles().FireBatch().size());
-    info_.alphaParticles =
-        highFidelity ? 0 : int(simulation.Particles().AlphaBatch().size());
+    if (!gpuParticles) {
+        info_.additiveParticles =
+            highFidelity ? 0 : int(simulation.Particles().AdditiveBatch().size());
+        info_.fireParticles = int(simulation.Particles().FireBatch().size());
+        info_.alphaParticles =
+            highFidelity ? 0 : int(simulation.Particles().AlphaBatch().size());
+    }
     info_.raymarchSteps = settings.raymarchSteps;
     info_.volumeValid = activeVolumeValid_;
     info_.highFidelity = highFidelity;
 
     // Hot debris and sparks are drawn before the volume so that the optically
     // thick fireball correctly occludes the material inside it.
-    if (!highFidelity && settings.enableParticles && info_.additiveParticles > 0) {
+    if (!highFidelity && settings.enableParticles && (gpuParticles || info_.additiveParticles > 0)) {
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);
@@ -1620,7 +1964,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->PSSetShaderResources(0, 2, srvs);
         context->OMSetBlendState(blendAdditive_.Get(), nullptr, 0xffffffff);
         context->PSSetShader(particleAdditivePS_.Get(), nullptr, 0);
-        context->DrawInstanced(6, UINT(info_.additiveParticles), 0, 0);
+        if (gpuParticles) {
+            context->DrawInstancedIndirect(particleIndirectBuffer_.Get(), 0);
+        } else {
+            context->DrawInstanced(6, UINT(info_.additiveParticles), 0, 0);
+        }
 
         ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
         context->VSSetShaderResources(0, 1, nullSRVs);
@@ -1631,7 +1979,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     // Drawn before the volume so the smoke's premultiplied transmittance
     // composites over the flames: the cloud occludes them and scatters its own
     // light over the fire.
-    if (settings.enableParticles && info_.fireParticles > 0) {
+    if (settings.enableParticles && (gpuParticles || info_.fireParticles > 0)) {
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);
@@ -1642,7 +1990,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->PSSetShaderResources(0, 2, srvs);
         context->OMSetBlendState(blendAdditive_.Get(), nullptr, 0xffffffff);
         context->PSSetShader(particleFirePS_.Get(), nullptr, 0);
-        context->DrawInstanced(6, UINT(info_.fireParticles), 0, 0);
+        if (gpuParticles) {
+            context->DrawInstancedIndirect(particleIndirectBuffer_.Get(), 32);
+        } else {
+            context->DrawInstanced(6, UINT(info_.fireParticles), 0, 0);
+        }
 
         ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
         context->VSSetShaderResources(0, 1, nullSRVs);
@@ -1692,7 +2044,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     }
 
     // Soft smoke and dust puffs composite over the volume.
-    if (!highFidelity && settings.enableParticles && info_.alphaParticles > 0) {
+    if (!highFidelity && settings.enableParticles && (gpuParticles || info_.alphaParticles > 0)) {
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);
@@ -1703,7 +2055,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->PSSetShaderResources(0, 2, srvs);
         context->OMSetBlendState(blendAlpha_.Get(), nullptr, 0xffffffff);
         context->PSSetShader(particleAlphaPS_.Get(), nullptr, 0);
-        context->DrawInstanced(6, UINT(info_.alphaParticles), 0, 0);
+        if (gpuParticles) {
+            context->DrawInstancedIndirect(particleIndirectBuffer_.Get(), 16);
+        } else {
+            context->DrawInstanced(6, UINT(info_.alphaParticles), 0, 0);
+        }
 
         ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
         context->VSSetShaderResources(0, 1, nullSRVs);

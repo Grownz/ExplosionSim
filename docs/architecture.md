@@ -29,13 +29,15 @@ workers. The calling thread always executes queued work while it waits, so a
 
 Two kinds of work are submitted:
 
-1. **Particle integration** – `ParticleSystem::Update` splits the particle array into
-   chunks of 2048 and integrates them in parallel. Each particle is independent; random
-   numbers used during spawning are drawn on the main thread, so results are
-   deterministic.
-2. **Volume baking** – `VolumeBaker` dispatches one chunk per z-slice through
-   `ParallelForAsync`. When the last slice finishes, an atomic flag is set. The main
-   thread adopts the finished frame on the next update and uploads it to the GPU.
+1. **Particle spawning** – `ParticleSystem::Update` spawns on the main thread (fixed RNG,
+   deterministic) and, in the CPU fallback, integrates the array in chunks of 2048. With
+   the GPU path (`particles_gpu.hlsl`) the CPU only uploads the new spawns; the state,
+   integration and the three instance batches live in structured buffers on the GPU, and
+   the draws use `DrawInstancedIndirect`. Headless captures call `StepGpuParticles` after
+   every fixed step so the GPU state evolves with the simulation.
+2. **Volume baking** – the GPU compute bake evaluates the analytic field directly into the
+   volume texture. The CPU `VolumeBaker` fallback dispatches one chunk per z-slice through
+   `ParallelForAsync` and uploads the finished frame.
 
 The bake result is double-buffered. A new bake writes into the buffer that is not
 currently displayed, so the renderer never samples a partially written volume.
@@ -465,10 +467,8 @@ the debris layout are not guaranteed to be bit-identical.
 - Ray-march steps dominate GPU cost: 128 steps at 1600×900 is comfortable on a mid-range
   GPU; 192 steps is intended for stills.
 - Particle count can be reduced in the UI; 40 000 particles is the default and leaves
-  plenty of headroom.
-- The particle integration and the volume baker share the pool, so the UI may show
-  occasional bake spikes when both run in the same frame. The bake is deliberately
-  throttled and skipped while another bake is in flight.
+  plenty of headroom. With the GPU particle path the integration and the batch build run
+  in one compute dispatch, so the worker pool is free for the scene and the CPU bake.
 
 ## Updates
 

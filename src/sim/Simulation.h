@@ -46,6 +46,8 @@ struct SimulationSettings {
 
     // Performance
     int particleBudget = 40000;
+    // Integrate particles and build the instance batches on the GPU.
+    bool gpuParticles = true;
     int volumeResolution = 128;
     bool bakeVolume = true;
     // Evaluate the analytic volume field on the GPU (compute shader) instead of
@@ -102,6 +104,7 @@ public:
 
     const BlastModel& Blast() const { return blast_; }
     const ParticleSystem& Particles() const { return particles_; }
+    ParticleSystem& Particles() { return particles_; }
     VolumeBaker& Volume() { return volume_; }
     const VolumeBaker& Volume() const { return volume_; }
     const scene::Scene& Scene() const { return scene_; }

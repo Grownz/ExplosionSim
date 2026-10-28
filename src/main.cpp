@@ -182,6 +182,12 @@ ParsedArguments ParseCommandLine() {
         } else if (argument == L"--gpu-volume-bake") {
             result.options.gpuVolumeBake = true;
             result.options.gpuVolumeBakeSet = true;
+        } else if (argument == L"--no-gpu-particles") {
+            result.options.gpuParticles = false;
+            result.options.gpuParticlesSet = true;
+        } else if (argument == L"--gpu-particles") {
+            result.options.gpuParticles = true;
+            result.options.gpuParticlesSet = true;
         } else if (argument == L"--auto-scale") {
             result.options.autoScaleVolume = true;
             result.options.autoScaleVolumeSet = true;

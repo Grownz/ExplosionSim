@@ -93,6 +93,12 @@ public:
     // True when the compute-shader volume bake compiled and is available.
     bool SupportsGpuVolumeBake() const { return volumeBakeCS_ != nullptr; }
     bool GpuVolumeBakeActive() const { return gpuVolumeBakeActive_; }
+    // True when the GPU particle compute shader compiled.
+    bool SupportsGpuParticles() const { return particleIntegrateCS_ != nullptr; }
+    // Advances the GPU particle simulation outside Render(). Headless captures
+    // call this after every fixed step so the particles evolve with the
+    // simulation instead of only once per rendered frame.
+    void StepGpuParticles(sim::Simulation& simulation);
 
 private:
     struct Target {
@@ -151,6 +157,13 @@ private:
         DirectX::XMFLOAT4 shock;       // x radius, y mach, z burstY, w dust intensity
     };
 
+    // Must match the cbuffer in particles_gpu.hlsl.
+    struct ParticleUpdateConstants {
+        DirectX::XMFLOAT4 windTime;  // xyz = wind, w = time
+        DirectX::XMFLOAT4 params;    // x = ambient T, y = gravity, z = dt, w = capacity
+        DirectX::XMFLOAT4 counts;    // x = spawn count
+    };
+
     bool CreatePipeline();
     bool CreateStates();
     bool CreateNoiseTexture();
@@ -163,7 +176,9 @@ private:
     bool EnsureVolumeTexture(int resolution, bool halfFloat, bool split);
     void UploadVolume(const sim::VolumeFrame& frame);
     bool DispatchGpuVolumeBake(const sim::VolumeBakeRequest& request);
-    void UploadParticles(const std::vector<sim::ParticleInstance>& instances,
+    bool CreateParticleGpuResources(int capacity);
+    void UpdateGpuParticles(sim::Simulation& simulation);
+    void ReadParticleCounters(sim::ParticleSystem& particles);    void UploadParticles(const std::vector<sim::ParticleInstance>& instances,
                          ComPtr<ID3D11Buffer>& buffer);
     void UpdateFrameConstants(const sim::Simulation& simulation, const Camera& camera,
                               const RenderSettings& settings);
@@ -239,6 +254,28 @@ private:
     ComPtr<ID3D11Buffer> particleBufferAlpha_;
     ComPtr<ID3D11ShaderResourceView> particleSRVAlpha_;
     int particleCapacity_ = 0;
+    bool particleGpuMode_ = false;
+
+    // GPU particle path: state, spawn upload, batch counters and indirect args.
+    ComPtr<ID3D11ComputeShader> particleSpawnCS_;
+    ComPtr<ID3D11ComputeShader> particleIntegrateCS_;
+    ComPtr<ID3D11ComputeShader> particleFinalizeCS_;
+    ComPtr<ID3D11ComputeShader> particleResetCS_;
+    ComPtr<ID3D11Buffer> particleUpdateCB_;
+    ComPtr<ID3D11Buffer> particleStateBuffer_;
+    ComPtr<ID3D11UnorderedAccessView> particleStateUAV_;
+    ComPtr<ID3D11Buffer> particleSpawnBuffer_;
+    ComPtr<ID3D11ShaderResourceView> particleSpawnSRV_;
+    ComPtr<ID3D11Buffer> particleCounterBuffer_;
+    ComPtr<ID3D11UnorderedAccessView> particleCounterUAV_;
+    ComPtr<ID3D11Buffer> particleIndirectBuffer_;
+    ComPtr<ID3D11UnorderedAccessView> particleIndirectUAV_;
+    ComPtr<ID3D11Buffer> particleCounterStaging_;
+    ComPtr<ID3D11Query> particleReadbackQuery_;
+    bool particleReadbackPending_ = false;
+    ComPtr<ID3D11UnorderedAccessView> particleUAVAdditive_;
+    ComPtr<ID3D11UnorderedAccessView> particleUAVAlpha_;
+    ComPtr<ID3D11UnorderedAccessView> particleUAVFire_;
 
     ComPtr<ID3D11VertexShader> fullscreenVS_;
     ComPtr<ID3D11PixelShader> skyPS_;

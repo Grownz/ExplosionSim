@@ -1,5 +1,7 @@
 #include "sim/ParticleSystem.h"
 
+#include "core/Log.h"
+
 #include "core/ThreadPool.h"
 
 #include <algorithm>
@@ -100,6 +102,10 @@ void ParticleSystem::Reset() {
     alpha_.clear();
     fire_.clear();
     aliveCount_ = 0;
+    gpuReset_ = true;
+    gpuAliveCount_ = 0;
+    dirtySlots_.clear();
+    spawnBatch_.clear();
     smokeSpawnAccumulator_ = 0.0f;
     dustSpawnAccumulator_ = 0.0f;
     for (int i = 0; i < int(ParticleKind::Count); ++i) {
@@ -118,6 +124,15 @@ int ParticleSystem::AcquireSlot(ParticleKind kind) {
     const int end = rangeEnd_[index];
     if (end <= begin) {
         return -1;
+    }
+
+    if (gpuMode_) {
+        // The GPU owns the alive flags; overwrite the round-robin slot and let
+        // the spawn pass replace its whole state.
+        const int slot = begin + cursor_[index];
+        cursor_[index] = (cursor_[index] + 1) % (end - begin);
+        dirtySlots_.push_back(slot);
+        return slot;
     }
 
     // Round-robin within the species range. Recycles the oldest particle when
@@ -456,12 +471,52 @@ void ParticleSystem::Update(float dt, const BlastModel& model, core::ThreadPool&
 
     ambientTemperature_ = float(env.temperatureK);
 
+    gpuParams_.wind = forces.wind;
+    gpuParams_.ambientTemperature = forces.ambientTemperature;
+    gpuParams_.gravity = forces.gravity;
+    gpuParams_.time = forces.time;
+    gpuParams_.dt = dt;
+
+    if (gpuMode_) {
+        // The compute shader integrates and builds the instance batches; the
+        // CPU only produced the spawns above.
+        return;
+    }
+
     const int count = int(particles_.size());
     pool.ParallelFor(count, 2048, [this, dt, &forces](int begin, int end) {
         IntegrateRange(begin, end, dt, forces);
     });
 
     BuildBatches();
+}
+
+const std::vector<ParticleSpawn>& ParticleSystem::PrepareGpuSpawns() {
+    spawnBatch_.clear();
+    if (dirtySlots_.empty()) {
+        return spawnBatch_;
+    }
+    spawnBatch_.reserve(dirtySlots_.size());
+    for (const int slot : dirtySlots_) {
+        const Particle& p = particles_[slot];
+        ParticleSpawn spawn;
+        spawn.slot = uint32_t(slot);
+        spawn.state.position = p.position;
+        spawn.state.size = p.size;
+        spawn.state.velocity = p.velocity;
+        spawn.state.life = p.life;
+        spawn.state.maxLife = p.maxLife;
+        spawn.state.temperature = p.temperature;
+        spawn.state.opacity = p.opacity;
+        spawn.state.drag = p.drag;
+        spawn.state.growth = p.growth;
+        spawn.state.seed = p.seed;
+        spawn.state.kind = uint32_t(p.kind);
+        spawn.state.alive = 1;
+        spawnBatch_.push_back(spawn);
+    }
+    dirtySlots_.clear();
+    return spawnBatch_;
 }
 
 void ParticleSystem::IntegrateRange(int begin, int end, float dt, const Forces& forces) {

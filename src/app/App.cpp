@@ -131,6 +131,9 @@ int App::Run(const LaunchOptions& options) {
     if (options_.gpuVolumeBakeSet) {
         settings_.simulation.gpuVolumeBake = options_.gpuVolumeBake;
     }
+    if (options_.gpuParticlesSet) {
+        settings_.simulation.gpuParticles = options_.gpuParticles;
+    }
     if (options_.solverAutoScaleSet) {
         settings_.simulation.solverAutoScale = options_.solverAutoScale;
     }
@@ -161,6 +164,11 @@ int App::Run(const LaunchOptions& options) {
 
     if (!InitializeGraphics()) {
         return 1;
+    }
+
+    if (settings_.simulation.gpuParticles && !renderer_.SupportsGpuParticles()) {
+        LogWarn("GPU particle path unavailable; using the CPU particle system.");
+        settings_.simulation.gpuParticles = false;
     }
 
     if (!options_.headless && !InitializeImGui()) {
@@ -840,6 +848,10 @@ int App::RunHeadless() {
         int guard = 0;
         while (simulation_.Time() + 1e-9 < targetTime && guard++ < 200000) {
             simulation_.StepFixed(std::min(step, targetTime - simulation_.Time()));
+            // Keep the GPU particle state in sync with the fixed steps; a
+            // capture renders once, so integrating only in Render would leave
+            // every particle at its spawn state.
+            renderer_.StepGpuParticles(simulation_);
         }
     }
 

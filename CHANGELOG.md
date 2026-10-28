@@ -31,6 +31,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   field parameters, so the per-bake voxel loop and the 16 MB (128³) / 128 MB (256³)
   upload disappear; the 256³ bake drops from 56 ms on the thread pool to a single GPU
   dispatch. The CPU baker remains the fallback and still handles the 1024³ split layout.
+- **GPU particles** - the particle state, integration and the three instance batches now
+  live in structured buffers on the GPU. The CPU only spawns and uploads the new particles
+  (a few hundred per frame); the 40 000-particle per-frame loop, the single-threaded
+  `BuildBatches` and the 1.9 MB upload disappear. The draws use
+  `DrawInstancedIndirect`; the CPU path remains the fallback and is used when the shader is
+  unavailable. Headless captures step the GPU state with every fixed simulation step.
 
 ## [0.8.0] - 2026-10-28
 

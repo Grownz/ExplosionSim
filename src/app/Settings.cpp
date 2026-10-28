@@ -158,6 +158,8 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
     simulation.loop = ParseBool(values, "loop", simulation.loop);
     simulation.particleBudget =
         std::clamp(ParseInt(values, "particleBudget", simulation.particleBudget), 4000, 400000);
+    simulation.gpuParticles =
+        ParseBool(values, "gpuParticles", simulation.gpuParticles);
     simulation.volumeResolution =
         std::clamp(ParseInt(values, "volumeResolution", simulation.volumeResolution), 32, 1024);
     simulation.bakeVolume = ParseBool(values, "bakeVolume", simulation.bakeVolume);
@@ -257,6 +259,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "solverHemisphere=" << (simulation.solverHemisphere ? "true" : "false") << "\n";
     stream << "loop=" << (simulation.loop ? "true" : "false") << "\n";
     stream << "particleBudget=" << simulation.particleBudget << "\n";
+    stream << "gpuParticles=" << (simulation.gpuParticles ? "true" : "false") << "\n";
     stream << "volumeResolution=" << simulation.volumeResolution << "\n";
     stream << "bakeVolume=" << (simulation.bakeVolume ? "true" : "false") << "\n";
     stream << "gpuVolumeBake=" << (simulation.gpuVolumeBake ? "true" : "false") << "\n";

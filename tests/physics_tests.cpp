@@ -538,6 +538,7 @@ void TestSettingsRoundTrip() {
     original.simulation.solverHemisphere = true;
     original.simulation.loop = true;
     original.simulation.particleBudget = 12345;
+    original.simulation.gpuParticles = false;
     original.simulation.volumeResolution = 96;
     original.simulation.bakeVolume = false;
     original.simulation.autoScaleVolume = false;
@@ -594,6 +595,7 @@ void TestSettingsRoundTrip() {
     CHECK(loaded.simulation.solverHemisphere);
     CHECK(loaded.simulation.loop);
     CHECK(loaded.simulation.particleBudget == 12345);
+    CHECK(!loaded.simulation.gpuParticles);
     CHECK(loaded.simulation.volumeResolution == 96);
     CHECK(!loaded.simulation.bakeVolume);
     CHECK(!loaded.simulation.autoScaleVolume);
@@ -637,6 +639,7 @@ void TestFuseAndDetonation() {
     settings.loop = false;
     settings.volumeResolution = 32;
     settings.particleBudget = 4000;
+    settings.gpuParticles = false;
 
     ex::sim::Simulation simulation;
     CHECK(simulation.Initialize(settings, pool));
@@ -668,6 +671,7 @@ void TestRearmHoldsFuse() {
     settings.fuseSeconds = 0.0; // detonates immediately on Reset
     settings.volumeResolution = 32;
     settings.particleBudget = 4000;
+    settings.gpuParticles = false;
 
     ex::sim::Simulation simulation;
     CHECK(simulation.Initialize(settings, pool));
@@ -1216,6 +1220,7 @@ void TestSceneReuse() {
     settings.fuseSeconds = 0.0;
     settings.volumeResolution = 32;
     settings.particleBudget = 2000;
+    settings.gpuParticles = false;
     settings.bakeVolume = false;
     settings.scene.seed = 1234;
     settings.scene.density = 0.5f;
