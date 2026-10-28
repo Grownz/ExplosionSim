@@ -39,6 +39,7 @@ struct UiActions {
     bool downloadUpdate = false;
     bool cancelDownload = false;
     bool openDownloadFolder = false;
+    bool installUpdate = false;
     bool dismissWhatsNew = false;
     bool skipUpdateVersion = false;
     bool showChangelog = false;

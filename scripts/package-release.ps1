@@ -30,9 +30,11 @@ if (Test-Path $stage) {
 New-Item -ItemType Directory -Force $stage | Out-Null
 
 Copy-Item (Join-Path $buildDir "$Configuration\ExplosionSim.exe") $stage
+Copy-Item (Join-Path $buildDir "$Configuration\ExplosionSimUpdater.exe") $stage
 Copy-Item -Recurse (Join-Path $buildDir "$Configuration\assets") $stage
 Copy-Item (Join-Path $root "README.md"), (Join-Path $root "LICENSE"),
           (Join-Path $root "CHANGELOG.md") $stage
+Copy-Item (Join-Path $root "third_party\miniz\LICENSE") (Join-Path $stage "LICENSE-miniz.txt")
 
 if (Test-Path $archive) {
     Remove-Item -Force $archive

@@ -65,6 +65,23 @@ std::wstring UpdateDownloadDirectory() {
     return directory;
 }
 
+std::wstring ExecutableDirectory() {
+    wchar_t buffer[MAX_PATH * 2]{};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, DWORD(MAX_PATH * 2));
+    if (length == 0) {
+        return {};
+    }
+    std::wstring path(buffer, length);
+    const size_t slash = path.find_last_of(L"\\/");
+    return slash == std::wstring::npos ? std::wstring{} : path.substr(0, slash);
+}
+
+std::wstring TempDirectory() {
+    wchar_t buffer[MAX_PATH * 2]{};
+    const DWORD length = GetTempPathW(DWORD(MAX_PATH * 2), buffer);
+    return length > 0 ? std::wstring(buffer, length) : std::wstring(L".");
+}
+
 bool RegisterWindowClass(HINSTANCE instance) {
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
@@ -616,6 +633,14 @@ int App::RunInteractive() {
             ShellExecuteW(nullptr, L"open", directory.c_str(), nullptr, nullptr,
                           SW_SHOWNORMAL);
         }
+        if (actions.installUpdate && !updateSnapshot.release.assetName.empty()) {
+            const std::wstring directory = UpdateDownloadDirectory();
+            const std::wstring fileName(updateSnapshot.release.assetName.begin(),
+                                        updateSnapshot.release.assetName.end());
+            if (StartUpdater(directory + L"\\" + fileName)) {
+                running_ = false;
+            }
+        }
         if (actions.skipUpdateVersion && !updateSnapshot.release.version.empty()) {
             settings_.update.skippedVersion = updateSnapshot.release.version;
             SaveSettings(settings_, DefaultSettingsPath());
@@ -686,6 +711,47 @@ int App::RunUpdateCheck() {
     LogError("Update check timed out.");
     checker.Shutdown();
     return 1;
+}
+
+bool App::StartUpdater(const std::wstring& zipPath) {
+    const std::wstring updater = gfx::ResolveAssetPath(L"ExplosionSimUpdater.exe");
+    if (updater.empty()) {
+        LogError("Update helper not found next to the executable.");
+        return false;
+    }
+    const std::wstring target = ExecutableDirectory();
+    if (target.empty()) {
+        LogError("Cannot determine the installation directory.");
+        return false;
+    }
+
+    // Launch from a temporary copy so the helper can replace its installed copy.
+    const std::wstring tempHelper =
+        TempDirectory() + L"ExplosionSimUpdater-" + std::to_wstring(GetCurrentProcessId()) +
+        L".exe";
+    std::error_code error;
+    std::filesystem::copy_file(updater, tempHelper,
+                               std::filesystem::copy_options::overwrite_existing, error);
+    if (error) {
+        LogError("Could not stage the update helper: %s", error.message().c_str());
+        return false;
+    }
+
+    std::wstring command = L"\"" + tempHelper + L"\" --pid " +
+                           std::to_wstring(GetCurrentProcessId()) + L" --zip \"" +
+                           zipPath + L"\" --target \"" + target +
+                           L"\" --exe ExplosionSim.exe";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+                        nullptr, target.c_str(), &startup, &process)) {
+        LogError("Could not start the update helper.");
+        return false;
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return true;
 }
 
 int App::RunSolverBenchmark() {

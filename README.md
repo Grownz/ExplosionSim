@@ -330,7 +330,8 @@ the documentation.
 
 The app checks the GitHub releases API in the background once per day and shows a banner
 when a newer release is available. The Win64 zip is downloaded only on request to
-`%LOCALAPPDATA%\ExplosionSim\updates`; it is not installed automatically. The first start
+`%LOCALAPPDATA%\ExplosionSim\updates`. **Install and restart** replaces the executable and
+assets via a small helper, keeps `settings.ini` and rolls back on failure. The first start
 after an update shows the current release notes, and the **Changelog** button at the bottom
 of the control panel opens the full release history. `--no-update-check` skips the check for
 one run, `--check-updates` performs it without a window, and `--version` prints the version.
@@ -350,7 +351,10 @@ tests/              physics, settings and GPU tests
 
 ## License
 
-MIT – see [LICENSE](LICENSE).
+MIT - see [LICENSE](LICENSE).
+
+Third-party components: Dear ImGui (MIT), Jolt Physics (MIT), nlohmann/json (MIT) and
+miniz (MIT). The miniz license is included as `LICENSE-miniz.txt` in the release archive.
 
 ## Versioning
 

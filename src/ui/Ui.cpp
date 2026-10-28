@@ -22,6 +22,25 @@ constexpr ImVec4 kAccentDim(0.80f, 0.36f, 0.10f, 1.00f);
 constexpr ImVec4 kWarning(1.00f, 0.78f, 0.35f, 1.00f);
 constexpr ImVec4 kMuted(0.62f, 0.65f, 0.70f, 1.00f);
 
+// Dedicated font for the changelog viewer: two points larger than the UI font.
+ImFont* gChangelogFont = nullptr;
+
+struct ChangelogFontGuard {
+    bool pushed = false;
+
+    explicit ChangelogFontGuard(ImFont* font) {
+        if (font) {
+            ImGui::PushFont(font);
+            pushed = true;
+        }
+    }
+    ~ChangelogFontGuard() {
+        if (pushed) {
+            ImGui::PopFont();
+        }
+    }
+};
+
 void SectionHeader(const char* label) {
     ImGui::Spacing();
     ImGui::SeparatorText(label);
@@ -132,6 +151,7 @@ bool IsTableSeparator(const std::vector<std::string>& cells) {
 // Renders the Markdown subset used by CHANGELOG.md: headings, bullets, bold and
 // inline code, fenced code, and pipe tables.
 void DrawMarkdown(const std::string& text) {
+    ChangelogFontGuard fontGuard(gChangelogFont);
     std::istringstream stream(text);
     std::string line;
     std::vector<std::string> table;
@@ -250,6 +270,9 @@ void DrawUpdateBanner(UiContext& context, UiActions& actions) {
         ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
         ImGui::TextWrapped("Version %s downloaded.", update.version.c_str());
         ImGui::PopStyleColor();
+        if (ImGui::Button("Install and restart##banner_install", ImVec2(-1.0f, 0.0f))) {
+            actions.installUpdate = true;
+        }
         if (ImGui::Button("Show in folder##banner_folder", ImVec2(-1.0f, 0.0f))) {
             actions.openDownloadFolder = true;
         }
@@ -294,13 +317,18 @@ void DrawUpdates(UiContext& context, app::AppSettings& settings, UiActions& acti
     }
     if (update.downloaded) {
         ImGui::TextUnformatted("The update zip is ready.");
+        if (ImGui::Button("Install and restart", ImVec2(-1.0f, 0.0f))) {
+            actions.installUpdate = true;
+        }
         if (ImGui::Button("Show in folder", ImVec2(-1.0f, 0.0f))) {
             actions.openDownloadFolder = true;
         }
     }
 
     Hint("Checks github.com/Grownz/ExplosionSim once per day. Downloads are saved to "
-         "%LOCALAPPDATA%\\ExplosionSim\\updates and are not installed automatically.");
+         "%LOCALAPPDATA%\\ExplosionSim\\updates and are not installed automatically. "
+         "Install restarts the app, replaces the executable and assets and keeps "
+         "settings.ini.");
 }
 
 void DrawUpdateModals(UiContext& context, UiActions& actions) {
@@ -1095,6 +1123,7 @@ void ApplyTheme(float dpiScale) {
 
 void LoadFonts(float dpiScale) {
     ImGuiIO& io = ImGui::GetIO();
+    gChangelogFont = nullptr;
     const float fontSize = std::round(16.5f * dpiScale);
 
     ImFontConfig config{};
@@ -1107,6 +1136,12 @@ void LoadFonts(float dpiScale) {
     if (!font) {
         io.Fonts->AddFontDefault();
     }
+
+    // The changelog viewer uses a font two points larger than the UI.
+    const float changelogSize = std::round((16.5f + 2.0f) * dpiScale);
+    gChangelogFont = io.Fonts->AddFontFromFileTTF(
+        "C:\\Windows\\Fonts\\segoeui.ttf", changelogSize, &config,
+        io.Fonts->GetGlyphRangesDefault());
 }
 
 UiActions Draw(UiContext& context) {

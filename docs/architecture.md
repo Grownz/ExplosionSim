@@ -437,8 +437,11 @@ a snapshot that the UI polls every frame. The automatic check runs at most once 
 hours (`lastCheckUnix` in `settings.ini`); a manual check bypasses the cache.
 
 Downloads are user-initiated. The Win64 zip is written to
-`%LOCALAPPDATA%\ExplosionSim\updates` with progress and cancel support; it is not executed
-or installed automatically. The download host and asset name are validated.
+`%LOCALAPPDATA%\ExplosionSim\updates` with progress and cancel support. Installation is
+user-initiated as well: the standalone `ExplosionSimUpdater.exe` waits for the application
+to exit, extracts the zip with miniz, replaces the executable and assets, preserves
+`settings.ini` and restores the previous files if the copy fails. The download host and
+asset name are validated.
 
 The changelog parser (`app::ParseChangelog`) reads the bundled `CHANGELOG.md`, splits it
 into release sections and provides the current release body. The first start after a

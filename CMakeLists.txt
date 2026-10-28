@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.21)
 project(ExplosionSim
     VERSION 0.7.0
     DESCRIPTION "Physically based 3D explosion simulation for Windows x64"
-    LANGUAGES CXX)
+    LANGUAGES C CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "ExplosionSim targets Windows only.")
@@ -116,6 +116,26 @@ if(EXPLOSION_WARNINGS_AS_ERRORS)
 endif()
 
 # ---------------------------------------------------------------------------
+# Update helper (standalone Win32 executable)
+# ---------------------------------------------------------------------------
+add_library(miniz STATIC
+    third_party/miniz/miniz.c
+    third_party/miniz/miniz_tdef.c
+    third_party/miniz/miniz_tinfl.c
+    third_party/miniz/miniz_zip.c)
+target_include_directories(miniz PUBLIC third_party/miniz)
+target_compile_options(miniz PRIVATE /W3)
+
+add_executable(ExplosionSimUpdater WIN32
+    tools/updater/main.cpp)
+target_link_libraries(ExplosionSimUpdater PRIVATE miniz shell32)
+target_compile_definitions(ExplosionSimUpdater PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+target_compile_options(ExplosionSimUpdater PRIVATE /W4 /permissive- /utf-8)
+if(EXPLOSION_WARNINGS_AS_ERRORS)
+    target_compile_options(ExplosionSimUpdater PRIVATE /WX)
+endif()
+
+# ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
 add_executable(ExplosionSim WIN32
@@ -156,6 +176,8 @@ if(EXPLOSION_WARNINGS_AS_ERRORS)
     target_compile_options(ExplosionSim PRIVATE /WX)
 endif()
 
+add_dependencies(ExplosionSim ExplosionSimUpdater)
+
 # Shaders are loaded at runtime so they can be tweaked without a rebuild.
 add_custom_command(TARGET ExplosionSim POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -164,7 +186,10 @@ add_custom_command(TARGET ExplosionSim POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${CMAKE_SOURCE_DIR}/CHANGELOG.md
             $<TARGET_FILE_DIR:ExplosionSim>/CHANGELOG.md
-    COMMENT "Copying assets and changelog next to the executable")
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:ExplosionSimUpdater>
+            $<TARGET_FILE_DIR:ExplosionSim>/ExplosionSimUpdater.exe
+    COMMENT "Copying assets, changelog and updater next to the executable")
 
 # ---------------------------------------------------------------------------
 # Tests
