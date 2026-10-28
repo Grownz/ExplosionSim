@@ -172,6 +172,39 @@ void TestBlastEvolution() {
     CHECK(model.OverpressureAtTime(100.0, arrival100 + 10.0) < peak * 0.1);
 }
 
+void TestBurstHeightIsChargeIndependent() {
+    // Regression: the fireball centre used to be dragged upward by the cloud
+    // rise, capped by twice the fireball radius. A larger charge therefore
+    // lifted the visible explosion centre even though the height of burst was
+    // unchanged. The fireball must stay at the configured burst height; only
+    // the mushroom cloud may rise.
+    Environment environment{};
+    const double height = 120.0;
+
+    auto run = [&](double mass) {
+        Charge charge{};
+        charge.tntMassKg = mass;
+        charge.heightOfBurstM = height;
+
+        BlastModel model;
+        model.Configure(charge, environment);
+        CHECK_NEAR(model.State().fireballCenterY, height, 1e-9);
+
+        for (int step = 0; step < 600; ++step) {
+            model.Advance(1.0 / 120.0);
+            CHECK_NEAR(model.State().fireballCenterY, height, 1e-9);
+        }
+        return model.State();
+    };
+
+    const ex::sim::BlastState smallCharge = run(1000.0);
+    const ex::sim::BlastState largeCharge = run(1000000.0);
+
+    // The cloud is still allowed to rise, and a larger charge rises higher.
+    CHECK(smallCharge.cloudCenterY > height);
+    CHECK(largeCharge.cloudCenterY > smallCharge.cloudCenterY);
+}
+
 void TestThreadPool() {
     ex::core::ThreadPool pool(3);
 
@@ -1377,6 +1410,7 @@ int main() {
     RUN(TestOverpressureFit);
     RUN(TestBrodeCrossover);
     RUN(TestBlastEvolution);
+    RUN(TestBurstHeightIsChargeIndependent);
     RUN(TestSmallChargeScaling);
     RUN(TestThreadPool);
     RUN(TestVolumeBaker);

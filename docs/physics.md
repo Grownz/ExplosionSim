@@ -133,7 +133,10 @@ T(t) = T_amb + (T_surf - T_amb) · exp(-(t - t_f)/τ_c)
 
 The volume field uses a hot core (up to ~1.4 × T_surf) and a cooler, soot-rich surface,
 so the blackbody colour ranges from yellow-white in the core to deep orange-red at the
-rim. A soot shell forms as the surface cools and absorbs the emission.
+rim. A soot shell forms as the surface cools and absorbs the emission. The fireball
+centre stays exactly at the configured height of burst for every charge; only the
+mushroom cloud rises with buoyancy, so the height setting is not diluted by the charge
+size.
 
 The emitted colour is computed from Planck's law via the Planckian locus approximation
 (Kim et al., 2002), converted to linear sRGB. Emission is integrated along the view ray

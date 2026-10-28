@@ -591,8 +591,10 @@ void DrawDetonation(app::AppSettings& settings, const sim::Simulation& simulatio
         }
     }
 
-    PhysSlider("Height of burst", &settings.simulation.heightOfBurstM, 0.01, 400.0, "%.2f m",
-               ImGuiSliderFlags_Logarithmic, actions);
+    // Same range as Settings.cpp accepts, so a value loaded from settings.ini
+    // is not silently clamped by the slider.
+    PhysSlider("Height of burst", &settings.simulation.heightOfBurstM, 0.01, 5000.0,
+               "%.2f m", ImGuiSliderFlags_Logarithmic, actions);
 
     float fuse = float(settings.simulation.fuseSeconds);
     if (ImGui::SliderFloat("Fuse", &fuse, 0.0f, 10.0f, "%.1f s")) {

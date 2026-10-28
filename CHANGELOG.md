@@ -23,6 +23,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Height of burst no longer scales with the charge** - the fireball centre used
+  to be dragged upward by the cloud rise, capped by twice the fireball radius. A
+  larger charge therefore lifted the visible explosion centre even though the
+  height setting was unchanged. The fireball now stays exactly at the configured
+  burst height for every charge; only the mushroom cloud rises with buoyancy.
+  The slider also accepts the same 0.01-5000 m range as `settings.ini`, so a
+  loaded value is no longer clamped to 400 m in the interface.
 - **Bloom no longer lingers after rearm or restart** - the bloom mip chain is
   cleared when the simulation is rearmed (`R`, Rearm button) or restarted, so the
   previous explosion's glow disappears immediately instead of staying on screen.

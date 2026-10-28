@@ -1718,9 +1718,10 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
                                        : int(simulation.Particles().AlphaBatch().size());
         const int fire = gpuParticles ? info_.fireParticles
                                       : int(simulation.Particles().FireBatch().size());
-        LogInfo("First frame: t=%.3fs fireball=%.2fm (%.0f K) shock=%.1fm volume=%d "
-                "particles=%d+%d fire=%d highFidelity=%d",
-                state.time, state.fireballRadius, state.fireballTemperatureK, state.shockRadius,
+        LogInfo("First frame: t=%.3fs fireball=%.2fm at y=%.2f (%.0f K) cloud y=%.2f "
+                "shock=%.1fm volume=%d particles=%d+%d fire=%d highFidelity=%d",
+                state.time, state.fireballRadius, state.fireballCenterY,
+                state.fireballTemperatureK, state.cloudCenterY, state.shockRadius,
                 activeVolumeValid_ ? 1 : 0, additive, alpha, fire, highFidelity ? 1 : 0);
     }
 

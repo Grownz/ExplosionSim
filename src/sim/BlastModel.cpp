@@ -189,9 +189,11 @@ void BlastModel::Advance(double dt) {
         state_.cloudDriftZ += environment_.WindZ() * step;
         state_.stemRadius = std::max(0.5, state_.cloudRadius * 0.22);
 
-        // The fireball is dragged along by the rising cloud but lags behind.
-        state_.fireballCenterY =
-            charge_.heightOfBurstM + std::min(state_.cloudRise * 0.35, state_.fireballRadius * 2.0);
+        // The fireball marks the burst point: its centre stays exactly at the
+        // configured height of burst. Only the mushroom cloud rises with
+        // buoyancy, so the visible explosion centre no longer drifts upward
+        // when the charge (and therefore the fireball radius) grows.
+        state_.fireballCenterY = charge_.heightOfBurstM;
 
         // --- Ground effects ------------------------------------------------
         const double height = charge_.heightOfBurstM;
