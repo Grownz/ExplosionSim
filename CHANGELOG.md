@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Bloom no longer lingers after rearm or restart** - the bloom mip chain is
+  cleared when the simulation is rearmed (`R`, Rearm button) or restarted, so the
+  previous explosion's glow disappears immediately instead of staying on screen.
+- **Hotkeys work after using the menu** - the shortcuts are now only suppressed
+  while a text field has focus (`io.WantTextInput`) instead of whenever the
+  interface captures the keyboard, so `D`, `R`, `F`, `H`, `Space` and `F12` keep
+  working after clicking a menu control.
+
 ## [0.9.0] - 2026-10-28
 
 0.9.0 focuses on the high-fidelity solver, the rendering budget and the startup

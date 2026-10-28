@@ -95,6 +95,9 @@ public:
     bool GpuVolumeBakeActive() const { return gpuVolumeBakeActive_; }
     // True when the GPU particle compute shader compiled.
     bool SupportsGpuParticles() const { return particleIntegrateCS_ != nullptr; }
+    // Clears the bloom mip chain. Called when the simulation is rearmed or
+    // restarted so the previous explosion's glow does not linger.
+    void ResetBloom();
     // Advances the GPU particle simulation outside Render(). Headless captures
     // call this after every fixed step so the particles evolve with the
     // simulation instead of only once per rendered frame.

@@ -476,11 +476,13 @@ void App::ApplySimulationSettings() {
 void App::RestartSimulation() {
     simulation_.Reset();
     simulation_.FinishPendingVolumeWork();
+    renderer_.ResetBloom();
 }
 
 void App::RearmSimulation() {
     simulation_.Rearm();
     simulation_.FinishPendingVolumeWork();
+    renderer_.ResetBloom();
 }
 
 bool App::CaptureScreenshot(const std::wstring& path) {
@@ -565,7 +567,7 @@ int App::RunInteractive() {
         bool forceDetonate = false;
         bool stepOnce = false;
         bool captureNow = false;
-        if (!io.WantCaptureKeyboard) {
+        if (!io.WantTextInput) {
             if (ImGui::IsKeyPressed(ImGuiKey_Space)) {
                 settings_.paused = !settings_.paused;
             }

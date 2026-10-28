@@ -1142,6 +1142,19 @@ void Renderer::SetViewport(int width, int height) {
     device_->Context()->RSSetViewports(1, &viewport);
 }
 
+void Renderer::ResetBloom() {
+    if (!device_) {
+        return;
+    }
+    ID3D11DeviceContext* context = device_->Context();
+    const float clear[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (Target& target : bloom_) {
+        if (target.rtv) {
+            context->ClearRenderTargetView(target.rtv.Get(), clear);
+        }
+    }
+}
+
 void Renderer::RenderBloom() {
     ID3D11DeviceContext* context = device_->Context();
 
@@ -1698,14 +1711,6 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
                 "particles=%d+%d fire=%d highFidelity=%d",
                 state.time, state.fireballRadius, state.fireballTemperatureK, state.shockRadius,
                 activeVolumeValid_ ? 1 : 0, additive, alpha, fire, highFidelity ? 1 : 0);
-    }
-
-    if (frameIndex_ == 0) {
-        LogInfo("Volume active: valid=%d bounds=(%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f) split=%d",
-                activeVolumeValid_ ? 1 : 0, activeVolumeBounds_.min.x,
-                activeVolumeBounds_.min.y, activeVolumeBounds_.min.z,
-                activeVolumeBounds_.max.x, activeVolumeBounds_.max.y,
-                activeVolumeBounds_.max.z, activeVolumeSplit_ ? 1 : 0);
     }
 
     UpdateFrameConstants(simulation, camera, settings);
