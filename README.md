@@ -5,9 +5,9 @@
 [![build](https://github.com/Grownz/ExplosionSim/actions/workflows/build.yml/badge.svg)](https://github.com/Grownz/ExplosionSim/actions/workflows/build.yml)
 [![version](https://img.shields.io/badge/version-0.10.0-orange.svg)](CHANGELOG.md)
 
-[![▶ Watch the Explosion Simulator 0.10.0 promo](docs/screenshots/promo-0.10.0-poster.png)](docs/screenshots/promo-0.10.0.mp4)
+![Explosion Simulator 0.10.0 promo](docs/screenshots/promo-0.10.0.gif)
 
-*▶ 17-second promo – click the poster to play.*
+*17-second promo – [full-quality MP4](docs/screenshots/promo-0.10.0.mp4).*
 
 A native C++20 / Direct3D 11 application that couples an engineering blast model
 with a volumetric renderer and an optional GPU compressible-flow solver. The
