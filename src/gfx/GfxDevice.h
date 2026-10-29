@@ -36,6 +36,8 @@ public:
     // Copies the final LDR target into a tightly packed BGRA8 buffer.
     bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight);
 
+    rhi::Device* Rhi() const { return rhi_.get(); }
+
     ID3D11Device* Device() const;
     ID3D11DeviceContext* Context() const;
     ID3D11RenderTargetView* FinalRTV() const;

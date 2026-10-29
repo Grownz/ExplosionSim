@@ -247,11 +247,12 @@ void AddCone(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
 
 } // namespace
 
-bool SceneRenderer::Initialize(ID3D11Device* device) {
-    if (!device) {
+bool SceneRenderer::Initialize(ID3D11Device* device, rhi::Device* rhiDevice) {
+    if (!device || !rhiDevice) {
         return false;
     }
     device_ = device;
+    rhiDevice_ = rhiDevice;
 
     const std::wstring path = ResolveAssetPath(L"assets\\shaders\\scene.hlsl");
     if (path.empty()) {
@@ -546,12 +547,11 @@ bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
         }
     }
 
-    D3D11_BUFFER_DESC bufferDesc{};
-    bufferDesc.ByteWidth = sizeof(XMFLOAT4X4);
-    bufferDesc.Usage = D3D11_USAGE_DYNAMIC;
-    bufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-    bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    if (FAILED(device->CreateBuffer(&bufferDesc, nullptr, &shadowCascadeBuffer_))) {
+    rhi::BufferDesc bufferDesc{};
+    bufferDesc.size = sizeof(XMFLOAT4X4);
+    bufferDesc.usage = rhi::BufferUsage::Uniform | rhi::BufferUsage::Dynamic;
+    shadowCascadeBuffer_ = rhiDevice_->CreateBuffer(bufferDesc);
+    if (!shadowCascadeBuffer_) {
         return false;
     }
 
@@ -570,7 +570,7 @@ bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
 }
 
 void SceneRenderer::Shutdown() {
-    shadowCascadeBuffer_.Reset();
+    shadowCascadeBuffer_.reset();
     shadowSampler_.Reset();
     surfaceDetailSRV_.Reset();
     surfaceDetailTexture_.Reset();
@@ -579,8 +579,7 @@ void SceneRenderer::Shutdown() {
         shadowDSV_[cascade].Reset();
         shadowTexture_[cascade].Reset();
     }
-    staticInstanceSRV_.Reset();
-    staticInstanceBuffer_.Reset();
+    staticInstanceBuffer_.reset();
     staticShadowSRV_.Reset();
     staticShadowDSV_.Reset();
     staticShadowTexture_.Reset();
@@ -594,10 +593,9 @@ void SceneRenderer::Shutdown() {
     chunkInstanceCapacity_ = 0;
     chunkGeometryKey_ = 0;
     chunkGeometryValid_ = false;
-    chunkInstanceSRV_.Reset();
-    chunkInstanceBuffer_.Reset();
-    chunkIndexBuffer_.Reset();
-    chunkVertexBuffer_.Reset();
+    chunkInstanceBuffer_.reset();
+    chunkIndexBuffer_.reset();
+    chunkVertexBuffer_.reset();
     chunkInputLayout_.Reset();
     chunkShadowVertexShader_.Reset();
     chunkVertexShader_.Reset();
@@ -613,27 +611,25 @@ void SceneRenderer::Shutdown() {
 
 bool SceneRenderer::CreateMesh(const std::vector<Vertex>& vertices,
                                const std::vector<uint32_t>& indices, Mesh& mesh) {
-    if (!device_ || vertices.empty() || indices.empty()) {
+    if (!rhiDevice_ || vertices.empty() || indices.empty()) {
         return false;
     }
 
-    D3D11_BUFFER_DESC vertexDesc{};
-    vertexDesc.ByteWidth = UINT(vertices.size() * sizeof(Vertex));
-    vertexDesc.Usage = D3D11_USAGE_IMMUTABLE;
-    vertexDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vertexData{};
-    vertexData.pSysMem = vertices.data();
-    if (FAILED(device_->CreateBuffer(&vertexDesc, &vertexData, &mesh.vertexBuffer))) {
+    rhi::BufferDesc vertexDesc{};
+    vertexDesc.size = vertices.size() * sizeof(Vertex);
+    vertexDesc.usage = rhi::BufferUsage::Vertex;
+    vertexDesc.initialData = vertices.data();
+    mesh.vertexBuffer = rhiDevice_->CreateBuffer(vertexDesc);
+    if (!mesh.vertexBuffer) {
         return false;
     }
 
-    D3D11_BUFFER_DESC indexDesc{};
-    indexDesc.ByteWidth = UINT(indices.size() * sizeof(uint32_t));
-    indexDesc.Usage = D3D11_USAGE_IMMUTABLE;
-    indexDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA indexData{};
-    indexData.pSysMem = indices.data();
-    if (FAILED(device_->CreateBuffer(&indexDesc, &indexData, &mesh.indexBuffer))) {
+    rhi::BufferDesc indexDesc{};
+    indexDesc.size = indices.size() * sizeof(uint32_t);
+    indexDesc.usage = rhi::BufferUsage::Index;
+    indexDesc.initialData = indices.data();
+    mesh.indexBuffer = rhiDevice_->CreateBuffer(indexDesc);
+    if (!mesh.indexBuffer) {
         return false;
     }
 
@@ -642,7 +638,7 @@ bool SceneRenderer::CreateMesh(const std::vector<Vertex>& vertices,
 }
 
 bool SceneRenderer::EnsureInstanceCapacity(Mesh& mesh, UINT capacity) {
-    if (!device_) {
+    if (!rhiDevice_) {
         return false;
     }
     if (capacity <= mesh.instanceCapacity) {
@@ -651,32 +647,16 @@ bool SceneRenderer::EnsureInstanceCapacity(Mesh& mesh, UINT capacity) {
 
     capacity = std::max({capacity, 64u, mesh.instanceCapacity * 2u});
 
-    D3D11_BUFFER_DESC desc{};
-    desc.ByteWidth = capacity * sizeof(Instance);
-    desc.Usage = D3D11_USAGE_DYNAMIC;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-    desc.StructureByteStride = sizeof(Instance);
-
-    ComPtr<ID3D11Buffer> buffer;
-    if (FAILED(device_->CreateBuffer(&desc, nullptr, &buffer))) {
+    rhi::BufferDesc desc{};
+    desc.size = uint64_t(capacity) * sizeof(Instance);
+    desc.usage = rhi::BufferUsage::ShaderRead | rhi::BufferUsage::Dynamic;
+    desc.structureStride = sizeof(Instance);
+    std::unique_ptr<rhi::Buffer> buffer = rhiDevice_->CreateBuffer(desc);
+    if (!buffer) {
         return false;
     }
 
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-    srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-    srvDesc.Buffer.FirstElement = 0;
-    srvDesc.Buffer.NumElements = capacity;
-
-    ComPtr<ID3D11ShaderResourceView> srv;
-    if (FAILED(device_->CreateShaderResourceView(buffer.Get(), &srvDesc, &srv))) {
-        return false;
-    }
-
-    mesh.instanceBuffer = buffer;
-    mesh.instanceSRV = srv;
+    mesh.instanceBuffer = std::move(buffer);
     mesh.instanceCapacity = capacity;
     return true;
 }
@@ -836,8 +816,8 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
     chunkDraws_.clear();
     chunkInstanceCount_ = 0;
     chunkInstances_.clear();
-    chunkVertexBuffer_.Reset();
-    chunkIndexBuffer_.Reset();
+    chunkVertexBuffer_.reset();
+    chunkIndexBuffer_.reset();
     if (!enabled || scene.Empty()) {
         return true;
     }
@@ -877,26 +857,25 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
         return true;
     }
 
-    D3D11_BUFFER_DESC vertexDesc{};
-    vertexDesc.ByteWidth = UINT(vertices.size() * sizeof(ChunkVertex));
-    vertexDesc.Usage = D3D11_USAGE_IMMUTABLE;
-    vertexDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA vertexData{};
-    vertexData.pSysMem = vertices.data();
-    if (FAILED(device_->CreateBuffer(&vertexDesc, &vertexData,
-                                     &chunkVertexBuffer_))) {
+    if (!rhiDevice_) {
+        return false;
+    }
+    rhi::BufferDesc vertexDesc{};
+    vertexDesc.size = vertices.size() * sizeof(ChunkVertex);
+    vertexDesc.usage = rhi::BufferUsage::Vertex;
+    vertexDesc.initialData = vertices.data();
+    chunkVertexBuffer_ = rhiDevice_->CreateBuffer(vertexDesc);
+    if (!chunkVertexBuffer_) {
         LogError("Voronoi chunk vertex buffer creation failed.");
         return false;
     }
 
-    D3D11_BUFFER_DESC indexDesc{};
-    indexDesc.ByteWidth = UINT(indices.size() * sizeof(uint32_t));
-    indexDesc.Usage = D3D11_USAGE_IMMUTABLE;
-    indexDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-    D3D11_SUBRESOURCE_DATA indexData{};
-    indexData.pSysMem = indices.data();
-    if (FAILED(device_->CreateBuffer(&indexDesc, &indexData,
-                                     &chunkIndexBuffer_))) {
+    rhi::BufferDesc indexDesc{};
+    indexDesc.size = indices.size() * sizeof(uint32_t);
+    indexDesc.usage = rhi::BufferUsage::Index;
+    indexDesc.initialData = indices.data();
+    chunkIndexBuffer_ = rhiDevice_->CreateBuffer(indexDesc);
+    if (!chunkIndexBuffer_) {
         LogError("Voronoi chunk index buffer creation failed.");
         return false;
     }
@@ -906,44 +885,31 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
 }
 
 bool SceneRenderer::EnsureChunkInstanceCapacity(UINT capacity) {
-    if (!device_) {
+    if (!rhiDevice_) {
         return false;
     }
     if (chunkInstanceBuffer_ && capacity <= chunkInstanceCapacity_) {
         return true;
     }
     capacity = std::max({capacity, 64u, chunkInstanceCapacity_ * 2u});
-    chunkInstanceSRV_.Reset();
-    chunkInstanceBuffer_.Reset();
 
-    D3D11_BUFFER_DESC desc{};
-    desc.ByteWidth = capacity * sizeof(Instance);
-    desc.Usage = D3D11_USAGE_DYNAMIC;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-    desc.StructureByteStride = sizeof(Instance);
-    if (FAILED(device_->CreateBuffer(&desc, nullptr, &chunkInstanceBuffer_))) {
+    rhi::BufferDesc desc{};
+    desc.size = uint64_t(capacity) * sizeof(Instance);
+    desc.usage = rhi::BufferUsage::ShaderRead | rhi::BufferUsage::Dynamic;
+    desc.structureStride = sizeof(Instance);
+    std::unique_ptr<rhi::Buffer> buffer = rhiDevice_->CreateBuffer(desc);
+    if (!buffer) {
         return false;
     }
-
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-    srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-    srvDesc.Buffer.FirstElement = 0;
-    srvDesc.Buffer.NumElements = capacity;
-    if (FAILED(device_->CreateShaderResourceView(chunkInstanceBuffer_.Get(),
-                                                 &srvDesc,
-                                                 &chunkInstanceSRV_))) {
-        return false;
-    }
+    chunkInstanceBuffer_ = std::move(buffer);
     chunkInstanceCapacity_ = capacity;
     return true;
 }
 
 void SceneRenderer::UpdateChunkInstances(ID3D11DeviceContext* context,
                                          const scene::Scene& scene) {
-    if (!context || chunkInstances_.empty() || chunkDraws_.empty()) {
+    (void)context;
+    if (!chunkInstanceBuffer_ || chunkInstances_.empty() || chunkDraws_.empty()) {
         return;
     }
     const auto& bodies = scene.Physics().Bodies();
@@ -989,33 +955,35 @@ void SceneRenderer::UpdateChunkInstances(ID3D11DeviceContext* context,
         return;
     }
 
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (FAILED(context->Map(chunkInstanceBuffer_.Get(), 0,
-                            D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+    void* mapped = chunkInstanceBuffer_->Map();
+    if (!mapped) {
         return;
     }
-    std::memcpy(mapped.pData, chunkInstances_.data(),
-                size_t(index) * sizeof(Instance));
-    context->Unmap(chunkInstanceBuffer_.Get(), 0);
+    std::memcpy(mapped, chunkInstances_.data(), size_t(index) * sizeof(Instance));
+    chunkInstanceBuffer_->Unmap();
 }
 
 void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
                                const scene::Scene& scene, bool shadowPass) {
     if (!context || chunkDraws_.empty() || !chunkVertexBuffer_ ||
-        !chunkIndexBuffer_ || !chunkInstanceSRV_) {
+        !chunkIndexBuffer_ || !chunkInstanceBuffer_ ||
+        !chunkInstanceBuffer_->NativeShaderResourceView()) {
         return;
     }
     const auto& objects = scene.Objects();
     const UINT stride = sizeof(ChunkVertex);
     const UINT offset = 0;
-    ID3D11Buffer* vertexBuffer = chunkVertexBuffer_.Get();
+    ID3D11Buffer* vertexBuffer =
+        static_cast<ID3D11Buffer*>(chunkVertexBuffer_->NativeHandle());
     context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-    context->IASetIndexBuffer(chunkIndexBuffer_.Get(), DXGI_FORMAT_R32_UINT, 0);
+    context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(chunkIndexBuffer_->NativeHandle()),
+                              DXGI_FORMAT_R32_UINT, 0);
     context->IASetInputLayout(chunkInputLayout_.Get());
     context->VSSetShader(shadowPass ? chunkShadowVertexShader_.Get()
                                     : chunkVertexShader_.Get(),
                          nullptr, 0);
-    ID3D11ShaderResourceView* srv = chunkInstanceSRV_.Get();
+    ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(
+        chunkInstanceBuffer_->NativeShaderResourceView());
     context->VSSetShaderResources(1, 1, &srv);
     for (const ChunkDraw& draw : chunkDraws_) {
         if (draw.objectIndex < 0 || draw.objectIndex >= int(objects.size()) ||
@@ -1029,37 +997,23 @@ void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
 }
 
 bool SceneRenderer::EnsureStaticInstanceCapacity(UINT capacity) {
-    if (!device_) {
+    if (!rhiDevice_) {
         return false;
     }
     if (staticInstanceBuffer_ && capacity <= staticInstanceCapacity_) {
         return true;
     }
     capacity = std::max({capacity, 64u, staticInstanceCapacity_ * 2u});
-    staticInstanceSRV_.Reset();
-    staticInstanceBuffer_.Reset();
 
-    D3D11_BUFFER_DESC desc{};
-    desc.ByteWidth = capacity * sizeof(Instance);
-    desc.Usage = D3D11_USAGE_DYNAMIC;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-    desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-    desc.StructureByteStride = sizeof(Instance);
-    if (FAILED(device_->CreateBuffer(&desc, nullptr, &staticInstanceBuffer_))) {
+    rhi::BufferDesc desc{};
+    desc.size = uint64_t(capacity) * sizeof(Instance);
+    desc.usage = rhi::BufferUsage::ShaderRead | rhi::BufferUsage::Dynamic;
+    desc.structureStride = sizeof(Instance);
+    std::unique_ptr<rhi::Buffer> buffer = rhiDevice_->CreateBuffer(desc);
+    if (!buffer) {
         return false;
     }
-
-    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-    srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-    srvDesc.Buffer.FirstElement = 0;
-    srvDesc.Buffer.NumElements = capacity;
-    if (FAILED(device_->CreateShaderResourceView(staticInstanceBuffer_.Get(),
-                                                 &srvDesc,
-                                                 &staticInstanceSRV_))) {
-        return false;
-    }
+    staticInstanceBuffer_ = std::move(buffer);
     staticInstanceCapacity_ = capacity;
     return true;
 }
@@ -1104,14 +1058,12 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
         return;
     }
 
-    D3D11_MAPPED_SUBRESOURCE mapped{};
-    if (FAILED(context->Map(staticInstanceBuffer_.Get(), 0,
-                            D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+    void* mapped = staticInstanceBuffer_->Map();
+    if (!mapped) {
         return;
     }
-    std::memcpy(mapped.pData, instances.data(),
-                instances.size() * sizeof(Instance));
-    context->Unmap(staticInstanceBuffer_.Get(), 0);
+    std::memcpy(mapped, instances.data(), instances.size() * sizeof(Instance));
+    staticInstanceBuffer_->Unmap();
 
     D3D11_VIEWPORT viewport{0.0f, 0.0f, float(kStaticShadowSize),
                             float(kStaticShadowSize), 0.0f, 1.0f};
@@ -1125,24 +1077,25 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
     context->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
     context->PSSetShader(nullptr, nullptr, 0);
 
-    D3D11_MAPPED_SUBRESOURCE cascadeMapped{};
-    if (SUCCEEDED(context->Map(shadowCascadeBuffer_.Get(), 0,
-                               D3D11_MAP_WRITE_DISCARD, 0, &cascadeMapped))) {
-        std::memcpy(cascadeMapped.pData, &lightViewProj, sizeof(XMFLOAT4X4));
-        context->Unmap(shadowCascadeBuffer_.Get(), 0);
+    void* cascadeMapped = shadowCascadeBuffer_->Map();
+    if (cascadeMapped) {
+        std::memcpy(cascadeMapped, &lightViewProj, sizeof(XMFLOAT4X4));
+        shadowCascadeBuffer_->Unmap();
     }
-    ID3D11Buffer* cascadeBuffer = shadowCascadeBuffer_.Get();
+    ID3D11Buffer* cascadeBuffer =
+        static_cast<ID3D11Buffer*>(shadowCascadeBuffer_->NativeHandle());
     context->VSSetConstantBuffers(3, 1, &cascadeBuffer);
 
     const Mesh& mesh = meshes_[0];
     if (mesh.vertexBuffer && mesh.indexBuffer && mesh.indexCount > 0) {
-        ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
+        ID3D11Buffer* vertexBuffer = static_cast<ID3D11Buffer*>(mesh.vertexBuffer->NativeHandle());
         UINT stride = sizeof(Vertex);
         UINT offset = 0;
         context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-        context->IASetIndexBuffer(mesh.indexBuffer.Get(), DXGI_FORMAT_R32_UINT,
+        context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(mesh.indexBuffer->NativeHandle()), DXGI_FORMAT_R32_UINT,
                                   0);
-        ID3D11ShaderResourceView* srv = staticInstanceSRV_.Get();
+        ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(
+            staticInstanceBuffer_->NativeShaderResourceView());
         context->VSSetShaderResources(0, 1, &srv);
         context->DrawIndexedInstanced(mesh.indexCount, UINT(instances.size()), 0,
                                       0, 0);
@@ -1380,14 +1333,13 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         if (!EnsureInstanceCapacity(mesh, UINT(mesh.instances.size()))) {
             continue;
         }
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (FAILED(context->Map(mesh.instanceBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0,
-                                &mapped))) {
+        void* mapped = mesh.instanceBuffer->Map();
+        if (!mapped) {
             continue;
         }
-        std::memcpy(mapped.pData, mesh.instances.data(),
+        std::memcpy(mapped, mesh.instances.data(),
                     mesh.instances.size() * sizeof(Instance));
-        context->Unmap(mesh.instanceBuffer.Get(), 0);
+        mesh.instanceBuffer->Unmap();
     }
 
     BuildChunkGeometry(scene);
@@ -1408,13 +1360,13 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         D3D11_VIEWPORT shadowViewport{0.0f, 0.0f, size, size, 0.0f, 1.0f};
         context->RSSetViewports(1, &shadowViewport);
 
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (SUCCEEDED(context->Map(shadowCascadeBuffer_.Get(), 0,
-                                   D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-            std::memcpy(mapped.pData, &lightViewProj[cascade], sizeof(XMFLOAT4X4));
-            context->Unmap(shadowCascadeBuffer_.Get(), 0);
+        void* mapped = shadowCascadeBuffer_->Map();
+        if (mapped) {
+            std::memcpy(mapped, &lightViewProj[cascade], sizeof(XMFLOAT4X4));
+            shadowCascadeBuffer_->Unmap();
         }
-        ID3D11Buffer* cascadeBuffer = shadowCascadeBuffer_.Get();
+        ID3D11Buffer* cascadeBuffer =
+            static_cast<ID3D11Buffer*>(shadowCascadeBuffer_->NativeHandle());
         context->VSSetConstantBuffers(3, 1, &cascadeBuffer);
 
         // Intact buildings (mesh 0) are cached in the static shadow map; the
@@ -1427,12 +1379,12 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             if (mesh.instances.empty() || !mesh.instanceBuffer) {
                 continue;
             }
-            ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
+            ID3D11Buffer* vertexBuffer = static_cast<ID3D11Buffer*>(mesh.vertexBuffer->NativeHandle());
             UINT stride = sizeof(Vertex);
             UINT offset = 0;
             context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-            context->IASetIndexBuffer(mesh.indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-            ID3D11ShaderResourceView* srv = mesh.instanceSRV.Get();
+            context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(mesh.indexBuffer->NativeHandle()), DXGI_FORMAT_R32_UINT, 0);
+            ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(mesh.instanceBuffer->NativeShaderResourceView());
             context->VSSetShaderResources(0, 1, &srv);
             context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()),
                                           0, 0, 0);
@@ -1491,12 +1443,12 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
         if (mesh.instances.empty() || !mesh.instanceBuffer) {
             continue;
         }
-        ID3D11Buffer* vertexBuffer = mesh.vertexBuffer.Get();
+        ID3D11Buffer* vertexBuffer = static_cast<ID3D11Buffer*>(mesh.vertexBuffer->NativeHandle());
         UINT stride = sizeof(Vertex);
         UINT offset = 0;
         context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-        context->IASetIndexBuffer(mesh.indexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-        ID3D11ShaderResourceView* srv = mesh.instanceSRV.Get();
+        context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(mesh.indexBuffer->NativeHandle()), DXGI_FORMAT_R32_UINT, 0);
+        ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(mesh.instanceBuffer->NativeShaderResourceView());
         context->VSSetShaderResources(0, 1, &srv);
         context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()), 0, 0,
                                       0);

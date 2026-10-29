@@ -23,7 +23,7 @@ public:
         DirectX::XMFLOAT3 color;
     };
 
-    bool Initialize(ID3D11Device* device);
+    bool Initialize(ID3D11Device* device, rhi::Device* rhiDevice);
     void Shutdown();
 
     // Camera data used for culling and level of detail.
@@ -101,10 +101,9 @@ private:
     };
 
     struct Mesh {
-        ComPtr<ID3D11Buffer> vertexBuffer;
-        ComPtr<ID3D11Buffer> indexBuffer;
-        ComPtr<ID3D11Buffer> instanceBuffer;
-        ComPtr<ID3D11ShaderResourceView> instanceSRV;
+        std::unique_ptr<rhi::Buffer> vertexBuffer;
+        std::unique_ptr<rhi::Buffer> indexBuffer;
+        std::unique_ptr<rhi::Buffer> instanceBuffer;
         UINT indexCount = 0;
         UINT instanceCapacity = 0;
         // Natural bounds of imported vehicle meshes, used to scale them to the
@@ -148,7 +147,7 @@ private:
     ComPtr<ID3D11Texture2D> shadowTexture_[kShadowCascades];
     ComPtr<ID3D11DepthStencilView> shadowDSV_[kShadowCascades];
     ComPtr<ID3D11ShaderResourceView> shadowSRV_[kShadowCascades];
-    ComPtr<ID3D11Buffer> shadowCascadeBuffer_;
+    std::unique_ptr<rhi::Buffer> shadowCascadeBuffer_;
     ComPtr<ID3D11SamplerState> shadowSampler_;
     // Tiling high-frequency grain sampled with the selected anisotropic filter.
     ComPtr<ID3D11Texture2D> surfaceDetailTexture_;
@@ -159,17 +158,15 @@ private:
     ComPtr<ID3D11Texture2D> staticShadowTexture_;
     ComPtr<ID3D11DepthStencilView> staticShadowDSV_;
     ComPtr<ID3D11ShaderResourceView> staticShadowSRV_;
-    ComPtr<ID3D11Buffer> staticInstanceBuffer_;
-    ComPtr<ID3D11ShaderResourceView> staticInstanceSRV_;
+    std::unique_ptr<rhi::Buffer> staticInstanceBuffer_;
     UINT staticInstanceCapacity_ = 0;
     uint64_t staticShadowKey_ = 0;
     bool staticShadowValid_ = false;
 
     // Voronoi chunk geometry and per-frame instance data.
-    ComPtr<ID3D11Buffer> chunkVertexBuffer_;
-    ComPtr<ID3D11Buffer> chunkIndexBuffer_;
-    ComPtr<ID3D11Buffer> chunkInstanceBuffer_;
-    ComPtr<ID3D11ShaderResourceView> chunkInstanceSRV_;
+    std::unique_ptr<rhi::Buffer> chunkVertexBuffer_;
+    std::unique_ptr<rhi::Buffer> chunkIndexBuffer_;
+    std::unique_ptr<rhi::Buffer> chunkInstanceBuffer_;
     std::vector<ChunkDraw> chunkDraws_;
     std::vector<Instance> chunkInstances_;
     UINT chunkInstanceCount_ = 0;
@@ -178,6 +175,7 @@ private:
     bool chunkGeometryValid_ = false;
 
     ID3D11Device* device_ = nullptr;
+    rhi::Device* rhiDevice_ = nullptr;
 };
 
 } // namespace ex::gfx

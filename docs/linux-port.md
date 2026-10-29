@@ -1,9 +1,11 @@
 # Linux port and multi-platform RHI plan
 
 Status: **M1 in progress.** The backend-neutral RHI interfaces and the D3D11
-backend exist; `GfxDevice` and the swapchain now run through the RHI. The
-renderer still uses a temporary legacy D3D11 accessor until `SceneRenderer` and
-the render passes are ported. Linux and Vulkan are not implemented yet.
+backend exist; `GfxDevice` and the swapchain run through the RHI. `SceneRenderer`
+now creates its mesh, chunk, instance and shadow-cascade buffers through
+`rhi::Buffer`. Shaders, samplers and state objects still use the temporary D3D11
+bridge, and the render passes are not ported yet. Linux and Vulkan are not
+implemented yet.
 
 ## 1. Goal
 

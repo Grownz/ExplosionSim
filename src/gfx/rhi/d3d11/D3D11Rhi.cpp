@@ -44,6 +44,9 @@ UINT ToBindFlags(BufferUsage usage) {
     if (HasUsage(usage, BufferUsage::Storage)) {
         flags |= D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
     }
+    if (HasUsage(usage, BufferUsage::ShaderRead)) {
+        flags |= D3D11_BIND_SHADER_RESOURCE;
+    }
     return flags;
 }
 
@@ -66,7 +69,9 @@ UINT ToBindFlags(TextureUsage usage) {
 
 class BufferImpl final : public rhi::Buffer {
 public:
-    explicit BufferImpl(ComPtr<ID3D11Buffer> buffer) : buffer_(std::move(buffer)) {}
+    BufferImpl(ComPtr<ID3D11Buffer> buffer, ComPtr<ID3D11ShaderResourceView> srv,
+               ID3D11DeviceContext* context)
+        : buffer_(std::move(buffer)), srv_(std::move(srv)), context_(context) {}
 
     uint64_t Size() const override {
         D3D11_BUFFER_DESC desc{};
@@ -75,10 +80,31 @@ public:
         }
         return desc.ByteWidth;
     }
+    void* Map() override {
+        if (!buffer_ || !context_ || mapped_) {
+            return nullptr;
+        }
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        if (FAILED(context_->Map(buffer_.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+            return nullptr;
+        }
+        mapped_ = true;
+        return mapped.pData;
+    }
+    void Unmap() override {
+        if (mapped_ && context_) {
+            context_->Unmap(buffer_.Get(), 0);
+            mapped_ = false;
+        }
+    }
     void* NativeHandle() const override { return buffer_.Get(); }
+    void* NativeShaderResourceView() const override { return srv_.Get(); }
 
 private:
     ComPtr<ID3D11Buffer> buffer_;
+    ComPtr<ID3D11ShaderResourceView> srv_;
+    ID3D11DeviceContext* context_ = nullptr;
+    bool mapped_ = false;
 };
 
 class TextureImpl final : public rhi::Texture {
@@ -511,32 +537,48 @@ std::unique_ptr<rhi::Buffer> Device::CreateBuffer(const BufferDesc& desc) {
         return nullptr;
     }
 
+    const bool dynamic = HasUsage(desc.usage, BufferUsage::Dynamic);
+    const bool staging = HasUsage(desc.usage, BufferUsage::Staging);
     D3D11_BUFFER_DESC bufferDesc{};
     bufferDesc.ByteWidth = UINT(desc.size);
-    bufferDesc.Usage = HasUsage(desc.usage, BufferUsage::Staging) ? D3D11_USAGE_STAGING
-                                                                 : D3D11_USAGE_DEFAULT;
+    bufferDesc.Usage = dynamic ? D3D11_USAGE_DYNAMIC
+                               : (staging ? D3D11_USAGE_STAGING : D3D11_USAGE_DEFAULT);
     bufferDesc.BindFlags = ToBindFlags(desc.usage);
-    bufferDesc.CPUAccessFlags = HasUsage(desc.usage, BufferUsage::Staging)
-                                    ? D3D11_CPU_ACCESS_READ
-                                    : 0;
+    bufferDesc.CPUAccessFlags = dynamic ? D3D11_CPU_ACCESS_WRITE
+                                        : (staging ? D3D11_CPU_ACCESS_READ : 0);
     if (HasUsage(desc.usage, BufferUsage::Indirect)) {
         bufferDesc.MiscFlags |= D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
     }
-    if (HasUsage(desc.usage, BufferUsage::Storage) && desc.structureStride > 0) {
+    if ((HasUsage(desc.usage, BufferUsage::Storage) ||
+         HasUsage(desc.usage, BufferUsage::ShaderRead)) &&
+        desc.structureStride > 0) {
         bufferDesc.MiscFlags |= D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
         bufferDesc.StructureByteStride = desc.structureStride;
     }
 
     D3D11_SUBRESOURCE_DATA initial{};
-    if (desc.initialData) {
+    if (desc.initialData && !dynamic && !staging) {
         initial.pSysMem = desc.initialData;
     }
     ComPtr<ID3D11Buffer> buffer;
-    if (FAILED(device_->CreateBuffer(&bufferDesc, desc.initialData ? &initial : nullptr,
-                                     &buffer))) {
+    if (FAILED(device_->CreateBuffer(&bufferDesc,
+                                     initial.pSysMem ? &initial : nullptr, &buffer))) {
         return nullptr;
     }
-    return std::make_unique<BufferImpl>(std::move(buffer));
+
+    ComPtr<ID3D11ShaderResourceView> srv;
+    if (HasUsage(desc.usage, BufferUsage::ShaderRead)) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements =
+            UINT(desc.size / std::max<uint64_t>(desc.structureStride, 4));
+        if (FAILED(device_->CreateShaderResourceView(buffer.Get(), &srvDesc, &srv))) {
+            return nullptr;
+        }
+    }
+    return std::make_unique<BufferImpl>(std::move(buffer), std::move(srv), context_.Get());
 }
 
 std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {

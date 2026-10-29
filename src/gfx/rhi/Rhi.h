@@ -34,6 +34,8 @@ enum class BufferUsage : uint32_t {
     Storage = 1u << 3,
     Indirect = 1u << 4,
     Staging = 1u << 5,
+    Dynamic = 1u << 6,
+    ShaderRead = 1u << 7,
 };
 
 inline BufferUsage operator|(BufferUsage a, BufferUsage b) {
@@ -107,7 +109,14 @@ class Buffer {
 public:
     virtual ~Buffer() = default;
     virtual uint64_t Size() const = 0;
+    // Writable mapping for dynamic buffers. The returned pointer is valid
+    // until Unmap(); returns nullptr on failure.
+    virtual void* Map() = 0;
+    virtual void Unmap() = 0;
     virtual void* NativeHandle() const = 0;
+    // Structured/typed buffer view for shader reads; nullptr when the buffer
+    // was not created with BufferUsage::ShaderRead.
+    virtual void* NativeShaderResourceView() const = 0;
 };
 
 class Texture {
