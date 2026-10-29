@@ -1,11 +1,10 @@
 #pragma once
 
-#include <d3d11.h>
-#include <d3d11_1.h>
-#include <dxgi1_3.h>
-#include <wrl/client.h>
+#include "gfx/rhi/Rhi.h"
+#include "gfx/rhi/d3d11/D3D11Rhi.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -14,8 +13,10 @@ namespace ex::gfx {
 template <typename T>
 using ComPtr = Microsoft::WRL::ComPtr<T>;
 
-// Owns the D3D11 device, the swap chain (interactive mode) or an off-screen
+// Owns the RHI device, the swap chain (interactive mode) or an off-screen
 // render target (headless screenshot mode), and the shared depth buffer.
+// The D3D11 accessors are a temporary bridge for renderer code that has not
+// been ported to the RHI yet.
 class GfxDevice {
 public:
     GfxDevice() = default;
@@ -35,49 +36,26 @@ public:
     // Copies the final LDR target into a tightly packed BGRA8 buffer.
     bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight);
 
-    ID3D11Device* Device() const { return device_.Get(); }
-    ID3D11DeviceContext* Context() const { return context_.Get(); }
-    ID3D11RenderTargetView* FinalRTV() const { return finalRTV_.Get(); }
-    ID3D11DepthStencilView* DepthDSV() const { return dsv_.Get(); }
-    ID3D11ShaderResourceView* DepthSRV() const { return depthSRV_.Get(); }
-    ID3D11Texture2D* DepthTexture() const { return depthTexture_.Get(); }
+    ID3D11Device* Device() const;
+    ID3D11DeviceContext* Context() const;
+    ID3D11RenderTargetView* FinalRTV() const;
+    ID3D11DepthStencilView* DepthDSV() const;
+    ID3D11ShaderResourceView* DepthSRV() const;
+    ID3D11Texture2D* DepthTexture() const;
 
-    int Width() const { return width_; }
-    int Height() const { return height_; }
-    float Aspect() const { return height_ > 0 ? float(width_) / float(height_) : 1.0f; }
-    bool Offscreen() const { return offscreen_; }
-    const std::string& AdapterName() const { return adapterName_; }
-    uint64_t DedicatedVideoMemory() const { return dedicatedVideoMemory_; }
+    int Width() const { return rhi_ ? rhi_->Width() : 0; }
+    int Height() const { return rhi_ ? rhi_->Height() : 0; }
+    float Aspect() const {
+        return Height() > 0 ? float(Width()) / float(Height()) : 1.0f;
+    }
+    bool Offscreen() const { return rhi_ ? rhi_->Offscreen() : false; }
+    const std::string& AdapterName() const;
+    uint64_t DedicatedVideoMemory() const {
+        return rhi_ ? rhi_->DedicatedVideoMemory() : 0;
+    }
 
 private:
-    bool CreateDevice(bool debugLayer);
-    bool CreateSwapChain(HWND window);
-    bool CreateSizeDependentResources();
-    void ReleaseSizeDependentResources();
-
-    ComPtr<ID3D11Device> device_;
-    ComPtr<ID3D11DeviceContext> context_;
-    ComPtr<IDXGISwapChain1> swapchain_;
-    ComPtr<IDXGIFactory2> factory_;
-
-    ComPtr<ID3D11Texture2D> backbuffer_;
-    ComPtr<ID3D11RenderTargetView> backbufferRTV_;
-
-    ComPtr<ID3D11Texture2D> finalTexture_;
-    ComPtr<ID3D11RenderTargetView> finalRTV_;
-
-    ComPtr<ID3D11Texture2D> depthTexture_;
-    ComPtr<ID3D11DepthStencilView> dsv_;
-    ComPtr<ID3D11ShaderResourceView> depthSRV_;
-
-    ComPtr<ID3D11Texture2D> staging_;
-
-    std::string adapterName_ = "unknown";
-    uint64_t dedicatedVideoMemory_ = 0;
-    HWND window_ = nullptr;
-    bool offscreen_ = false;
-    int width_ = 0;
-    int height_ = 0;
+    std::unique_ptr<rhi::d3d11::Device> rhi_;
 };
 
 } // namespace ex::gfx

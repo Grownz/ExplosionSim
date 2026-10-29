@@ -1,6 +1,9 @@
 # Linux port and multi-platform RHI plan
 
-Status: planning document. No Linux or RHI code is implemented yet.
+Status: **M1 in progress.** The backend-neutral RHI interfaces and the D3D11
+backend exist; `GfxDevice` and the swapchain now run through the RHI. The
+renderer still uses a temporary legacy D3D11 accessor until `SceneRenderer` and
+the render passes are ported. Linux and Vulkan are not implemented yet.
 
 ## 1. Goal
 

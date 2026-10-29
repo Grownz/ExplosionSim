@@ -148,6 +148,7 @@ add_executable(ExplosionSim WIN32
     src/app/Settings.cpp
     src/app/Splash.cpp
     src/gfx/GfxDevice.cpp
+    src/gfx/rhi/d3d11/D3D11Rhi.cpp
     src/gfx/Renderer.cpp
     src/gfx/Camera.cpp
     src/gfx/Shader.cpp
