@@ -68,7 +68,11 @@ public:
     ID3D11ShaderResourceView* StaticShadowSRV() const {
         return staticShadowSRV_.Get();
     }
-    ID3D11SamplerState* ShadowSampler() const { return shadowSampler_.Get(); }
+    ID3D11SamplerState* ShadowSampler() const {
+        return shadowSampler_
+                   ? static_cast<ID3D11SamplerState*>(shadowSampler_->NativeHandle())
+                   : nullptr;
+    }
 
 private:
     bool CreateShadowResources(ID3D11Device* device);
@@ -134,21 +138,15 @@ private:
                     bool shadowPass);
     bool EnsureStaticInstanceCapacity(UINT capacity);
 
-    ComPtr<ID3D11VertexShader> vertexShader_;
-    ComPtr<ID3D11VertexShader> shadowVertexShader_;
-    ComPtr<ID3D11VertexShader> chunkVertexShader_;
-    ComPtr<ID3D11VertexShader> chunkShadowVertexShader_;
-    ComPtr<ID3D11PixelShader> pixelShader_;
-    ComPtr<ID3D11InputLayout> inputLayout_;
-    ComPtr<ID3D11InputLayout> chunkInputLayout_;
-    ComPtr<ID3D11DepthStencilState> depthState_;
-    ComPtr<ID3D11RasterizerState> rasterizer_;
-    ComPtr<ID3D11BlendState> blendState_;
+    std::unique_ptr<rhi::Pipeline> sceneShadowPipeline_;
+    std::unique_ptr<rhi::Pipeline> chunkShadowPipeline_;
+    std::unique_ptr<rhi::Pipeline> scenePipeline_;
+    std::unique_ptr<rhi::Pipeline> chunkPipeline_;
     ComPtr<ID3D11Texture2D> shadowTexture_[kShadowCascades];
     ComPtr<ID3D11DepthStencilView> shadowDSV_[kShadowCascades];
     ComPtr<ID3D11ShaderResourceView> shadowSRV_[kShadowCascades];
     std::unique_ptr<rhi::Buffer> shadowCascadeBuffer_;
-    ComPtr<ID3D11SamplerState> shadowSampler_;
+    std::unique_ptr<rhi::Sampler> shadowSampler_;
     // Tiling high-frequency grain sampled with the selected anisotropic filter.
     ComPtr<ID3D11Texture2D> surfaceDetailTexture_;
     ComPtr<ID3D11ShaderResourceView> surfaceDetailSRV_;

@@ -105,6 +105,13 @@ struct ShaderDesc {
     const char* name = nullptr;
 };
 
+struct SamplerDesc {
+    bool comparison = false;
+    bool clamp = false;
+    float border[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+    bool linear = true;
+};
+
 class Buffer {
 public:
     virtual ~Buffer() = default;
@@ -136,6 +143,79 @@ public:
     virtual void* NativeHandle() const = 0;
 };
 
+class Sampler {
+public:
+    virtual ~Sampler() = default;
+    virtual void* NativeHandle() const = 0;
+};
+
+enum class CompareOp {
+    Never,
+    Less,
+    Equal,
+    LessEqual,
+    Greater,
+    NotEqual,
+    GreaterEqual,
+    Always,
+};
+
+enum class CullMode {
+    None,
+    Front,
+    Back,
+};
+
+enum class PrimitiveTopology {
+    TriangleList,
+    TriangleStrip,
+    LineList,
+    PointList,
+};
+
+enum class VertexFormat {
+    Float,
+    Float2,
+    Float3,
+    Float4,
+    UInt,
+    UInt2,
+    UInt3,
+    UInt4,
+};
+
+struct VertexAttribute {
+    const char* semantic = nullptr;
+    uint32_t semanticIndex = 0;
+    VertexFormat format = VertexFormat::Float3;
+    uint32_t offset = 0;
+    uint32_t bufferSlot = 0;
+};
+
+struct PipelineDesc {
+    Shader* vertexShader = nullptr;
+    Shader* pixelShader = nullptr;
+    const VertexAttribute* vertexAttributes = nullptr;
+    uint32_t vertexAttributeCount = 0;
+    // DXBC signature used to build the D3D11 input layout. Vulkan uses the
+    // vertex attributes instead and ignores this.
+    const void* vertexShaderBytecode = nullptr;
+    size_t vertexShaderBytecodeSize = 0;
+    CompareOp depthCompare = CompareOp::LessEqual;
+    bool depthTest = true;
+    bool depthWrite = true;
+    bool blendEnable = false;
+    CullMode cullMode = CullMode::None;
+    bool depthClip = true;
+    PrimitiveTopology topology = PrimitiveTopology::TriangleList;
+};
+
+class Pipeline {
+public:
+    virtual ~Pipeline() = default;
+    virtual void* NativeHandle() const = 0;
+};
+
 // Owns the GPU device, the swapchain or offscreen target and the shared depth
 // buffer. Backends implement the resource factories; the renderer only sees
 // this interface once the legacy D3D11 bridge is removed.
@@ -147,6 +227,11 @@ public:
     virtual std::unique_ptr<Buffer> CreateBuffer(const BufferDesc& desc) = 0;
     virtual std::unique_ptr<Texture> CreateTexture(const TextureDesc& desc) = 0;
     virtual std::unique_ptr<Shader> CreateShader(const ShaderDesc& desc) = 0;
+    virtual std::unique_ptr<Sampler> CreateSampler(const SamplerDesc& desc) = 0;
+    virtual std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) = 0;
+    // Temporary immediate-mode binding until the command list abstraction
+    // lands; sets the pipeline's shaders and fixed-function state.
+    virtual void BindPipeline(Pipeline* pipeline) = 0;
 
     virtual bool Resize(int width, int height) = 0;
     virtual void WaitIdle() = 0;

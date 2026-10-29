@@ -33,6 +33,9 @@ public:
     std::unique_ptr<Buffer> CreateBuffer(const BufferDesc& desc) override;
     std::unique_ptr<Texture> CreateTexture(const TextureDesc& desc) override;
     std::unique_ptr<Shader> CreateShader(const ShaderDesc& desc) override;
+    std::unique_ptr<Sampler> CreateSampler(const SamplerDesc& desc) override;
+    std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) override;
+    void BindPipeline(Pipeline* pipeline) override;
     bool Resize(int width, int height) override;
     void WaitIdle() override;
     void* NativeHandle() const override;

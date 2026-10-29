@@ -273,74 +273,64 @@ bool SceneRenderer::Initialize(ID3D11Device* device, rhi::Device* rhiDevice) {
         return false;
     }
 
-    if (FAILED(device->CreateVertexShader(vertexBlob->GetBufferPointer(),
-                                          vertexBlob->GetBufferSize(), nullptr,
-                                          &vertexShader_)) ||
-        FAILED(device->CreateVertexShader(shadowBlob->GetBufferPointer(),
-                                          shadowBlob->GetBufferSize(), nullptr,
-                                          &shadowVertexShader_)) ||
-        FAILED(device->CreateVertexShader(chunkBlob->GetBufferPointer(),
-                                          chunkBlob->GetBufferSize(), nullptr,
-                                          &chunkVertexShader_)) ||
-        FAILED(device->CreateVertexShader(chunkShadowBlob->GetBufferPointer(),
-                                          chunkShadowBlob->GetBufferSize(),
-                                          nullptr,
-                                          &chunkShadowVertexShader_)) ||
-        FAILED(device->CreatePixelShader(pixelBlob->GetBufferPointer(),
-                                         pixelBlob->GetBufferSize(), nullptr,
-                                         &pixelShader_))) {
+    auto makeShader = [this](rhi::ShaderStage stage, const ComPtr<ID3DBlob>& blob) {
+        rhi::ShaderDesc desc{};
+        desc.stage = stage;
+        desc.data = blob->GetBufferPointer();
+        desc.size = blob->GetBufferSize();
+        return rhiDevice_->CreateShader(desc);
+    };
+
+    auto vertexShader = makeShader(rhi::ShaderStage::Vertex, vertexBlob);
+    auto shadowShader = makeShader(rhi::ShaderStage::Vertex, shadowBlob);
+    auto chunkShader = makeShader(rhi::ShaderStage::Vertex, chunkBlob);
+    auto chunkShadowShader = makeShader(rhi::ShaderStage::Vertex, chunkShadowBlob);
+    auto pixelShader = makeShader(rhi::ShaderStage::Pixel, pixelBlob);
+    if (!vertexShader || !shadowShader || !chunkShader || !chunkShadowShader ||
+        !pixelShader) {
         LogError("Scene shader objects could not be created.");
         return false;
     }
 
-    const D3D11_INPUT_ELEMENT_DESC layout[] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    const rhi::VertexAttribute sceneAttributes[] = {
+        {"POSITION", 0, rhi::VertexFormat::Float3, 0, 0},
+        {"NORMAL", 0, rhi::VertexFormat::Float3, 12, 0},
+        {"COLOR", 0, rhi::VertexFormat::Float3, 24, 0},
     };
-    if (FAILED(device->CreateInputLayout(layout, UINT(std::size(layout)),
-                                         vertexBlob->GetBufferPointer(),
-                                         vertexBlob->GetBufferSize(), &inputLayout_))) {
-        LogError("Scene input layout creation failed.");
-        return false;
-    }
-
-    const D3D11_INPUT_ELEMENT_DESC chunkLayout[] = {
-        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
-        {"CHUNKID", 0, DXGI_FORMAT_R32_UINT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    const rhi::VertexAttribute chunkAttributes[] = {
+        {"POSITION", 0, rhi::VertexFormat::Float3, 0, 0},
+        {"NORMAL", 0, rhi::VertexFormat::Float3, 12, 0},
+        {"CHUNKID", 0, rhi::VertexFormat::UInt, 24, 0},
     };
-    if (FAILED(device->CreateInputLayout(chunkLayout, UINT(std::size(chunkLayout)),
-                                         chunkBlob->GetBufferPointer(),
-                                         chunkBlob->GetBufferSize(),
-                                         &chunkInputLayout_))) {
-        LogError("Chunk input layout creation failed.");
-        return false;
-    }
 
-    D3D11_DEPTH_STENCIL_DESC depthDesc{};
-    depthDesc.DepthEnable = TRUE;
-    depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-    depthDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-    if (FAILED(device->CreateDepthStencilState(&depthDesc, &depthState_))) {
-        LogError("Scene depth state creation failed.");
-        return false;
-    }
+    auto makePipeline = [this](rhi::Shader* vs, rhi::Shader* ps,
+                               const rhi::VertexAttribute* attributes,
+                               uint32_t attributeCount, const ComPtr<ID3DBlob>& bytecode) {
+        rhi::PipelineDesc desc{};
+        desc.vertexShader = vs;
+        desc.pixelShader = ps;
+        desc.vertexAttributes = attributes;
+        desc.vertexAttributeCount = attributeCount;
+        desc.vertexShaderBytecode = bytecode->GetBufferPointer();
+        desc.vertexShaderBytecodeSize = bytecode->GetBufferSize();
+        return rhiDevice_->CreatePipeline(desc);
+    };
 
-    D3D11_RASTERIZER_DESC rasterizerDesc{};
-    rasterizerDesc.FillMode = D3D11_FILL_SOLID;
-    rasterizerDesc.CullMode = D3D11_CULL_NONE;
-    rasterizerDesc.DepthClipEnable = TRUE;
-    if (FAILED(device->CreateRasterizerState(&rasterizerDesc, &rasterizer_))) {
-        LogError("Scene rasterizer creation failed.");
-        return false;
-    }
-
-    D3D11_BLEND_DESC blendDesc{};
-    blendDesc.RenderTarget[0].BlendEnable = FALSE;
-    blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-    if (FAILED(device->CreateBlendState(&blendDesc, &blendState_))) {
-        LogError("Scene blend state creation failed.");
+    sceneShadowPipeline_ =
+        makePipeline(shadowShader.get(), nullptr, sceneAttributes,
+                     uint32_t(std::size(sceneAttributes)), shadowBlob);
+    chunkShadowPipeline_ =
+        makePipeline(chunkShadowShader.get(), nullptr, chunkAttributes,
+                     uint32_t(std::size(chunkAttributes)), chunkShadowBlob);
+    scenePipeline_ = makePipeline(vertexShader.get(), pixelShader.get(),
+                                  sceneAttributes, uint32_t(std::size(sceneAttributes)),
+                                  vertexBlob);
+    chunkPipeline_ = makePipeline(chunkShader.get(), pixelShader.get(),
+                                  chunkAttributes, uint32_t(std::size(chunkAttributes)),
+                                  chunkBlob);
+    if (!sceneShadowPipeline_ || !chunkShadowPipeline_ || !scenePipeline_ ||
+        !chunkPipeline_) {
+        LogError("Scene pipelines could not be created.");
         return false;
     }
 
@@ -555,23 +545,21 @@ bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
         return false;
     }
 
-    D3D11_SAMPLER_DESC samplerDesc{};
-    samplerDesc.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
-    samplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
-    samplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
-    samplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
-    samplerDesc.BorderColor[0] = 1.0f;
-    samplerDesc.BorderColor[1] = 1.0f;
-    samplerDesc.BorderColor[2] = 1.0f;
-    samplerDesc.BorderColor[3] = 1.0f;
-    samplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
-    samplerDesc.MaxLOD = 0.0f;
-    return SUCCEEDED(device->CreateSamplerState(&samplerDesc, &shadowSampler_));
+    rhi::SamplerDesc samplerDesc{};
+    samplerDesc.comparison = true;
+    samplerDesc.clamp = false;
+    samplerDesc.linear = true;
+    samplerDesc.border[0] = 1.0f;
+    samplerDesc.border[1] = 1.0f;
+    samplerDesc.border[2] = 1.0f;
+    samplerDesc.border[3] = 1.0f;
+    shadowSampler_ = rhiDevice_->CreateSampler(samplerDesc);
+    return shadowSampler_ != nullptr;
 }
 
 void SceneRenderer::Shutdown() {
     shadowCascadeBuffer_.reset();
-    shadowSampler_.Reset();
+    shadowSampler_.reset();
     surfaceDetailSRV_.Reset();
     surfaceDetailTexture_.Reset();
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
@@ -596,17 +584,12 @@ void SceneRenderer::Shutdown() {
     chunkInstanceBuffer_.reset();
     chunkIndexBuffer_.reset();
     chunkVertexBuffer_.reset();
-    chunkInputLayout_.Reset();
-    chunkShadowVertexShader_.Reset();
-    chunkVertexShader_.Reset();
-    blendState_.Reset();
-    rasterizer_.Reset();
-    depthState_.Reset();
-    inputLayout_.Reset();
-    pixelShader_.Reset();
-    shadowVertexShader_.Reset();
-    vertexShader_.Reset();
+    chunkPipeline_.reset();
+    scenePipeline_.reset();
+    chunkShadowPipeline_.reset();
+    sceneShadowPipeline_.reset();
     device_ = nullptr;
+    rhiDevice_ = nullptr;
 }
 
 bool SceneRenderer::CreateMesh(const std::vector<Vertex>& vertices,
@@ -978,10 +961,8 @@ void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
     context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
     context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(chunkIndexBuffer_->NativeHandle()),
                               DXGI_FORMAT_R32_UINT, 0);
-    context->IASetInputLayout(chunkInputLayout_.Get());
-    context->VSSetShader(shadowPass ? chunkShadowVertexShader_.Get()
-                                    : chunkVertexShader_.Get(),
-                         nullptr, 0);
+    rhiDevice_->BindPipeline(shadowPass ? chunkShadowPipeline_.get()
+                                        : chunkPipeline_.get());
     ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(
         chunkInstanceBuffer_->NativeShaderResourceView());
     context->VSSetShaderResources(1, 1, &srv);
@@ -1069,13 +1050,7 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
                             float(kStaticShadowSize), 0.0f, 1.0f};
     context->RSSetViewports(1, &viewport);
     context->OMSetRenderTargets(0, nullptr, staticShadowDSV_.Get());
-    context->OMSetDepthStencilState(depthState_.Get(), 0);
-    context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
-    context->RSSetState(rasterizer_.Get());
-    context->IASetInputLayout(inputLayout_.Get());
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    context->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
-    context->PSSetShader(nullptr, nullptr, 0);
+    rhiDevice_->BindPipeline(sceneShadowPipeline_.get());
 
     void* cascadeMapped = shadowCascadeBuffer_->Map();
     if (cascadeMapped) {
@@ -1105,7 +1080,6 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
     context->VSSetShaderResources(0, 1, &nullSrv);
     ID3D11Buffer* nullBuffer = nullptr;
     context->VSSetConstantBuffers(3, 1, &nullBuffer);
-    context->IASetInputLayout(nullptr);
 }
 
 void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
@@ -1346,13 +1320,7 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
     UpdateChunkInstances(context, scene);
 
     // --- Shadow pass: one draw per cascade -------------------------------
-    context->OMSetDepthStencilState(depthState_.Get(), 0);
-    context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
-    context->RSSetState(rasterizer_.Get());
-    context->IASetInputLayout(inputLayout_.Get());
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    context->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
-    context->PSSetShader(nullptr, nullptr, 0);
+    rhiDevice_->BindPipeline(sceneShadowPipeline_.get());
 
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
         context->OMSetRenderTargets(0, nullptr, shadowDSV_[cascade].Get());
@@ -1392,8 +1360,7 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
 
         // Voronoi rubble (phase B chunks) with the chunk shadow shader.
         DrawChunks(context, scene, true);
-        context->IASetInputLayout(inputLayout_.Get());
-        context->VSSetShader(shadowVertexShader_.Get(), nullptr, 0);
+        rhiDevice_->BindPipeline(sceneShadowPipeline_.get());
     }
 
     ID3D11ShaderResourceView* nullSrv = nullptr;
@@ -1414,13 +1381,7 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
     }
 
     context->OMSetRenderTargets(1, &hdrRTV, depthDSV);
-    context->OMSetDepthStencilState(depthState_.Get(), 0);
-    context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
-    context->RSSetState(rasterizer_.Get());
-    context->IASetInputLayout(inputLayout_.Get());
-    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    context->VSSetShader(vertexShader_.Get(), nullptr, 0);
-    context->PSSetShader(pixelShader_.Get(), nullptr, 0);
+    rhiDevice_->BindPipeline(scenePipeline_.get());
 
     D3D11_VIEWPORT viewport{0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f};
     context->RSSetViewports(1, &viewport);
@@ -1429,7 +1390,8 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
         shadowSRV_[0].Get(), shadowSRV_[1].Get(), shadowSRV_[2].Get(),
         staticShadowSRV_.Get()};
     context->PSSetShaderResources(2, 4, shadowViews);
-    ID3D11SamplerState* shadowSampler = shadowSampler_.Get();
+    ID3D11SamplerState* shadowSampler =
+        static_cast<ID3D11SamplerState*>(shadowSampler_->NativeHandle());
     context->PSSetSamplers(2, 1, &shadowSampler);
 
     // Tiling grain for the procedural materials. The sampler is chosen by the
@@ -1467,7 +1429,6 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
     context->PSSetSamplers(2, 1, &nullSampler);
     context->PSSetSamplers(3, 1, &nullSampler);
     context->VSSetShaderResources(0, 1, &nullSrv);
-    context->IASetInputLayout(nullptr);
 }
 
 } // namespace ex::gfx

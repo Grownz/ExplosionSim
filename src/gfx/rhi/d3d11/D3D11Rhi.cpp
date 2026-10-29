@@ -67,6 +67,77 @@ UINT ToBindFlags(TextureUsage usage) {
     return flags;
 }
 
+DXGI_FORMAT ToDxgiFormat(VertexFormat format) {
+    switch (format) {
+    case VertexFormat::Float:
+        return DXGI_FORMAT_R32_FLOAT;
+    case VertexFormat::Float2:
+        return DXGI_FORMAT_R32G32_FLOAT;
+    case VertexFormat::Float3:
+        return DXGI_FORMAT_R32G32B32_FLOAT;
+    case VertexFormat::Float4:
+        return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    case VertexFormat::UInt:
+        return DXGI_FORMAT_R32_UINT;
+    case VertexFormat::UInt2:
+        return DXGI_FORMAT_R32G32_UINT;
+    case VertexFormat::UInt3:
+        return DXGI_FORMAT_R32G32B32_UINT;
+    case VertexFormat::UInt4:
+        return DXGI_FORMAT_R32G32B32A32_UINT;
+    default:
+        return DXGI_FORMAT_UNKNOWN;
+    }
+}
+
+D3D11_COMPARISON_FUNC ToComparisonFunc(CompareOp op) {
+    switch (op) {
+    case CompareOp::Never:
+        return D3D11_COMPARISON_NEVER;
+    case CompareOp::Less:
+        return D3D11_COMPARISON_LESS;
+    case CompareOp::Equal:
+        return D3D11_COMPARISON_EQUAL;
+    case CompareOp::LessEqual:
+        return D3D11_COMPARISON_LESS_EQUAL;
+    case CompareOp::Greater:
+        return D3D11_COMPARISON_GREATER;
+    case CompareOp::NotEqual:
+        return D3D11_COMPARISON_NOT_EQUAL;
+    case CompareOp::GreaterEqual:
+        return D3D11_COMPARISON_GREATER_EQUAL;
+    case CompareOp::Always:
+        return D3D11_COMPARISON_ALWAYS;
+    }
+    return D3D11_COMPARISON_LESS_EQUAL;
+}
+
+D3D11_CULL_MODE ToCullMode(CullMode mode) {
+    switch (mode) {
+    case CullMode::None:
+        return D3D11_CULL_NONE;
+    case CullMode::Front:
+        return D3D11_CULL_FRONT;
+    case CullMode::Back:
+        return D3D11_CULL_BACK;
+    }
+    return D3D11_CULL_NONE;
+}
+
+D3D11_PRIMITIVE_TOPOLOGY ToTopology(PrimitiveTopology topology) {
+    switch (topology) {
+    case PrimitiveTopology::TriangleList:
+        return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    case PrimitiveTopology::TriangleStrip:
+        return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+    case PrimitiveTopology::LineList:
+        return D3D11_PRIMITIVE_TOPOLOGY_LINELIST;
+    case PrimitiveTopology::PointList:
+        return D3D11_PRIMITIVE_TOPOLOGY_POINTLIST;
+    }
+    return D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+}
+
 class BufferImpl final : public rhi::Buffer {
 public:
     BufferImpl(ComPtr<ID3D11Buffer> buffer, ComPtr<ID3D11ShaderResourceView> srv,
@@ -167,6 +238,58 @@ private:
     ComPtr<ID3D11VertexShader> vs_;
     ComPtr<ID3D11PixelShader> ps_;
     ComPtr<ID3D11ComputeShader> cs_;
+};
+
+class SamplerImpl final : public rhi::Sampler {
+public:
+    explicit SamplerImpl(ComPtr<ID3D11SamplerState> sampler)
+        : sampler_(std::move(sampler)) {}
+
+    void* NativeHandle() const override { return sampler_.Get(); }
+
+private:
+    ComPtr<ID3D11SamplerState> sampler_;
+};
+
+class PipelineImpl final : public rhi::Pipeline {
+public:
+    PipelineImpl(ComPtr<ID3D11InputLayout> inputLayout,
+                 ComPtr<ID3D11VertexShader> vs, ComPtr<ID3D11PixelShader> ps,
+                 ComPtr<ID3D11DepthStencilState> depthState,
+                 ComPtr<ID3D11RasterizerState> rasterizer,
+                 ComPtr<ID3D11BlendState> blendState,
+                 D3D11_PRIMITIVE_TOPOLOGY topology)
+        : inputLayout_(std::move(inputLayout)),
+          vs_(std::move(vs)),
+          ps_(std::move(ps)),
+          depthState_(std::move(depthState)),
+          rasterizer_(std::move(rasterizer)),
+          blendState_(std::move(blendState)),
+          topology_(topology) {}
+
+    void* NativeHandle() const override { return vs_.Get(); }
+
+    void Bind(ID3D11DeviceContext* context) const {
+        if (!context) {
+            return;
+        }
+        context->IASetInputLayout(inputLayout_.Get());
+        context->IASetPrimitiveTopology(topology_);
+        context->VSSetShader(vs_.Get(), nullptr, 0);
+        context->PSSetShader(ps_.Get(), nullptr, 0);
+        context->OMSetDepthStencilState(depthState_.Get(), 0);
+        context->OMSetBlendState(blendState_.Get(), nullptr, 0xffffffff);
+        context->RSSetState(rasterizer_.Get());
+    }
+
+private:
+    ComPtr<ID3D11InputLayout> inputLayout_;
+    ComPtr<ID3D11VertexShader> vs_;
+    ComPtr<ID3D11PixelShader> ps_;
+    ComPtr<ID3D11DepthStencilState> depthState_;
+    ComPtr<ID3D11RasterizerState> rasterizer_;
+    ComPtr<ID3D11BlendState> blendState_;
+    D3D11_PRIMITIVE_TOPOLOGY topology_ = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 };
 
 } // namespace
@@ -683,6 +806,133 @@ std::unique_ptr<rhi::Shader> Device::CreateShader(const ShaderDesc& desc) {
     }
     return std::make_unique<ShaderImpl>(desc.stage, std::move(vs), std::move(ps),
                                         std::move(cs));
+}
+
+std::unique_ptr<rhi::Sampler> Device::CreateSampler(const SamplerDesc& desc) {
+    if (!device_) {
+        return nullptr;
+    }
+    D3D11_SAMPLER_DESC samplerDesc{};
+    if (desc.comparison) {
+        samplerDesc.Filter = desc.linear
+                                 ? D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT
+                                 : D3D11_FILTER_COMPARISON_MIN_MAG_MIP_POINT;
+        samplerDesc.ComparisonFunc = D3D11_COMPARISON_LESS_EQUAL;
+        samplerDesc.MaxLOD = 0.0f;
+    } else {
+        samplerDesc.Filter = desc.linear ? D3D11_FILTER_MIN_MAG_MIP_LINEAR
+                                         : D3D11_FILTER_MIN_MAG_MIP_POINT;
+    }
+    const D3D11_TEXTURE_ADDRESS_MODE address =
+        desc.clamp ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_BORDER;
+    samplerDesc.AddressU = address;
+    samplerDesc.AddressV = address;
+    samplerDesc.AddressW = address;
+    samplerDesc.BorderColor[0] = desc.border[0];
+    samplerDesc.BorderColor[1] = desc.border[1];
+    samplerDesc.BorderColor[2] = desc.border[2];
+    samplerDesc.BorderColor[3] = desc.border[3];
+
+    ComPtr<ID3D11SamplerState> sampler;
+    if (FAILED(device_->CreateSamplerState(&samplerDesc, &sampler))) {
+        return nullptr;
+    }
+    return std::make_unique<SamplerImpl>(std::move(sampler));
+}
+
+std::unique_ptr<rhi::Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
+    if (!device_ || !desc.vertexShader) {
+        return nullptr;
+    }
+
+    std::vector<D3D11_INPUT_ELEMENT_DESC> layout;
+    layout.reserve(desc.vertexAttributeCount);
+    for (uint32_t i = 0; i < desc.vertexAttributeCount; ++i) {
+        const VertexAttribute& attribute = desc.vertexAttributes[i];
+        const DXGI_FORMAT format = ToDxgiFormat(attribute.format);
+        if (!attribute.semantic || format == DXGI_FORMAT_UNKNOWN) {
+            return nullptr;
+        }
+        D3D11_INPUT_ELEMENT_DESC element{};
+        element.SemanticName = attribute.semantic;
+        element.SemanticIndex = attribute.semanticIndex;
+        element.Format = format;
+        element.InputSlot = attribute.bufferSlot;
+        element.AlignedByteOffset = attribute.offset;
+        element.InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+        element.InstanceDataStepRate = 0;
+        layout.push_back(element);
+    }
+
+    ComPtr<ID3D11InputLayout> inputLayout;
+    if (!layout.empty()) {
+        if (!desc.vertexShaderBytecode || desc.vertexShaderBytecodeSize == 0) {
+            return nullptr;
+        }
+        if (FAILED(device_->CreateInputLayout(layout.data(), UINT(layout.size()),
+                                              desc.vertexShaderBytecode,
+                                              desc.vertexShaderBytecodeSize,
+                                              &inputLayout))) {
+            return nullptr;
+        }
+    }
+
+    ComPtr<ID3D11VertexShader> vs(static_cast<ID3D11VertexShader*>(
+        desc.vertexShader->NativeHandle()));
+    ComPtr<ID3D11PixelShader> ps;
+    if (desc.pixelShader) {
+        ps = static_cast<ID3D11PixelShader*>(desc.pixelShader->NativeHandle());
+    }
+    if (!vs) {
+        return nullptr;
+    }
+
+    D3D11_DEPTH_STENCIL_DESC depthDesc{};
+    depthDesc.DepthEnable = desc.depthTest ? TRUE : FALSE;
+    depthDesc.DepthWriteMask =
+        desc.depthWrite ? D3D11_DEPTH_WRITE_MASK_ALL : D3D11_DEPTH_WRITE_MASK_ZERO;
+    depthDesc.DepthFunc = ToComparisonFunc(desc.depthCompare);
+    ComPtr<ID3D11DepthStencilState> depthState;
+    if (FAILED(device_->CreateDepthStencilState(&depthDesc, &depthState))) {
+        return nullptr;
+    }
+
+    D3D11_RASTERIZER_DESC rasterizerDesc{};
+    rasterizerDesc.FillMode = D3D11_FILL_SOLID;
+    rasterizerDesc.CullMode = ToCullMode(desc.cullMode);
+    rasterizerDesc.DepthClipEnable = desc.depthClip ? TRUE : FALSE;
+    ComPtr<ID3D11RasterizerState> rasterizer;
+    if (FAILED(device_->CreateRasterizerState(&rasterizerDesc, &rasterizer))) {
+        return nullptr;
+    }
+
+    D3D11_BLEND_DESC blendDesc{};
+    blendDesc.RenderTarget[0].BlendEnable = desc.blendEnable ? TRUE : FALSE;
+    blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+    blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+    blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+    blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;
+    blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+    blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+    ComPtr<ID3D11BlendState> blendState;
+    if (FAILED(device_->CreateBlendState(&blendDesc, &blendState))) {
+        return nullptr;
+    }
+
+    return std::make_unique<PipelineImpl>(
+        std::move(inputLayout), std::move(vs), std::move(ps),
+        std::move(depthState), std::move(rasterizer), std::move(blendState),
+        ToTopology(desc.topology));
+}
+
+void Device::BindPipeline(Pipeline* pipeline) {
+    if (!context_ || !pipeline) {
+        return;
+    }
+    if (auto* impl = dynamic_cast<PipelineImpl*>(pipeline)) {
+        impl->Bind(context_.Get());
+    }
 }
 
 } // namespace ex::rhi::d3d11
