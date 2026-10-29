@@ -2,6 +2,8 @@
 
 #include "gfx/ImageIO.h"
 
+#include <objbase.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -25,18 +27,31 @@ Splash::~Splash() {
     Close();
 }
 
-bool Splash::Show(const std::wstring& imagePath, const std::wstring& title,
-                  const std::wstring& subtitle) {
-    imagePath_ = imagePath;
+bool Splash::Show(const std::vector<std::wstring>& framePaths,
+                  const std::wstring& title, const std::wstring& subtitle) {
+    framePaths_ = framePaths;
+    frameCount_ = int(framePaths_.size());
+    currentFrame_ = -1;
     title_ = title;
     subtitle_ = subtitle;
 
-    // WIC is loaded on the main thread (COM is already initialised there); the
-    // splash thread only uploads the pixels into a DIB.
+    // The first frame is loaded on the main thread (COM is already initialised
+    // there) so the splash is never blank. The remaining frames are decoded on
+    // demand by the splash thread as the progress crosses each 5 % step.
     imagePixels_.clear();
     imageWidth_ = 0;
     imageHeight_ = 0;
-    gfx::LoadImageBgra(imagePath_, imagePixels_, imageWidth_, imageHeight_);
+    currentFrame_ = -1;
+    for (int i = 0; i < frameCount_; ++i) {
+        if (framePaths_[i].empty()) {
+            continue;
+        }
+        if (gfx::LoadImageBgra(framePaths_[i], imagePixels_, imageWidth_,
+                               imageHeight_)) {
+            currentFrame_ = i;
+            break;
+        }
+    }
 
     running_.store(true);
     thread_ = std::thread(&Splash::ThreadMain, this);
@@ -74,6 +89,14 @@ void Splash::Close() {
 }
 
 void Splash::ThreadMain() {
+    // The later frames are decoded lazily on this thread, so it needs its own
+    // COM apartment for WIC.
+    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    auto releaseCom = [&comResult]() {
+        if (SUCCEEDED(comResult)) {
+            CoUninitialize();
+        }
+    };
     dpi_ = std::max(96, int(GetDpiForSystem()));
     width_ = Scale(980, dpi_);
     height_ = Scale(640, dpi_);
@@ -128,6 +151,7 @@ void Splash::ThreadMain() {
             ready_.store(true);
             running_.store(false);
             ReleaseResources();
+            releaseCom();
             return;
         }
         classRegistered_ = true;
@@ -139,6 +163,7 @@ void Splash::ThreadMain() {
         ready_.store(true);
         running_.store(false);
         ReleaseResources();
+        releaseCom();
         return;
     }
 
@@ -169,6 +194,7 @@ void Splash::ThreadMain() {
     window_.store(nullptr);
     ReleaseResources();
     ready_.store(false);
+    releaseCom();
 }
 
 void Splash::CreateFonts() {
@@ -224,6 +250,72 @@ void Splash::CreateOverlay() {
     }
 }
 
+bool Splash::EnsureFrame(int index) {
+    if (index < 0 || index >= frameCount_) {
+        return false;
+    }
+    if (index == currentFrame_ && backgroundDc_) {
+        return true;
+    }
+    if (framePaths_[index].empty()) {
+        return false;
+    }
+
+    std::vector<uint8_t> pixels;
+    int width = 0;
+    int height = 0;
+    if (!gfx::LoadImageBgra(framePaths_[index], pixels, width, height) ||
+        width <= 0 || height <= 0) {
+        return false;
+    }
+
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = -height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!bitmap || !bits) {
+        if (bitmap) {
+            DeleteObject(bitmap);
+        }
+        return false;
+    }
+    memcpy(bits, pixels.data(), size_t(width) * size_t(height) * 4);
+
+    HDC dc = CreateCompatibleDC(nullptr);
+    if (!dc) {
+        DeleteObject(bitmap);
+        return false;
+    }
+    SelectObject(dc, bitmap);
+
+    DestroyBackground();
+    background_ = bitmap;
+    backgroundDc_ = dc;
+    imageWidth_ = width;
+    imageHeight_ = height;
+    currentFrame_ = index;
+    return true;
+}
+
+void Splash::DestroyBackground() {
+    if (backgroundDc_) {
+        DeleteDC(backgroundDc_);
+        backgroundDc_ = nullptr;
+    }
+    if (background_) {
+        DeleteObject(background_);
+        background_ = nullptr;
+    }
+    imageWidth_ = 0;
+    imageHeight_ = 0;
+    currentFrame_ = -1;
+}
+
 void Splash::Paint(HDC target) {
     HWND window = window_.load();
     if (!target || !window) {
@@ -240,6 +332,13 @@ void Splash::Paint(HDC target) {
         std::lock_guard<std::mutex> lock(mutex_);
         progress = displayProgress_;
         status = status_;
+    }
+
+    // One still per 5 % step: 0-5 % frame 0, 5-10 % frame 1, ..., 95-100 % frame 19.
+    if (frameCount_ > 0) {
+        const int frame =
+            std::clamp(int(progress * float(frameCount_)), 0, frameCount_ - 1);
+        EnsureFrame(frame);
     }
 
     HDC memory = CreateCompatibleDC(target);
@@ -421,6 +520,11 @@ LRESULT Splash::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARAM l
             } else {
                 pulse_ = 0.0f;
             }
+            if (frameCount_ > 0) {
+                const int frame = std::clamp(
+                    int(displayProgress_ * float(frameCount_)), 0, frameCount_ - 1);
+                EnsureFrame(frame);
+            }
             InvalidateRect(window, nullptr, FALSE);
             return 0;
         }
@@ -441,14 +545,7 @@ LRESULT Splash::HandleMessage(HWND window, UINT message, WPARAM wParam, LPARAM l
 }
 
 void Splash::ReleaseResources() {
-    if (backgroundDc_) {
-        DeleteDC(backgroundDc_);
-        backgroundDc_ = nullptr;
-    }
-    if (background_) {
-        DeleteObject(background_);
-        background_ = nullptr;
-    }
+    DestroyBackground();
     if (overlayDc_) {
         DeleteDC(overlayDc_);
         overlayDc_ = nullptr;

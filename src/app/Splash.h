@@ -18,7 +18,8 @@ class Splash {
 public:
     ~Splash();
 
-    bool Show(const std::wstring& imagePath, const std::wstring& title,
+    // framePaths are shown in order as the progress crosses each 5 % step.
+    bool Show(const std::vector<std::wstring>& framePaths, const std::wstring& title,
               const std::wstring& subtitle);
     // expectedSeconds is the measured duration of the stage; the bar
     // interpolates from its current value to `progress` over that time.
@@ -34,6 +35,8 @@ private:
     void Paint(HDC target);
     void CreateFonts();
     void CreateOverlay();
+    bool EnsureFrame(int index);
+    void DestroyBackground();
     void ReleaseResources();
 
     std::thread thread_;
@@ -48,14 +51,16 @@ private:
     std::wstring status_ = L"Loading...";
 
     // Splash-thread state.
-    std::wstring imagePath_;
+    std::vector<std::wstring> framePaths_;
     std::wstring title_;
     std::wstring subtitle_;
-    std::vector<uint8_t> imagePixels_;
+    std::vector<uint8_t> imagePixels_; // first frame, loaded on the main thread
     HBITMAP background_ = nullptr;
     HDC backgroundDc_ = nullptr;
     int imageWidth_ = 0;
     int imageHeight_ = 0;
+    int frameCount_ = 0;
+    int currentFrame_ = -1;
     HBITMAP overlay_ = nullptr;
     HDC overlayDc_ = nullptr;
     HFONT titleFont_ = nullptr;

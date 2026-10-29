@@ -164,8 +164,16 @@ int App::Run(const LaunchOptions& options) {
     Splash splash;
     bool splashVisible = false;
     if (!options_.headless) {
-        splashVisible = splash.Show(gfx::ResolveAssetPath(L"assets\\splash.png"),
-                                    L"Explosion Simulator",
+        // 20 stills from the first ten seconds of the promo, one per 5 % step.
+        constexpr int kSplashFrameCount = 20;
+        std::vector<std::wstring> splashFrames;
+        splashFrames.reserve(kSplashFrameCount);
+        for (int i = 0; i < kSplashFrameCount; ++i) {
+            wchar_t path[64];
+            swprintf_s(path, L"assets\\splash\\frame_%02d.jpg", i);
+            splashFrames.push_back(gfx::ResolveAssetPath(path));
+        }
+        splashVisible = splash.Show(splashFrames, L"Explosion Simulator",
                                     std::wstring(L"Version ") + EXPLOSION_VERSION_WSTRING);
         if (splashVisible) {
             // Measured stage shares (reference machine): window 0.1 %, device

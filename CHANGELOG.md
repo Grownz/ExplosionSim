@@ -13,6 +13,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   police car and two trucks). The models are converted to per-vertex colours and
   keep their natural proportions, so the generated traffic looks varied instead
   of reusing three procedural car shapes.
+- **Animated startup splash** - the splash now cycles through 20 stills taken
+  every 0.5 s from the first ten seconds of the promo, one per 5 % progress
+  step. The stills are cropped to the 980:640 splash aspect; the first frame is
+  preloaded and the rest are decoded on demand on the splash thread.
 
 ### Fixed
 

@@ -61,10 +61,14 @@ The UI reports the worker count and the measured bake time.
 
 ## Startup
 
-A borderless GDI splash appears before the main window. It shows the hero image,
-the version, the current stage and a progress bar, and runs on its own thread so
-the bar keeps moving while the main thread creates the Direct3D device, compiles
-the shaders, initialises ImGui and prepares the simulation. The main window is
+A borderless GDI splash appears before the main window. It shows one of 20
+stills taken every 0.5 s from the first ten seconds of the promo, switching at
+each 5 % progress step, together with the version, the current stage and a
+progress bar. The stills are cropped to the 980:640 splash aspect; the first is
+preloaded on the main thread and the rest are decoded on demand by the splash
+thread. The splash runs on its own thread so the bar keeps moving while the main
+thread creates the Direct3D device, compiles the shaders, initialises ImGui and
+prepares the simulation. The main window is
 created hidden and only shown when the splash closes, so no blank client area is
 visible during loading. Stages: window, Direct3D device, shader compilation,
 interface, simulation, city generation. The town itself is still generated on a
