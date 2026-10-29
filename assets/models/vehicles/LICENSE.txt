@@ -1,0 +1,25 @@
+Kenney Car Kit
+==============
+
+Source: https://kenney.nl/assets/car-kit
+License: CC0 1.0 Universal (public domain dedication)
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The .esv files in this folder are converted from the pack's OBJ models by
+`scripts/convert-kenney-vehicles.py`. Each face is flat-shaded and its colour
+is sampled from the pack's `colormap.png`; no textures are required at runtime.
+
+Models used:
+- sedan
+- sedan-sports
+- hatchback-sports
+- suv
+- suv-luxury
+- van
+- taxi
+- police
+- truck
+- truck-flat
+
+CC0 does not require attribution, but the source is credited here and in the
+project README.

@@ -8,6 +8,7 @@
 
 #include "gfx/GfxDevice.h"
 #include "scene/SceneTypes.h"
+#include "scene/VehicleModels.h"
 
 namespace ex::gfx {
 
@@ -106,11 +107,23 @@ private:
         ComPtr<ID3D11ShaderResourceView> instanceSRV;
         UINT indexCount = 0;
         UINT instanceCapacity = 0;
+        // Natural bounds of imported vehicle meshes, used to scale them to the
+        // scene object size without distorting their proportions.
+        DirectX::XMFLOAT3 modelSize{};
         std::vector<Instance> instances;
     };
 
+    // Mesh slots. Imported vehicles occupy 1..kVehicleModelCount; the tree,
+    // chunk and far-tree meshes follow them.
+    static constexpr int kVehicleMeshFirst = 1;
+    static constexpr int kTreeMeshFirst = kVehicleMeshFirst + scene::kVehicleModelCount;
+    static constexpr int kChunkMesh = kTreeMeshFirst + 3;
+    static constexpr int kFarTreeMesh = kChunkMesh + 1;
+    static constexpr int kMeshCount = kFarTreeMesh + 1;
+
     bool CreateMesh(const std::vector<Vertex>& vertices,
                     const std::vector<uint32_t>& indices, Mesh& mesh);
+    bool LoadVehicleMesh(const wchar_t* asset, Mesh& mesh);
     bool EnsureInstanceCapacity(Mesh& mesh, UINT capacity);
     void BuildMeshes();
 

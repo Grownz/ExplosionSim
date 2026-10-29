@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 
 using namespace DirectX;
 
@@ -679,8 +681,59 @@ bool SceneRenderer::EnsureInstanceCapacity(Mesh& mesh, UINT capacity) {
     return true;
 }
 
+bool SceneRenderer::LoadVehicleMesh(const wchar_t* asset, Mesh& mesh) {
+    static_assert(sizeof(Vertex) == 36, "ESV vertex layout");
+    if (!device_ || !asset) {
+        return false;
+    }
+
+    const std::wstring relative =
+        std::wstring(L"assets\\models\\vehicles\\") + asset;
+    const std::wstring path = ResolveAssetPath(relative.c_str());
+    if (path.empty()) {
+        return false;
+    }
+
+    std::ifstream file(std::filesystem::path(path), std::ios::binary);
+    if (!file) {
+        return false;
+    }
+
+    char magic[4]{};
+    uint32_t vertexCount = 0;
+    uint32_t indexCount = 0;
+    float sizeX = 0.0f;
+    float sizeY = 0.0f;
+    float sizeZ = 0.0f;
+    file.read(magic, 4);
+    file.read(reinterpret_cast<char*>(&vertexCount), sizeof(vertexCount));
+    file.read(reinterpret_cast<char*>(&indexCount), sizeof(indexCount));
+    file.read(reinterpret_cast<char*>(&sizeX), sizeof(sizeX));
+    file.read(reinterpret_cast<char*>(&sizeY), sizeof(sizeY));
+    file.read(reinterpret_cast<char*>(&sizeZ), sizeof(sizeZ));
+    if (!file || std::memcmp(magic, "ESV1", 4) != 0 || vertexCount == 0 ||
+        indexCount == 0 || vertexCount > 200000 || indexCount > 600000) {
+        LogWarn("Invalid vehicle mesh: %ls", path.c_str());
+        return false;
+    }
+
+    std::vector<Vertex> vertices(vertexCount);
+    std::vector<uint32_t> indices(indexCount);
+    file.read(reinterpret_cast<char*>(vertices.data()),
+              std::streamsize(sizeof(Vertex) * vertexCount));
+    file.read(reinterpret_cast<char*>(indices.data()),
+              std::streamsize(sizeof(uint32_t) * indexCount));
+    if (!file) {
+        LogWarn("Truncated vehicle mesh: %ls", path.c_str());
+        return false;
+    }
+
+    mesh.modelSize = XMFLOAT3(sizeX, sizeY, sizeZ);
+    return CreateMesh(vertices, indices, mesh);
+}
+
 void SceneRenderer::BuildMeshes() {
-    meshes_.resize(9);
+    meshes_.resize(kMeshCount);
     const XMFLOAT3 white{1.0f, 1.0f, 1.0f};
     const XMFLOAT3 brown{0.22f, 0.14f, 0.08f};
 
@@ -693,61 +746,23 @@ void SceneRenderer::BuildMeshes() {
         CreateMesh(vertices, indices, meshes_[0]);
     }
 
-    // 1: car. Canonical footprint 2.0 x 1.6 x 5.0.
-    {
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
-        AddBox(vertices, indices, XMFLOAT3(0.0f, 0.45f, 0.0f),
-               XMFLOAT3(0.95f, 0.25f, 2.15f), XMFLOAT3(0.55f, 0.12f, 0.10f));
-        AddBox(vertices, indices, XMFLOAT3(0.0f, 0.82f, -0.15f),
-               XMFLOAT3(0.78f, 0.28f, 1.15f), XMFLOAT3(0.10f, 0.13f, 0.17f));
-        for (float sx : {-1.0f, 1.0f}) {
-            for (float sz : {-1.0f, 1.0f}) {
-                AddBox(vertices, indices,
-                       XMFLOAT3(sx * 0.90f, 0.22f, sz * 1.45f),
-                       XMFLOAT3(0.16f, 0.22f, 0.30f), XMFLOAT3(0.05f, 0.05f, 0.05f));
-            }
+    // 1..kVehicleModelCount: imported low-poly vehicles. A missing asset
+    // falls back to a simple box so the scene still renders.
+    for (int i = 0; i < scene::kVehicleModelCount; ++i) {
+        Mesh& mesh = meshes_[kVehicleMeshFirst + i];
+        if (!LoadVehicleMesh(scene::kVehicleModels[i].asset, mesh)) {
+            LogWarn("Vehicle model missing; using a placeholder: %ls",
+                    scene::kVehicleModels[i].asset);
+            std::vector<Vertex> vertices;
+            std::vector<uint32_t> indices;
+            AddBox(vertices, indices, XMFLOAT3(0.0f, 0.65f, 0.0f),
+                   XMFLOAT3(0.75f, 0.65f, 1.40f), white);
+            CreateMesh(vertices, indices, mesh);
+            mesh.modelSize = XMFLOAT3(1.5f, 1.3f, 2.8f);
         }
-        CreateMesh(vertices, indices, meshes_[1]);
     }
 
-    // 2: van.
-    {
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
-        AddBox(vertices, indices, XMFLOAT3(0.0f, 0.65f, 0.0f),
-               XMFLOAT3(0.95f, 0.55f, 2.40f), XMFLOAT3(0.85f, 0.85f, 0.82f));
-        AddBox(vertices, indices, XMFLOAT3(0.0f, 1.15f, 1.55f),
-               XMFLOAT3(0.85f, 0.22f, 0.55f), XMFLOAT3(0.10f, 0.13f, 0.17f));
-        for (float sx : {-1.0f, 1.0f}) {
-            for (float sz : {-1.0f, 1.0f}) {
-                AddBox(vertices, indices,
-                       XMFLOAT3(sx * 0.90f, 0.22f, sz * 1.55f),
-                       XMFLOAT3(0.16f, 0.22f, 0.32f), XMFLOAT3(0.05f, 0.05f, 0.05f));
-            }
-        }
-        CreateMesh(vertices, indices, meshes_[2]);
-    }
-
-    // 3: truck.
-    {
-        std::vector<Vertex> vertices;
-        std::vector<uint32_t> indices;
-        AddBox(vertices, indices, XMFLOAT3(0.0f, 0.75f, 1.55f),
-               XMFLOAT3(0.90f, 0.55f, 0.70f), XMFLOAT3(0.20f, 0.30f, 0.55f));
-        AddBox(vertices, indices, XMFLOAT3(0.0f, 0.95f, -0.80f),
-               XMFLOAT3(0.95f, 0.70f, 1.70f), XMFLOAT3(0.55f, 0.50f, 0.42f));
-        for (float sx : {-1.0f, 1.0f}) {
-            for (float sz : {-1.0f, 1.0f}) {
-                AddBox(vertices, indices,
-                       XMFLOAT3(sx * 0.92f, 0.24f, sz * 1.70f),
-                       XMFLOAT3(0.17f, 0.24f, 0.34f), XMFLOAT3(0.05f, 0.05f, 0.05f));
-            }
-        }
-        CreateMesh(vertices, indices, meshes_[3]);
-    }
-
-    // 4-6: tree variants. Canonical height 1, canopy radius 0.5.
+    // kTreeMeshFirst..+2: tree variants. Canonical height 1, canopy radius 0.5.
     {
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
@@ -759,7 +774,7 @@ void SceneRenderer::BuildMeshes() {
                 XMFLOAT3(0.16f, 0.36f, 0.12f));
         AddCone(vertices, indices, XMFLOAT3(0.0f, 0.70f, 0.0f), 0.25f, 0.30f,
                 XMFLOAT3(0.20f, 0.40f, 0.14f));
-        CreateMesh(vertices, indices, meshes_[4]);
+        CreateMesh(vertices, indices, meshes_[kTreeMeshFirst]);
     }
     {
         std::vector<Vertex> vertices;
@@ -772,7 +787,7 @@ void SceneRenderer::BuildMeshes() {
                 XMFLOAT3(0.15f, 0.34f, 0.11f));
         AddCone(vertices, indices, XMFLOAT3(0.0f, 0.72f, 0.0f), 0.20f, 0.28f,
                 XMFLOAT3(0.19f, 0.38f, 0.13f));
-        CreateMesh(vertices, indices, meshes_[5]);
+        CreateMesh(vertices, indices, meshes_[kTreeMeshFirst + 1]);
     }
     {
         std::vector<Vertex> vertices;
@@ -785,7 +800,7 @@ void SceneRenderer::BuildMeshes() {
                 XMFLOAT3(0.18f, 0.38f, 0.13f));
         AddCone(vertices, indices, XMFLOAT3(0.0f, 0.62f, 0.0f), 0.30f, 0.30f,
                 XMFLOAT3(0.22f, 0.42f, 0.15f));
-        CreateMesh(vertices, indices, meshes_[6]);
+        CreateMesh(vertices, indices, meshes_[kTreeMeshFirst + 2]);
     }
 
     // 7: chamfered unit box, used for building chunks.
@@ -793,7 +808,7 @@ void SceneRenderer::BuildMeshes() {
         std::vector<Vertex> vertices;
         std::vector<uint32_t> indices;
         AddBeveledBox(vertices, indices, XMFLOAT3(0.5f, 0.5f, 0.5f), 0.10f, white);
-        CreateMesh(vertices, indices, meshes_[7]);
+        CreateMesh(vertices, indices, meshes_[kChunkMesh]);
     }
 
     // 8: low-detail tree used beyond the near distance (one cone, no trunk).
@@ -802,7 +817,7 @@ void SceneRenderer::BuildMeshes() {
         std::vector<uint32_t> indices;
         AddCone(vertices, indices, XMFLOAT3(0.0f, 0.25f, 0.0f), 0.48f, 0.75f,
                 XMFLOAT3(0.14f, 0.33f, 0.11f));
-        CreateMesh(vertices, indices, meshes_[8]);
+        CreateMesh(vertices, indices, meshes_[kFarTreeMesh]);
     }
 }
 
@@ -1195,9 +1210,9 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             type = 0.0f;
             break;
         case scene::SceneObjectType::Vehicle:
-            meshIndex = 1 + (object.meshVariant % 3);
-            scale = XMFLOAT3(object.size.x / 2.0f, object.size.y / 1.6f,
-                             object.size.z / 5.0f);
+            meshIndex = kVehicleMeshFirst +
+                        (object.meshVariant % scene::kVehicleModelCount);
+            scale = XMFLOAT3(1.0f, 1.0f, 1.0f);
             type = 1.0f;
             break;
         case scene::SceneObjectType::Tree: {
@@ -1205,8 +1220,8 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             const float dz = object.position.z - view.eye.z;
             const float distanceSquared = dx * dx + dz * dz;
             meshIndex = distanceSquared > 80.0f * 80.0f
-                            ? 8
-                            : 4 + (object.meshVariant % 3);
+                            ? kFarTreeMesh
+                            : kTreeMeshFirst + (object.meshVariant % 3);
             scale = XMFLOAT3(object.size.x * 2.0f, object.size.y,
                              object.size.x * 2.0f);
             sway = 0.05f;
@@ -1223,7 +1238,27 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
 
         Instance instance{};
         XMMATRIX world;
-        if (object.bodyIndex >= 0 && object.bodyIndex < int(bodies.size())) {
+        if (object.type == scene::SceneObjectType::Vehicle) {
+            // Imported models keep their proportions: the object size is the
+            // model size times a single uniform scale.
+            const Mesh& mesh = meshes_[meshIndex];
+            const float uniform = mesh.modelSize.z > 1e-4f
+                                      ? object.size.z / mesh.modelSize.z
+                                      : 1.0f;
+            if (object.bodyIndex >= 0 && object.bodyIndex < int(bodies.size())) {
+                const scene::RigidBody& body = bodies[object.bodyIndex];
+                world = XMMatrixScaling(uniform, uniform, uniform) *
+                        XMMatrixTranslation(0.0f, -mesh.modelSize.y * 0.5f, 0.0f) *
+                        XMMatrixRotationQuaternion(XMLoadFloat4(&body.orientation)) *
+                        XMMatrixTranslation(body.position.x, body.position.y,
+                                            body.position.z);
+            } else {
+                world = XMMatrixScaling(uniform, uniform, uniform) *
+                        XMMatrixRotationY(XMConvertToRadians(object.yaw)) *
+                        XMMatrixTranslation(object.position.x, 0.0f,
+                                            object.position.z);
+            }
+        } else if (object.bodyIndex >= 0 && object.bodyIndex < int(bodies.size())) {
             const scene::RigidBody& body = bodies[object.bodyIndex];
             world = XMMatrixTranslation(0.0f, -0.5f, 0.0f) *
                     XMMatrixScaling(scale.x, scale.y, scale.z) *
@@ -1259,9 +1294,14 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
         // Building space for the facade (buildings are axis-aligned).
         instance.textureOrigin =
             XMFLOAT4(object.position.x, 0.0f, object.position.z, 0.0f);
+        // Imported vehicles use their vertex colours; the 10+ tag tells the
+        // shader to skip the procedural paint/glass/wheel pattern.
+        const float styleTag =
+            object.type == scene::SceneObjectType::Vehicle
+                ? 10.0f + float(object.meshVariant % scene::kVehicleModelCount)
+                : float(object.meshVariant & 3);
         instance.textureScale =
-            XMFLOAT4(object.size.x, object.size.y, object.size.z,
-                     float(object.meshVariant & 3));
+            XMFLOAT4(object.size.x, object.size.y, object.size.z, styleTag);
         meshes_[meshIndex].instances.push_back(instance);
     }
 
@@ -1328,7 +1368,7 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             instance.textureScale = XMFLOAT4(chunk.half.x * 2.0f, chunk.half.y * 2.0f,
                                              chunk.half.z * 2.0f,
                                              float(object.meshVariant & 3));
-            meshes_[7].instances.push_back(instance);
+            meshes_[kChunkMesh].instances.push_back(instance);
         }
     }
 

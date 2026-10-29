@@ -430,6 +430,12 @@ float3 VehicleMaterial(VSOutput input, float3 baseColor, float detailFade)
 {
     const float3 n = normalize(input.Normal);
     const float3 lp = input.LocalPosition;
+    // Imported low-poly models carry their palette in the vertex colours
+    // (sampled from the Kenney atlas); no procedural paint/glass pattern.
+    if (input.TextureScale.w > 8.5)
+    {
+        return baseColor * (0.94 + 0.12 * SurfaceGrain(lp, n));
+    }
     const int style = int(input.TextureScale.w + 0.5) % 3;
     const float paintNoise = Fbm3(lp * 3.5 + float3(style * 5.0, 0.0, 0.0));
     float3 color = baseColor * (0.82 + 0.28 * paintNoise);

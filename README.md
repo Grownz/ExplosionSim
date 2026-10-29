@@ -27,8 +27,9 @@ atmosphere and environment are fully interactive.
   and fireball on the GPU. Both share the same atmosphere, charge and camera.
 - **A town that actually breaks** – a deterministic procedural town is fractured
   into Voronoi chunks, shielded by neighbouring buildings and collapsed
-  progressively by the analytic pressure-impulse field. Vehicles and trees
-  become rigid bodies; debris piles up on the remaining structure.
+  progressively by the analytic pressure-impulse field. Ten different low-poly
+  vehicle models and the trees become rigid bodies; debris piles up on the
+  remaining structure.
 - **Heat has a direction** – only the surface facing the burst glows and emits
   flames. Short ember streaks leave the outer edges of that face; the leeward
   side keeps its charred material colour.
@@ -163,9 +164,9 @@ the terrain.
 
 ## License
 
-MIT – see [LICENSE](LICENSE). Third-party components: Dear ImGui (MIT), Jolt
-Physics (MIT), nlohmann/json (MIT) and miniz (MIT); the miniz license is included
-as `LICENSE-miniz.txt` in the release archive.
+MIT - see [LICENSE](LICENSE). Third-party components: Dear ImGui (MIT), Jolt
+Physics (MIT), nlohmann/json (MIT), miniz (MIT) and the Kenney Car Kit (CC0);
+the miniz license is included as `LICENSE-miniz.txt` in the release archive.
 
 ## Versioning
 

@@ -6,6 +6,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Ten low-poly vehicle models** - the procedural town now uses ten different
+  CC0 vehicles from the Kenney Car Kit (sedans, sports cars, SUVs, van, taxi,
+  police car and two trucks). The models are converted to per-vertex colours and
+  keep their natural proportions, so the generated traffic looks varied instead
+  of reusing three procedural car shapes.
+
 ### Fixed
 
 - **Menu handle follows the panel** - the handle was pinned to the right window

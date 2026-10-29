@@ -3,6 +3,7 @@
 #include "core/Log.h"
 #include "core/Random.h"
 #include "core/ThreadPool.h"
+#include "scene/VehicleModels.h"
 #include "scene/VoronoiFracture.h"
 
 #include <algorithm>
@@ -591,15 +592,21 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
                     if (keep < 1.0f && rng.Float01() >= keep) {
                         continue;
                     }
-                    const float spread = slot * 1.4f;
+                    const int variant =
+                        int(rng.NextU32() % uint32_t(kVehicleModelCount));
+                    const VehicleModelInfo& model = kVehicleModels[variant];
+                    const float vehicleScale = rng.Range(0.92f, 1.12f);
+                    // Density > 1 puts several cars in one block; space them by
+                    // their own length so the imported models do not overlap.
+                    const float spread = slot * (model.length + 0.5f);
                     addObject(SceneObjectType::Vehicle,
                               x + (alongX ? 0.0f : spread) - (alongX ? spread : 0.0f),
                               z + (alongX ? spread : 0.0f) - (alongX ? 0.0f : spread),
                               yaw,
-                              DirectX::XMFLOAT3(rng.Range(1.7f, 2.2f),
-                                                rng.Range(1.3f, 2.4f),
-                                                rng.Range(3.8f, 6.5f)),
-                              int(rng.NextU32() % 3));
+                              DirectX::XMFLOAT3(model.width * vehicleScale,
+                                                model.height * vehicleScale,
+                                                model.length * vehicleScale),
+                              variant);
                     ++vehicles;
                 }
             }

@@ -331,18 +331,21 @@ count.
 
 `Scene` generates a deterministic town around ground zero from `scene.seed`: a jittered
 block grid with buildings, vehicles on the road centre lines and trees along the
-sidewalks. `scene.density` scales both the object budget (800 at 1.0) and the number of
-objects per block (`ceil(density)`), with their footprints shrunk so that extra copies
-still fit; per-type toggles enable buildings, vehicles and vegetation. The town is a disc
+sidewalks. `scene.density` uses fractional slots: below 1 a block is populated with
+probability `density`, above 1 the integer slots are filled and the remaining fraction
+adds one more slot with that probability. A global budget of 3200 objects is applied as
+a uniform placement probability; per-type toggles enable buildings, vehicles and
+vegetation. The town is a disc
 whose radius is the half diagonal of the previous square layout
 (`sqrt(2) * max(10 * R_fireball + 20, 1.4 * R_destroy + two blocks)`, 45 m floor), so
 intact objects always exist outside the destruction radius even for a 100 kt charge. The
-budget grows with the circle area (π/2 relative to the old square, capped at 3200) and
-blocks are sampled uniformly when the grid is larger than the budget; objects outside the
-disc or inside the destruction radius are rejected before their chunks are generated.
+3200-object cap is applied as a uniform placement probability, so a large town still
+surrounds the burst instead of clustering in the first blocks; objects outside the disc
+or inside the destruction radius are rejected before their chunks are generated.
 The default seed is 69707. Buildings select one of four procedural facade styles
-(glass, brick, concrete, industrial); vehicles and trees add high-frequency paint, glass,
-lamp, bark and foliage detail in the scene pixel shader.
+(glass, brick, concrete, industrial); vehicles select one of ten low-poly Kenney Car Kit
+models (CC0) converted to per-vertex-colour `.esv` meshes; trees add procedural bark and
+foliage detail in the scene pixel shader.
 
 Each object stores
 the free-air arrival time (`BlastModel::EstimateArrivalTimeS`), peak overpressure,
@@ -407,8 +410,9 @@ Blast shielding traces 3x3 rays from the burst to the receiver, accumulates the 
 depth of every building the ray crosses (`exp(-depth/3 m)`), applies a diffraction floor
 around the nearest occluder and, optionally, a ground-reflection factor near the surface.
 
-`SceneRenderer` draws the intact objects and active chunks as instanced procedural
-meshes (box buildings with shader-generated windows, low-poly vehicles and trees). Chunks
+`SceneRenderer` draws the intact objects and active chunks as instanced meshes (box
+buildings with shader-generated windows, ten imported low-poly vehicle models and
+procedural trees). Chunks
 use a chamfered box mesh and carry a per-instance texture origin and scale; the shader
 maps the mesh-local position back into the original building space, so each fragment
 keeps the facade it broke off from. Blast damage is a procedural char and crack overlay
