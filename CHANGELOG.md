@@ -4,7 +4,22 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.5] - 2026-10-29
+
+0.10.5 is a feature patch over 0.10.0: the procedural town now uses ten
+different low-poly vehicles, the startup splash cycles through stills from the
+promo, and the panel handle and continuous scene density are fixed. The README
+was streamlined and now embeds the 0.10.0 promo as a GIF.
+
+### Highlights
+
+- **Ten low-poly vehicles** - sedans, sports cars, SUVs, a van, a taxi, a police
+  car and two trucks from the CC0 Kenney Car Kit replace the three procedural
+  car shapes.
+- **Animated startup splash** - 20 stills from the first ten seconds of the
+  promo, one per 5 % loading step, cropped to the splash aspect.
+- **Panel and density fixes** - the menu handle now rides on the panel's left
+  edge, and the scene density slider scales the object count continuously.
 
 ### Added
 
@@ -28,6 +43,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   visible object count jumped at 1.0, 2.0, ... and stayed flat in between.
   Fractional slots and placement probabilities now scale the town smoothly over
   the whole slider range.
+
+### Changed
+
+- **README** - streamlined around the unique features and physical principles;
+  the 0.10.0 promo is embedded as an optimized GIF with a full-quality MP4 link.
+- **Repository hygiene** - root-level source videos and the test settings file
+  are ignored; PNG assets under `assets/` remain tracked.
 
 ## [0.10.0] - 2026-10-28
 
@@ -742,7 +764,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.10.5...HEAD
+[0.10.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.10.5
 [0.10.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.9.0
 [0.8.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.8.0

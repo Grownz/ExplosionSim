@@ -6,7 +6,7 @@
 
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "0.10.0"
+    [string]$Version = "0.10.5"
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,7 +31,9 @@ New-Item -ItemType Directory -Force $stage | Out-Null
 
 Copy-Item (Join-Path $buildDir "$Configuration\ExplosionSim.exe") $stage
 Copy-Item (Join-Path $buildDir "$Configuration\ExplosionSimUpdater.exe") $stage
-Copy-Item -Recurse (Join-Path $buildDir "$Configuration\assets") $stage
+# Copy the source assets rather than the build copy so removed files (for
+# example the old splash.png) cannot linger in the archive.
+Copy-Item -Recurse (Join-Path $root "assets") $stage
 Copy-Item (Join-Path $root "README.md"), (Join-Path $root "LICENSE"),
           (Join-Path $root "CHANGELOG.md") $stage
 Copy-Item (Join-Path $root "third_party\miniz\LICENSE") (Join-Path $stage "LICENSE-miniz.txt")
