@@ -23,6 +23,8 @@ DXGI_FORMAT ToDxgiFormat(Format format) {
         return DXGI_FORMAT_R16G16B16A16_FLOAT;
     case Format::R32_FLOAT:
         return DXGI_FORMAT_R32_FLOAT;
+    case Format::R32_TYPELESS:
+        return DXGI_FORMAT_R32_TYPELESS;
     case Format::D32_FLOAT:
         return DXGI_FORMAT_D32_FLOAT;
     default:
@@ -205,6 +207,10 @@ public:
     ID3D11RenderTargetView* RTV() const { return rtv_.Get(); }
     ID3D11DepthStencilView* DSV() const { return dsv_.Get(); }
     ID3D11UnorderedAccessView* UAV() const { return uav_.Get(); }
+
+    void* NativeShaderResourceView() const override { return srv_.Get(); }
+    void* NativeRenderTargetView() const override { return rtv_.Get(); }
+    void* NativeDepthStencilView() const override { return dsv_.Get(); }
 
 private:
     ComPtr<ID3D11Texture2D> texture2D_;
@@ -713,6 +719,22 @@ std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {
         return nullptr;
     }
 
+    std::vector<D3D11_SUBRESOURCE_DATA> subresources;
+    const D3D11_SUBRESOURCE_DATA* initial = nullptr;
+    if (desc.subresources && desc.subresourceCount > 0) {
+        subresources.resize(desc.subresourceCount);
+        for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
+            subresources[i].pSysMem = desc.subresources[i].data;
+            subresources[i].SysMemPitch = desc.subresources[i].rowPitch;
+            subresources[i].SysMemSlicePitch = 0;
+        }
+        initial = subresources.data();
+    }
+    const D3D11_USAGE usage = HasUsage(desc.usage, TextureUsage::Staging)
+                                  ? D3D11_USAGE_STAGING
+                                  : (initial ? D3D11_USAGE_IMMUTABLE
+                                             : D3D11_USAGE_DEFAULT);
+
     ComPtr<ID3D11Texture2D> texture2D;
     ComPtr<ID3D11Texture3D> texture3D;
     if (desc.depth > 1) {
@@ -722,14 +744,12 @@ std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {
         textureDesc.Depth = desc.depth;
         textureDesc.MipLevels = desc.mipLevels;
         textureDesc.Format = format;
-        textureDesc.Usage = HasUsage(desc.usage, TextureUsage::Staging)
-                                ? D3D11_USAGE_STAGING
-                                : D3D11_USAGE_DEFAULT;
+        textureDesc.Usage = usage;
         textureDesc.BindFlags = ToBindFlags(desc.usage);
         textureDesc.CPUAccessFlags = HasUsage(desc.usage, TextureUsage::Staging)
                                          ? D3D11_CPU_ACCESS_READ
                                          : 0;
-        if (FAILED(device_->CreateTexture3D(&textureDesc, nullptr, &texture3D))) {
+        if (FAILED(device_->CreateTexture3D(&textureDesc, initial, &texture3D))) {
             return nullptr;
         }
     } else {
@@ -740,14 +760,12 @@ std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {
         textureDesc.ArraySize = 1;
         textureDesc.Format = format;
         textureDesc.SampleDesc.Count = 1;
-        textureDesc.Usage = HasUsage(desc.usage, TextureUsage::Staging)
-                                ? D3D11_USAGE_STAGING
-                                : D3D11_USAGE_DEFAULT;
+        textureDesc.Usage = usage;
         textureDesc.BindFlags = ToBindFlags(desc.usage);
         textureDesc.CPUAccessFlags = HasUsage(desc.usage, TextureUsage::Staging)
                                          ? D3D11_CPU_ACCESS_READ
                                          : 0;
-        if (FAILED(device_->CreateTexture2D(&textureDesc, nullptr, &texture2D))) {
+        if (FAILED(device_->CreateTexture2D(&textureDesc, initial, &texture2D))) {
             return nullptr;
         }
     }
@@ -758,17 +776,39 @@ std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {
     ComPtr<ID3D11RenderTargetView> rtv;
     ComPtr<ID3D11DepthStencilView> dsv;
     ComPtr<ID3D11UnorderedAccessView> uav;
-    if (HasUsage(desc.usage, TextureUsage::Sampled) &&
-        FAILED(device_->CreateShaderResourceView(resource, nullptr, &srv))) {
-        return nullptr;
+    if (HasUsage(desc.usage, TextureUsage::Sampled)) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        const D3D11_SHADER_RESOURCE_VIEW_DESC* srvDescPtr = nullptr;
+        if (desc.format == Format::R32_TYPELESS) {
+            srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+            if (desc.depth > 1) {
+                srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
+                srvDesc.Texture3D.MipLevels = desc.mipLevels;
+            } else {
+                srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+                srvDesc.Texture2D.MipLevels = desc.mipLevels;
+            }
+            srvDescPtr = &srvDesc;
+        }
+        if (FAILED(device_->CreateShaderResourceView(resource, srvDescPtr, &srv))) {
+            return nullptr;
+        }
     }
     if (HasUsage(desc.usage, TextureUsage::RenderTarget) &&
         FAILED(device_->CreateRenderTargetView(resource, nullptr, &rtv))) {
         return nullptr;
     }
-    if (HasUsage(desc.usage, TextureUsage::DepthStencil) &&
-        FAILED(device_->CreateDepthStencilView(resource, nullptr, &dsv))) {
-        return nullptr;
+    if (HasUsage(desc.usage, TextureUsage::DepthStencil)) {
+        D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+        const D3D11_DEPTH_STENCIL_VIEW_DESC* dsvDescPtr = nullptr;
+        if (desc.format == Format::R32_TYPELESS) {
+            dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+            dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+            dsvDescPtr = &dsvDesc;
+        }
+        if (FAILED(device_->CreateDepthStencilView(resource, dsvDescPtr, &dsv))) {
+            return nullptr;
+        }
     }
     if (HasUsage(desc.usage, TextureUsage::Storage) &&
         FAILED(device_->CreateUnorderedAccessView(resource, nullptr, &uav))) {

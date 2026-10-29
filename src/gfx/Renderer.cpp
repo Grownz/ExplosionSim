@@ -147,7 +147,7 @@ bool Renderer::Initialize(GfxDevice& device) {
                             device_->DedicatedVideoMemory())) {
         LogWarn("High-fidelity GPU solver unavailable.");
     }
-    if (!sceneRenderer_.Initialize(device_->Device(), device_->Rhi())) {
+    if (!sceneRenderer_.Initialize(device_->Rhi())) {
         LogWarn("Procedural scene renderer unavailable.");
     }
     return true;

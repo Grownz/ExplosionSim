@@ -23,7 +23,7 @@ public:
         DirectX::XMFLOAT3 color;
     };
 
-    bool Initialize(ID3D11Device* device, rhi::Device* rhiDevice);
+    bool Initialize(rhi::Device* rhiDevice);
     void Shutdown();
 
     // Camera data used for culling and level of detail.
@@ -63,10 +63,16 @@ public:
                      ID3D11SamplerState* surfaceSampler);
 
     ID3D11ShaderResourceView* ShadowSRV(int cascade) const {
-        return shadowSRV_[cascade].Get();
+        return shadowTexture_[cascade]
+                   ? static_cast<ID3D11ShaderResourceView*>(
+                         shadowTexture_[cascade]->NativeShaderResourceView())
+                   : nullptr;
     }
     ID3D11ShaderResourceView* StaticShadowSRV() const {
-        return staticShadowSRV_.Get();
+        return staticShadowTexture_
+                   ? static_cast<ID3D11ShaderResourceView*>(
+                         staticShadowTexture_->NativeShaderResourceView())
+                   : nullptr;
     }
     ID3D11SamplerState* ShadowSampler() const {
         return shadowSampler_
@@ -75,8 +81,8 @@ public:
     }
 
 private:
-    bool CreateShadowResources(ID3D11Device* device);
-    bool CreateSurfaceDetailTexture(ID3D11Device* device);
+    bool CreateShadowResources();
+    bool CreateSurfaceDetailTexture();
     struct Instance {
         DirectX::XMFLOAT4X4 transform;
         DirectX::XMFLOAT4 color;
@@ -142,20 +148,15 @@ private:
     std::unique_ptr<rhi::Pipeline> chunkShadowPipeline_;
     std::unique_ptr<rhi::Pipeline> scenePipeline_;
     std::unique_ptr<rhi::Pipeline> chunkPipeline_;
-    ComPtr<ID3D11Texture2D> shadowTexture_[kShadowCascades];
-    ComPtr<ID3D11DepthStencilView> shadowDSV_[kShadowCascades];
-    ComPtr<ID3D11ShaderResourceView> shadowSRV_[kShadowCascades];
+    std::unique_ptr<rhi::Texture> shadowTexture_[kShadowCascades];
     std::unique_ptr<rhi::Buffer> shadowCascadeBuffer_;
     std::unique_ptr<rhi::Sampler> shadowSampler_;
     // Tiling high-frequency grain sampled with the selected anisotropic filter.
-    ComPtr<ID3D11Texture2D> surfaceDetailTexture_;
-    ComPtr<ID3D11ShaderResourceView> surfaceDetailSRV_;
+    std::unique_ptr<rhi::Texture> surfaceDetailTexture_;
     std::vector<Mesh> meshes_;
 
     // Cached static-caster shadow map (intact buildings, world space).
-    ComPtr<ID3D11Texture2D> staticShadowTexture_;
-    ComPtr<ID3D11DepthStencilView> staticShadowDSV_;
-    ComPtr<ID3D11ShaderResourceView> staticShadowSRV_;
+    std::unique_ptr<rhi::Texture> staticShadowTexture_;
     std::unique_ptr<rhi::Buffer> staticInstanceBuffer_;
     UINT staticInstanceCapacity_ = 0;
     uint64_t staticShadowKey_ = 0;
@@ -172,7 +173,6 @@ private:
     uint64_t chunkGeometryKey_ = 0;
     bool chunkGeometryValid_ = false;
 
-    ID3D11Device* device_ = nullptr;
     rhi::Device* rhiDevice_ = nullptr;
 };
 

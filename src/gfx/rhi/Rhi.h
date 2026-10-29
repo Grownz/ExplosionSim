@@ -23,6 +23,7 @@ enum class Format {
     R8G8B8A8_UNORM_SRGB,
     R16G16B16A16_FLOAT,
     R32_FLOAT,
+    R32_TYPELESS,
     D32_FLOAT,
 };
 
@@ -88,6 +89,13 @@ struct BufferDesc {
     const void* initialData = nullptr;
 };
 
+struct TextureSubresource {
+    const void* data = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t rowPitch = 0;
+};
+
 struct TextureDesc {
     Format format = Format::Unknown;
     uint32_t width = 1;
@@ -96,6 +104,10 @@ struct TextureDesc {
     uint32_t mipLevels = 1;
     TextureUsage usage = TextureUsage::Sampled;
     const void* initialData = nullptr;
+    // Optional CPU-side mip chain; when present the texture is created with
+    // these subresources and treated as immutable.
+    const TextureSubresource* subresources = nullptr;
+    uint32_t subresourceCount = 0;
 };
 
 struct ShaderDesc {
@@ -134,6 +146,11 @@ public:
     virtual uint32_t Depth() const = 0;
     virtual Format GetFormat() const = 0;
     virtual void* NativeHandle() const = 0;
+    // Views created for the usages requested in TextureDesc; nullptr when the
+    // usage was not requested. Temporary bridge until binding lives in the RHI.
+    virtual void* NativeShaderResourceView() const = 0;
+    virtual void* NativeRenderTargetView() const = 0;
+    virtual void* NativeDepthStencilView() const = 0;
 };
 
 class Shader {

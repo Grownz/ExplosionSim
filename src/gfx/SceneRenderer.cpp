@@ -247,11 +247,10 @@ void AddCone(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
 
 } // namespace
 
-bool SceneRenderer::Initialize(ID3D11Device* device, rhi::Device* rhiDevice) {
-    if (!device || !rhiDevice) {
+bool SceneRenderer::Initialize(rhi::Device* rhiDevice) {
+    if (!rhiDevice) {
         return false;
     }
-    device_ = device;
     rhiDevice_ = rhiDevice;
 
     const std::wstring path = ResolveAssetPath(L"assets\\shaders\\scene.hlsl");
@@ -335,18 +334,18 @@ bool SceneRenderer::Initialize(ID3D11Device* device, rhi::Device* rhiDevice) {
     }
 
     BuildMeshes();
-    if (!CreateShadowResources(device)) {
+    if (!CreateShadowResources()) {
         LogError("Scene shadow resources could not be created.");
         return false;
     }
-    if (!CreateSurfaceDetailTexture(device)) {
+    if (!CreateSurfaceDetailTexture()) {
         LogError("Scene surface detail texture could not be created.");
         return false;
     }
     return true;
 }
 
-bool SceneRenderer::CreateSurfaceDetailTexture(ID3D11Device* device) {
+bool SceneRenderer::CreateSurfaceDetailTexture() {
     constexpr int kSize = 256;
 
     auto hash = [](int x, int y, int seed) {
@@ -440,99 +439,52 @@ bool SceneRenderer::CreateSurfaceDetailTexture(ID3D11Device* device) {
         width = nextWidth;
     }
 
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = kSize;
-    desc.Height = kSize;
-    desc.MipLevels = UINT(levels.size());
-    desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_IMMUTABLE;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    std::vector<D3D11_SUBRESOURCE_DATA> subresources(levels.size());
+    rhi::TextureDesc desc{};
+    desc.format = rhi::Format::R8G8B8A8_UNORM;
+    desc.width = kSize;
+    desc.height = kSize;
+    desc.mipLevels = uint32_t(levels.size());
+    desc.usage = rhi::TextureUsage::Sampled;
+    std::vector<rhi::TextureSubresource> subresources(levels.size());
     int levelWidth = kSize;
     for (size_t level = 0; level < levels.size(); ++level) {
-        subresources[level].pSysMem = levels[level].data();
-        subresources[level].SysMemPitch = UINT(levelWidth * 4);
-        subresources[level].SysMemSlicePitch = 0;
+        subresources[level].data = levels[level].data();
+        subresources[level].width = uint32_t(levelWidth);
+        subresources[level].height = uint32_t(levelWidth);
+        subresources[level].rowPitch = uint32_t(levelWidth * 4);
         levelWidth = std::max(1, levelWidth / 2);
     }
-    if (FAILED(device->CreateTexture2D(&desc, subresources.data(),
-                                       &surfaceDetailTexture_))) {
-        return false;
-    }
-    return SUCCEEDED(device->CreateShaderResourceView(
-        surfaceDetailTexture_.Get(), nullptr, &surfaceDetailSRV_));
+    desc.subresources = subresources.data();
+    desc.subresourceCount = uint32_t(subresources.size());
+    surfaceDetailTexture_ = rhiDevice_->CreateTexture(desc);
+    return surfaceDetailTexture_ != nullptr;
 }
 
-bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
+bool SceneRenderer::CreateShadowResources() {
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
         const int size = ShadowSize(cascade);
-        D3D11_TEXTURE2D_DESC textureDesc{};
-        textureDesc.Width = UINT(size);
-        textureDesc.Height = UINT(size);
-        textureDesc.MipLevels = 1;
-        textureDesc.ArraySize = 1;
-        textureDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-        textureDesc.SampleDesc.Count = 1;
-        textureDesc.Usage = D3D11_USAGE_DEFAULT;
-        textureDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-        if (FAILED(device->CreateTexture2D(&textureDesc, nullptr,
-                                           &shadowTexture_[cascade]))) {
-            return false;
-        }
-
-        D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
-        dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
-        dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-        if (FAILED(device->CreateDepthStencilView(shadowTexture_[cascade].Get(),
-                                                  &dsvDesc, &shadowDSV_[cascade]))) {
-            return false;
-        }
-
-        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-        srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-        srvDesc.Texture2D.MipLevels = 1;
-        if (FAILED(device->CreateShaderResourceView(shadowTexture_[cascade].Get(),
-                                                    &srvDesc, &shadowSRV_[cascade]))) {
+        rhi::TextureDesc textureDesc{};
+        textureDesc.format = rhi::Format::R32_TYPELESS;
+        textureDesc.width = uint32_t(size);
+        textureDesc.height = uint32_t(size);
+        textureDesc.usage =
+            rhi::TextureUsage::DepthStencil | rhi::TextureUsage::Sampled;
+        shadowTexture_[cascade] = rhiDevice_->CreateTexture(textureDesc);
+        if (!shadowTexture_[cascade]) {
             return false;
         }
     }
 
     // Cached static-caster map: world space, independent of the camera.
     {
-        D3D11_TEXTURE2D_DESC textureDesc{};
-        textureDesc.Width = UINT(kStaticShadowSize);
-        textureDesc.Height = UINT(kStaticShadowSize);
-        textureDesc.MipLevels = 1;
-        textureDesc.ArraySize = 1;
-        textureDesc.Format = DXGI_FORMAT_R32_TYPELESS;
-        textureDesc.SampleDesc.Count = 1;
-        textureDesc.Usage = D3D11_USAGE_DEFAULT;
-        textureDesc.BindFlags =
-            D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
-        if (FAILED(device->CreateTexture2D(&textureDesc, nullptr,
-                                           &staticShadowTexture_))) {
-            return false;
-        }
-
-        D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
-        dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
-        dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
-        if (FAILED(device->CreateDepthStencilView(staticShadowTexture_.Get(),
-                                                  &dsvDesc,
-                                                  &staticShadowDSV_))) {
-            return false;
-        }
-
-        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-        srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-        srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-        srvDesc.Texture2D.MipLevels = 1;
-        if (FAILED(device->CreateShaderResourceView(staticShadowTexture_.Get(),
-                                                    &srvDesc,
-                                                    &staticShadowSRV_))) {
+        rhi::TextureDesc textureDesc{};
+        textureDesc.format = rhi::Format::R32_TYPELESS;
+        textureDesc.width = uint32_t(kStaticShadowSize);
+        textureDesc.height = uint32_t(kStaticShadowSize);
+        textureDesc.usage =
+            rhi::TextureUsage::DepthStencil | rhi::TextureUsage::Sampled;
+        staticShadowTexture_ = rhiDevice_->CreateTexture(textureDesc);
+        if (!staticShadowTexture_) {
             return false;
         }
     }
@@ -560,17 +512,12 @@ bool SceneRenderer::CreateShadowResources(ID3D11Device* device) {
 void SceneRenderer::Shutdown() {
     shadowCascadeBuffer_.reset();
     shadowSampler_.reset();
-    surfaceDetailSRV_.Reset();
-    surfaceDetailTexture_.Reset();
+    surfaceDetailTexture_.reset();
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
-        shadowSRV_[cascade].Reset();
-        shadowDSV_[cascade].Reset();
-        shadowTexture_[cascade].Reset();
+        shadowTexture_[cascade].reset();
     }
     staticInstanceBuffer_.reset();
-    staticShadowSRV_.Reset();
-    staticShadowDSV_.Reset();
-    staticShadowTexture_.Reset();
+    staticShadowTexture_.reset();
     staticInstanceCapacity_ = 0;
     staticShadowKey_ = 0;
     staticShadowValid_ = false;
@@ -588,7 +535,6 @@ void SceneRenderer::Shutdown() {
     scenePipeline_.reset();
     chunkShadowPipeline_.reset();
     sceneShadowPipeline_.reset();
-    device_ = nullptr;
     rhiDevice_ = nullptr;
 }
 
@@ -646,7 +592,7 @@ bool SceneRenderer::EnsureInstanceCapacity(Mesh& mesh, UINT capacity) {
 
 bool SceneRenderer::LoadVehicleMesh(const wchar_t* asset, Mesh& mesh) {
     static_assert(sizeof(Vertex) == 36, "ESV vertex layout");
-    if (!device_ || !asset) {
+    if (!rhiDevice_ || !asset) {
         return false;
     }
 
@@ -785,7 +731,7 @@ void SceneRenderer::BuildMeshes() {
 }
 
 bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
-    if (!device_) {
+    if (!rhiDevice_) {
         return false;
     }
     const bool enabled = scene.Settings().voronoiChunks;
@@ -1003,7 +949,8 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
                                        const scene::Scene& scene,
                                        const XMFLOAT4X4& lightViewProj,
                                        uint64_t key) {
-    if (!device_ || !context || !staticShadowDSV_) {
+    if (!rhiDevice_ || !context || !staticShadowTexture_ ||
+        !staticShadowTexture_->NativeDepthStencilView()) {
         return;
     }
     if (staticShadowValid_ && key == staticShadowKey_) {
@@ -1014,8 +961,10 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
 
     // Always clear: a disabled or regenerated scene must not keep stale
     // building shadows.
-    context->ClearDepthStencilView(staticShadowDSV_.Get(), D3D11_CLEAR_DEPTH,
-                                   1.0f, 0);
+    context->ClearDepthStencilView(
+        static_cast<ID3D11DepthStencilView*>(
+            staticShadowTexture_->NativeDepthStencilView()),
+        D3D11_CLEAR_DEPTH, 1.0f, 0);
     if (!scene.Settings().enabled || scene.Empty()) {
         return;
     }
@@ -1049,7 +998,10 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
     D3D11_VIEWPORT viewport{0.0f, 0.0f, float(kStaticShadowSize),
                             float(kStaticShadowSize), 0.0f, 1.0f};
     context->RSSetViewports(1, &viewport);
-    context->OMSetRenderTargets(0, nullptr, staticShadowDSV_.Get());
+    context->OMSetRenderTargets(
+        0, nullptr,
+        static_cast<ID3D11DepthStencilView*>(
+            staticShadowTexture_->NativeDepthStencilView()));
     rhiDevice_->BindPipeline(sceneShadowPipeline_.get());
 
     void* cascadeMapped = shadowCascadeBuffer_->Map();
@@ -1086,13 +1038,19 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
                                  const scene::Scene& scene, const ViewInfo& view,
                                  const XMFLOAT4X4* lightViewProj,
                                  const XMFLOAT3& burstCenter) {
-    if (!device_ || !context) {
+    if (!rhiDevice_ || !context) {
         return;
     }
     // Always clear so the ground samples a fully lit map when the scene is off.
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
-        context->ClearDepthStencilView(shadowDSV_[cascade].Get(), D3D11_CLEAR_DEPTH,
-                                       1.0f, 0);
+        if (!shadowTexture_[cascade] ||
+            !shadowTexture_[cascade]->NativeDepthStencilView()) {
+            continue;
+        }
+        context->ClearDepthStencilView(
+            static_cast<ID3D11DepthStencilView*>(
+                shadowTexture_[cascade]->NativeDepthStencilView()),
+            D3D11_CLEAR_DEPTH, 1.0f, 0);
     }
     if (!scene.Settings().enabled || scene.Empty()) {
         return;
@@ -1323,7 +1281,10 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
     rhiDevice_->BindPipeline(sceneShadowPipeline_.get());
 
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
-        context->OMSetRenderTargets(0, nullptr, shadowDSV_[cascade].Get());
+        context->OMSetRenderTargets(
+            0, nullptr,
+            static_cast<ID3D11DepthStencilView*>(
+                shadowTexture_[cascade]->NativeDepthStencilView()));
         const float size = float(ShadowSize(cascade));
         D3D11_VIEWPORT shadowViewport{0.0f, 0.0f, size, size, 0.0f, 1.0f};
         context->RSSetViewports(1, &shadowViewport);
@@ -1373,7 +1334,7 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
                                 ID3D11RenderTargetView* hdrRTV,
                                 ID3D11DepthStencilView* depthDSV, int width,
                                 int height, ID3D11SamplerState* surfaceSampler) {
-    if (!device_ || !context || !hdrRTV || !depthDSV) {
+    if (!rhiDevice_ || !context || !hdrRTV || !depthDSV) {
         return;
     }
     if (!scene.Settings().enabled || scene.Empty()) {
@@ -1387,8 +1348,7 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
     context->RSSetViewports(1, &viewport);
 
     ID3D11ShaderResourceView* shadowViews[4] = {
-        shadowSRV_[0].Get(), shadowSRV_[1].Get(), shadowSRV_[2].Get(),
-        staticShadowSRV_.Get()};
+        ShadowSRV(0), ShadowSRV(1), ShadowSRV(2), StaticShadowSRV()};
     context->PSSetShaderResources(2, 4, shadowViews);
     ID3D11SamplerState* shadowSampler =
         static_cast<ID3D11SamplerState*>(shadowSampler_->NativeHandle());
@@ -1396,7 +1356,11 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
 
     // Tiling grain for the procedural materials. The sampler is chosen by the
     // anisotropic-filtering setting, so objects benefit from it as well.
-    ID3D11ShaderResourceView* surfaceDetail = surfaceDetailSRV_.Get();
+    ID3D11ShaderResourceView* surfaceDetail =
+        surfaceDetailTexture_
+            ? static_cast<ID3D11ShaderResourceView*>(
+                  surfaceDetailTexture_->NativeShaderResourceView())
+            : nullptr;
     context->PSSetShaderResources(6, 1, &surfaceDetail);
     ID3D11SamplerState* detailSampler = surfaceSampler;
     context->PSSetSamplers(3, 1, &detailSampler);

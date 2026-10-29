@@ -2,11 +2,11 @@
 
 Status: **M1 in progress.** The backend-neutral RHI interfaces and the D3D11
 backend exist; `GfxDevice` and the swapchain run through the RHI. `SceneRenderer`
-creates its mesh, chunk, instance and shadow-cascade buffers through `rhi::Buffer`
-and its shaders, input layouts, fixed-function states and shadow sampler through
-`rhi::Pipeline`/`rhi::Sampler`. Shadow and surface-detail textures, resource
-binding and the other render passes still use the temporary D3D11 bridge. Linux
-and Vulkan are not implemented yet.
+creates its meshes, instance/chunk/shadow buffers, shadow and surface-detail
+textures, shaders, input layouts, fixed-function states and samplers through the
+RHI. The pass code still binds resources through the temporary D3D11 context
+bridge, and the other render passes plus the compute path are not ported yet.
+Linux and Vulkan are not implemented yet.
 
 ## 1. Goal
 
