@@ -533,3 +533,11 @@ The volume field is produced in `VolumeBaker::BakeRange`, which fills the RGBA t
 directly. Replacing the analytic field with a numerical solver (for example an
 axisymmetric compressible Euler solver) only requires writing density, temperature and
 dust into the same buffer; the renderer and the rest of the application stay unchanged.
+
+## Platform port
+
+The native Linux port and the multi-platform render-hardware-interface (RHI) plan are
+described in [linux-port.md](linux-port.md). It covers the D3D11-to-Vulkan backend
+split, the SDL3 platform layer, the HLSL-to-SPIR-V pipeline, milestones, acceptance
+criteria and effort estimates. The current build remains Windows x64 only until the
+RHI migration lands.
