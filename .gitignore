@@ -21,10 +21,14 @@ CMakeUserPresets.json
 /screenshots/
 *.png
 !docs/screenshots/*.png
-!assets/splash.png
+!assets/**/*.png
 *.log
 settings.ini
 imgui.ini
+test_settings_roundtrip.ini
+
+# Source media kept outside the build tree
+/*.mp4
 
 # OS
 Thumbs.db
