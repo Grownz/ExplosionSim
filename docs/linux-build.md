@@ -105,6 +105,15 @@ charge, burst height, volume resolution and the main render settings can be
 overridden from the command line for capture comparisons. Voronoi chunk
 geometry and loading the Windows `settings.ini` are the remaining parity gaps.
 
+For a capture comparison, render the same settings on both platforms and run:
+
+```sh
+python3 tools/compare_png.py windows.png linux.png --tolerance 20
+```
+
+The current reference capture is at about 13/255 mean absolute RGB difference;
+the tool also reports the fraction of pixels above a 32/255 threshold.
+
 ## Vulkan smoke test
 
 ```sh
