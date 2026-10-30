@@ -105,16 +105,28 @@ public:
 
 private:
     struct Target {
-        ComPtr<ID3D11Texture2D> texture;
-        ComPtr<ID3D11RenderTargetView> rtv;
-        ComPtr<ID3D11ShaderResourceView> srv;
+        std::unique_ptr<rhi::Texture> texture;
         int width = 0;
         int height = 0;
 
+        ID3D11Texture2D* NativeTexture() const {
+            return texture
+                       ? static_cast<ID3D11Texture2D*>(texture->NativeHandle())
+                       : nullptr;
+        }
+        ID3D11RenderTargetView* RTV() const {
+            return texture ? static_cast<ID3D11RenderTargetView*>(
+                                 texture->NativeRenderTargetView())
+                           : nullptr;
+        }
+        ID3D11ShaderResourceView* SRV() const {
+            return texture ? static_cast<ID3D11ShaderResourceView*>(
+                                 texture->NativeShaderResourceView())
+                           : nullptr;
+        }
+
         void Reset() {
-            srv.Reset();
-            rtv.Reset();
-            texture.Reset();
+            texture.reset();
             width = 0;
             height = 0;
         }
@@ -301,6 +313,9 @@ private:
     ComPtr<ID3D11SamplerState> linearWrap_;
     ComPtr<ID3D11SamplerState> anisoClamp_[3]; // 2x, 4x, 8x
     ComPtr<ID3D11SamplerState> anisoWrap_[3];  // 2x, 4x, 8x
+    // RHI samplers for the migrated scene pass.
+    std::unique_ptr<rhi::Sampler> surfaceSamplerLinear_;
+    std::unique_ptr<rhi::Sampler> surfaceSamplerAniso_[3];
     ComPtr<ID3D11SamplerState> noiseSampler_;
     ComPtr<ID3D11Texture3D> noiseTexture_;
     ComPtr<ID3D11ShaderResourceView> noiseSRV_;

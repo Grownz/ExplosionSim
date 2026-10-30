@@ -298,6 +298,187 @@ private:
     D3D11_PRIMITIVE_TOPOLOGY topology_ = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 };
 
+// D3D11 has no deferred command lists; this wrapper drives the immediate
+// context and is the backend-neutral seam the renderer passes target.
+class CommandListImpl final : public rhi::CommandList {
+public:
+    CommandListImpl(rhi::Device* device, ID3D11DeviceContext* context)
+        : device_(device), context_(context) {}
+
+    void Begin() override {}
+    void End() override {}
+
+    void BeginRenderPass(rhi::Texture* color, rhi::Texture* depth,
+                         bool clearColor, bool clearDepth,
+                         const float clearColorValue[4]) override {
+        if (!context_) {
+            return;
+        }
+        ID3D11RenderTargetView* rtv =
+            color ? static_cast<ID3D11RenderTargetView*>(
+                        color->NativeRenderTargetView())
+                  : nullptr;
+        ID3D11DepthStencilView* dsv =
+            depth ? static_cast<ID3D11DepthStencilView*>(
+                        depth->NativeDepthStencilView())
+                  : nullptr;
+        context_->OMSetRenderTargets(rtv ? 1 : 0, rtv ? &rtv : nullptr, dsv);
+        if (clearColor && rtv && clearColorValue) {
+            context_->ClearRenderTargetView(rtv, clearColorValue);
+        }
+        if (clearDepth && dsv) {
+            context_->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, 1.0f, 0);
+        }
+        if (color) {
+            SetViewport(color->Width(), color->Height());
+        } else if (depth) {
+            SetViewport(depth->Width(), depth->Height());
+        }
+    }
+
+    void EndRenderPass() override {}
+    void SetViewport(uint32_t width, uint32_t height) override {
+        if (!context_ || width == 0 || height == 0) {
+            return;
+        }
+        D3D11_VIEWPORT viewport{0.0f, 0.0f, float(width), float(height),
+                                0.0f, 1.0f};
+        context_->RSSetViewports(1, &viewport);
+    }
+
+    void ClearDepth(rhi::Texture* depth, float value) override {
+        if (!context_ || !depth) {
+            return;
+        }
+        if (auto* dsv = static_cast<ID3D11DepthStencilView*>(
+                depth->NativeDepthStencilView())) {
+            context_->ClearDepthStencilView(dsv, D3D11_CLEAR_DEPTH, value, 0);
+        }
+    }
+
+    void BindPipeline(rhi::Pipeline* pipeline) override {
+        if (device_) {
+            device_->BindPipeline(pipeline);
+        }
+    }
+    void BindDescriptorSet(rhi::DescriptorSet*, uint32_t) override {}
+    void BindVertexBuffer(rhi::Buffer* buffer, uint32_t stride,
+                          uint64_t offset) override {
+        if (device_) {
+            device_->BindVertexBuffer(buffer, stride, offset);
+        }
+    }
+    void BindIndexBuffer(rhi::Buffer* buffer, uint64_t offset) override {
+        if (device_) {
+            device_->BindIndexBuffer(buffer, offset);
+        }
+    }
+
+    void BindConstantBuffer(rhi::Buffer* buffer, rhi::ShaderStage stage,
+                            uint32_t slot) override {
+        if (!context_ || !buffer) {
+            return;
+        }
+        ID3D11Buffer* native =
+            static_cast<ID3D11Buffer*>(buffer->NativeHandle());
+        switch (stage) {
+        case rhi::ShaderStage::Vertex:
+            context_->VSSetConstantBuffers(slot, 1, &native);
+            break;
+        case rhi::ShaderStage::Pixel:
+            context_->PSSetConstantBuffers(slot, 1, &native);
+            break;
+        case rhi::ShaderStage::Compute:
+            context_->CSSetConstantBuffers(slot, 1, &native);
+            break;
+        }
+    }
+
+    void BindShaderResource(rhi::Buffer* buffer, rhi::ShaderStage stage,
+                            uint32_t slot) override {
+        if (!context_ || !buffer) {
+            return;
+        }
+        ID3D11ShaderResourceView* srv =
+            static_cast<ID3D11ShaderResourceView*>(
+                buffer->NativeShaderResourceView());
+        BindSrv(srv, stage, slot);
+    }
+
+    void BindShaderResource(rhi::Texture* texture, rhi::ShaderStage stage,
+                            uint32_t slot) override {
+        if (!context_ || !texture) {
+            return;
+        }
+        ID3D11ShaderResourceView* srv =
+            static_cast<ID3D11ShaderResourceView*>(
+                texture->NativeShaderResourceView());
+        BindSrv(srv, stage, slot);
+    }
+
+    void BindSampler(rhi::Sampler* sampler, rhi::ShaderStage stage,
+                     uint32_t slot) override {
+        if (!context_ || !sampler) {
+            return;
+        }
+        ID3D11SamplerState* native =
+            static_cast<ID3D11SamplerState*>(sampler->NativeHandle());
+        switch (stage) {
+        case rhi::ShaderStage::Vertex:
+            context_->VSSetSamplers(slot, 1, &native);
+            break;
+        case rhi::ShaderStage::Pixel:
+            context_->PSSetSamplers(slot, 1, &native);
+            break;
+        case rhi::ShaderStage::Compute:
+            context_->CSSetSamplers(slot, 1, &native);
+            break;
+        }
+    }
+
+    void Draw(uint32_t vertexCount, uint32_t firstVertex) override {
+        if (device_) {
+            device_->Draw(vertexCount, firstVertex);
+        }
+    }
+    void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
+                       uint32_t firstVertex, uint32_t firstInstance) override {
+        if (device_) {
+            device_->DrawInstanced(vertexCount, instanceCount, firstVertex,
+                                   firstInstance);
+        }
+    }
+    void DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,
+                              uint32_t firstIndex, int32_t baseVertex,
+                              uint32_t firstInstance) override {
+        if (device_) {
+            device_->DrawIndexedInstanced(indexCount, instanceCount, firstIndex,
+                                          baseVertex, firstInstance);
+        }
+    }
+
+    void* NativeHandle() const override { return context_; }
+
+private:
+    void BindSrv(ID3D11ShaderResourceView* srv, rhi::ShaderStage stage,
+                 uint32_t slot) {
+        switch (stage) {
+        case rhi::ShaderStage::Vertex:
+            context_->VSSetShaderResources(slot, 1, &srv);
+            break;
+        case rhi::ShaderStage::Pixel:
+            context_->PSSetShaderResources(slot, 1, &srv);
+            break;
+        case rhi::ShaderStage::Compute:
+            context_->CSSetShaderResources(slot, 1, &srv);
+            break;
+        }
+    }
+
+    rhi::Device* device_ = nullptr;
+    ID3D11DeviceContext* context_ = nullptr;
+};
+
 } // namespace
 } // namespace ex::rhi::d3d11
 
@@ -567,6 +748,19 @@ bool Device::CreateSizeDependentResources() {
         return false;
     }
 
+    {
+        TextureDesc targetDesc{};
+        targetDesc.format = Format::D32_FLOAT;
+        targetDesc.width = uint32_t(width_);
+        targetDesc.height = uint32_t(height_);
+        targetDesc.usage =
+            TextureUsage::DepthStencil | TextureUsage::Sampled;
+        depthTarget_ = std::make_unique<TextureImpl>(
+            depthTexture_, ComPtr<ID3D11Texture3D>(), depthSRV_,
+            ComPtr<ID3D11RenderTargetView>(), dsv_,
+            ComPtr<ID3D11UnorderedAccessView>(), targetDesc);
+    }
+
     if (swapchain_) {
         finalRTV_ = backbufferRTV_;
     }
@@ -582,6 +776,7 @@ void Device::ReleaseSizeDependentResources() {
     finalTexture_.Reset();
     backbufferRTV_.Reset();
     backbuffer_.Reset();
+    depthTarget_.reset();
     depthSRV_.Reset();
     dsv_.Reset();
     depthTexture_.Reset();
@@ -659,6 +854,13 @@ void Device::WaitIdle() {
 
 void* Device::NativeHandle() const {
     return device_.Get();
+}
+
+std::unique_ptr<rhi::CommandList> Device::CreateCommandList() {
+    if (!context_) {
+        return nullptr;
+    }
+    return std::make_unique<CommandListImpl>(this, context_.Get());
 }
 
 std::unique_ptr<rhi::Buffer> Device::CreateBuffer(const BufferDesc& desc) {
@@ -862,9 +1064,15 @@ std::unique_ptr<rhi::Sampler> Device::CreateSampler(const SamplerDesc& desc) {
     } else {
         samplerDesc.Filter = desc.linear ? D3D11_FILTER_MIN_MAG_MIP_LINEAR
                                          : D3D11_FILTER_MIN_MAG_MIP_POINT;
+        if (desc.maxAnisotropy > 1) {
+            samplerDesc.Filter = D3D11_FILTER_ANISOTROPIC;
+            samplerDesc.MaxAnisotropy = desc.maxAnisotropy;
+        }
     }
     const D3D11_TEXTURE_ADDRESS_MODE address =
-        desc.clamp ? D3D11_TEXTURE_ADDRESS_CLAMP : D3D11_TEXTURE_ADDRESS_BORDER;
+        desc.wrap ? D3D11_TEXTURE_ADDRESS_WRAP
+                  : (desc.clamp ? D3D11_TEXTURE_ADDRESS_CLAMP
+                                : D3D11_TEXTURE_ADDRESS_BORDER);
     samplerDesc.AddressU = address;
     samplerDesc.AddressV = address;
     samplerDesc.AddressW = address;

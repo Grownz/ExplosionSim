@@ -212,6 +212,24 @@ bool Renderer::CreateStates() {
         }
     }
 
+    {
+        rhi::SamplerDesc surfaceDesc{};
+        surfaceDesc.linear = true;
+        surfaceDesc.clamp = false;
+        surfaceDesc.wrap = true;
+        surfaceSamplerLinear_ = device_->Rhi()->CreateSampler(surfaceDesc);
+        if (!surfaceSamplerLinear_) {
+            return false;
+        }
+        for (int i = 0; i < 3; ++i) {
+            surfaceDesc.maxAnisotropy = anisoLevels[i];
+            surfaceSamplerAniso_[i] = device_->Rhi()->CreateSampler(surfaceDesc);
+            if (!surfaceSamplerAniso_[i]) {
+                return false;
+            }
+        }
+    }
+
     auto createBlend = [this](D3D11_BLEND source, D3D11_BLEND destination,
                               ComPtr<ID3D11BlendState>& state) {
         D3D11_BLEND_DESC desc{};
@@ -476,19 +494,14 @@ bool Renderer::CreateTarget(Target& target, int width, int height) {
     width = std::max(1, width);
     height = std::max(1, height);
 
-    D3D11_TEXTURE2D_DESC desc{};
-    desc.Width = UINT(width);
-    desc.Height = UINT(height);
-    desc.MipLevels = 1;
-    desc.ArraySize = 1;
-    desc.Format = kHdrFormat;
-    desc.SampleDesc.Count = 1;
-    desc.Usage = D3D11_USAGE_DEFAULT;
-    desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    rhi::TextureDesc desc{};
+    desc.format = rhi::Format::R16G16B16A16_FLOAT;
+    desc.width = uint32_t(width);
+    desc.height = uint32_t(height);
+    desc.usage = rhi::TextureUsage::RenderTarget | rhi::TextureUsage::Sampled;
 
-    if (FAILED(device_->Device()->CreateTexture2D(&desc, nullptr, &target.texture)) ||
-        FAILED(device_->Device()->CreateRenderTargetView(target.texture.Get(), nullptr, &target.rtv)) ||
-        FAILED(device_->Device()->CreateShaderResourceView(target.texture.Get(), nullptr, &target.srv))) {
+    target.texture = device_->Rhi()->CreateTexture(desc);
+    if (!target.texture) {
         LogError("Failed to create render target %dx%d.", width, height);
         target.Reset();
         return false;
@@ -1160,8 +1173,8 @@ void Renderer::ResetBloom() {
     ID3D11DeviceContext* context = device_->Context();
     const float clear[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     for (Target& target : bloom_) {
-        if (target.rtv) {
-            context->ClearRenderTargetView(target.rtv.Get(), clear);
+        if (target.texture) {
+            context->ClearRenderTargetView(target.RTV(), clear);
         }
     }
 }
@@ -1169,7 +1182,7 @@ void Renderer::ResetBloom() {
 void Renderer::RenderBloom() {
     ID3D11DeviceContext* context = device_->Context();
 
-    ID3D11ShaderResourceView* source = hdr_.srv.Get();
+    ID3D11ShaderResourceView* source = hdr_.SRV();
     int sourceWidth = hdr_.width;
     int sourceHeight = hdr_.height;
 
@@ -1182,13 +1195,13 @@ void Renderer::RenderBloom() {
         UpdateBloomConstants(float(sourceWidth), float(sourceHeight), level == 0 ? 1.15f : 0.0f,
                              1.0f);
 
-        ID3D11RenderTargetView* rtv = destination.rtv.Get();
+        ID3D11RenderTargetView* rtv = destination.RTV();
         context->OMSetRenderTargets(1, &rtv, nullptr);
         SetViewport(destination.width, destination.height);
         context->PSSetShaderResources(0, 1, &source);
         context->Draw(3, 0);
 
-        source = destination.srv.Get();
+        source = destination.SRV();
         sourceWidth = destination.width;
         sourceHeight = destination.height;
     }
@@ -1201,11 +1214,11 @@ void Renderer::RenderBloom() {
         Target& origin = bloom_[level];
         UpdateBloomConstants(float(origin.width), float(origin.height), 0.0f, 0.85f);
 
-        ID3D11RenderTargetView* rtv = destination.rtv.Get();
+        ID3D11RenderTargetView* rtv = destination.RTV();
         context->OMSetRenderTargets(1, &rtv, nullptr);
         SetViewport(destination.width, destination.height);
 
-        ID3D11ShaderResourceView* input = origin.srv.Get();
+        ID3D11ShaderResourceView* input = origin.SRV();
         context->PSSetShaderResources(0, 1, &input);
         context->Draw(3, 0);
     }
@@ -1741,11 +1754,11 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     context->RSSetState(rasterizer_.Get());
 
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
-    context->ClearRenderTargetView(hdr_.rtv.Get(), clearColor);
+    context->ClearRenderTargetView(hdr_.RTV(), clearColor);
     context->ClearDepthStencilView(device_->DepthDSV(), D3D11_CLEAR_DEPTH, 1.0f, 0);
 
     // --- Sky ---------------------------------------------------------------
-    ID3D11RenderTargetView* hdrRTV = hdr_.rtv.Get();
+    ID3D11RenderTargetView* hdrRTV = hdr_.RTV();
     context->OMSetRenderTargets(1, &hdrRTV, nullptr);
     context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     context->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xffffffff);
@@ -1890,12 +1903,19 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     }
     staticShadowKey ^= uint64_t(collapsedBuildings) * 0xBF58476D1CE4E5B9ull;
 
-    sceneRenderer_.RenderStaticShadow(context, simulation.Scene(),
+    std::unique_ptr<rhi::CommandList> commandList =
+        device_->Rhi()->CreateCommandList();
+    if (!commandList) {
+        LogError("RHI command list creation failed.");
+        return;
+    }
+
+    sceneRenderer_.RenderStaticShadow(commandList.get(), simulation.Scene(),
                                       shadowConstants_.staticLightViewProj,
                                       staticShadowKey);
     const XMFLOAT3 burstCenter(
         0.0f, float(simulation.Blast().GetCharge().heightOfBurstM), 0.0f);
-    sceneRenderer_.RenderShadow(context, simulation.Scene(), sceneView,
+    sceneRenderer_.RenderShadow(commandList.get(), simulation.Scene(), sceneView,
                                 shadowConstants_.lightViewProj, burstCenter);
 
     // --- Ground ------------------------------------------------------------
@@ -1936,20 +1956,21 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     // --- Procedural scene ---------------------------------------------------
     if (simulation.Settings().scene.enabled && !simulation.Scene().Empty()) {
-        ID3D11SamplerState* surfaceSampler = linearWrap_.Get();
+        rhi::Sampler* surfaceSampler = surfaceSamplerLinear_.get();
         if (settings.anisotropicFiltering >= 8) {
-            surfaceSampler = anisoWrap_[2].Get();
+            surfaceSampler = surfaceSamplerAniso_[2].get();
         } else if (settings.anisotropicFiltering >= 4) {
-            surfaceSampler = anisoWrap_[1].Get();
+            surfaceSampler = surfaceSamplerAniso_[1].get();
         } else if (settings.anisotropicFiltering >= 2) {
-            surfaceSampler = anisoWrap_[0].Get();
+            surfaceSampler = surfaceSamplerAniso_[0].get();
         }
         ID3D11ShaderResourceView* smokeVolume =
             volumeView ? volumeView : volumeDummySRV_.Get();
         context->PSSetShaderResources(7, 1, &smokeVolume);
         context->PSSetSamplers(4, 1, linearClamp_.GetAddressOf());
-        sceneRenderer_.RenderScene(context, simulation.Scene(), hdrRTV,
-                                   device_->DepthDSV(), hdr_.width, hdr_.height,
+        sceneRenderer_.RenderScene(commandList.get(), simulation.Scene(),
+                                   hdr_.texture.get(),
+                                   device_->Rhi()->DepthTarget(),
                                    surfaceSampler);
         ID3D11ShaderResourceView* nullSmoke = nullptr;
         context->PSSetShaderResources(7, 1, &nullSmoke);
@@ -2101,12 +2122,12 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         // The source is still bound as a render target; unbind it before the
         // copy so the runtime does not see a read/write conflict.
         context->OMSetRenderTargets(0, nullptr, nullptr);
-        context->CopyResource(hdrCopy_.texture.Get(), hdr_.texture.Get());
+        context->CopyResource(hdrCopy_.NativeTexture(), hdr_.NativeTexture());
         context->OMSetRenderTargets(1, &hdrRTV, nullptr);
         context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
         context->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xffffffff);
         SetViewport(hdr_.width, hdr_.height);
-        ID3D11ShaderResourceView* shockInputs[2] = {hdrCopy_.srv.Get(), depthSample};
+        ID3D11ShaderResourceView* shockInputs[2] = {hdrCopy_.SRV(), depthSample};
         context->PSSetShaderResources(0, 2, shockInputs);
         context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
         context->PSSetShader(shockPS_.Get(), nullptr, 0);
@@ -2135,7 +2156,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->Unmap(bloomConstantBuffer_.Get(), 0);
     }
 
-    ID3D11ShaderResourceView* compositeInputs[2] = {hdr_.srv.Get(), bloom_[0].srv.Get()};
+    ID3D11ShaderResourceView* compositeInputs[2] = {hdr_.SRV(), bloom_[0].SRV()};
     context->PSSetShaderResources(0, 2, compositeInputs);
     context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
     context->PSSetShader(compositePS_.Get(), nullptr, 0);

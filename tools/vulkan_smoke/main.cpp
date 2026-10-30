@@ -1934,6 +1934,8 @@ int main(int argc, char** argv) {
     }
 
     std::unique_ptr<ex::rhi::Texture> targetTexture;
+    std::unique_ptr<ex::rhi::Texture> targetDepthTexture;
+    std::unique_ptr<ex::rhi::CommandList> targetCommandList;
     std::unique_ptr<ex::rhi::DescriptorSet> targetCompositeSet;
     if (options.target) {
         ex::rhi::TextureDesc targetDesc{};
@@ -1943,6 +1945,15 @@ int main(int argc, char** argv) {
         targetDesc.usage = ex::rhi::TextureUsage::RenderTarget |
                            ex::rhi::TextureUsage::Sampled;
         targetTexture = device->CreateTexture(targetDesc);
+
+        ex::rhi::TextureDesc targetDepthDesc{};
+        targetDepthDesc.format = ex::rhi::Format::D32_FLOAT;
+        targetDepthDesc.width = uint32_t(options.width);
+        targetDepthDesc.height = uint32_t(options.height);
+        targetDepthDesc.usage = ex::rhi::TextureUsage::DepthStencil |
+                                ex::rhi::TextureUsage::Sampled;
+        targetDepthTexture = device->CreateTexture(targetDepthDesc);
+        targetCommandList = device->CreateCommandList();
 
         if (compositePipeline) {
             targetCompositeSet =
@@ -1955,7 +1966,8 @@ int main(int argc, char** argv) {
             targetCompositeSet->SetBuffer(1, compositeUniformBuffer.get(), 0,
                                           compositeUniformBuffer->Size());
         }
-        if (!targetTexture || !targetCompositeSet) {
+        if (!targetTexture || !targetDepthTexture || !targetCommandList ||
+            !targetCompositeSet) {
             std::fprintf(stderr, "Vulkan render-target resources failed.\n");
             return 1;
         }
@@ -2076,13 +2088,15 @@ int main(int argc, char** argv) {
             device->Draw(3);
             device->EndFrame(true);
         } else if (options.target) {
-            device->BeginFrameTexture(targetTexture.get(), 0.05f, 0.05f, 0.1f,
-                                      1.0f);
-            device->BindPipeline(quadPipeline.get());
-            device->BindDescriptorSet(quadSet.get());
-            device->BindVertexBuffer(quadVertexBuffer.get(), 20);
-            device->Draw(6);
-            device->EndFrame(false);
+            const float clear[4] = {0.05f, 0.05f, 0.1f, 1.0f};
+            targetCommandList->BeginRenderPass(targetTexture.get(),
+                                               targetDepthTexture.get(), true,
+                                               true, clear);
+            targetCommandList->BindPipeline(quadPipeline.get());
+            targetCommandList->BindDescriptorSet(quadSet.get());
+            targetCommandList->BindVertexBuffer(quadVertexBuffer.get(), 20);
+            targetCommandList->Draw(6);
+            targetCommandList->EndRenderPass();
 
             device->BeginFrame(0.02f, 0.02f, 0.03f, 1.0f);
             device->BindPipeline(compositePipeline.get());
@@ -2223,6 +2237,8 @@ int main(int argc, char** argv) {
     bloomDownTarget.reset();
     bloomSourceTexture.reset();
     targetCompositeSet.reset();
+    targetCommandList.reset();
+    targetDepthTexture.reset();
     targetTexture.reset();
     groundSet.reset();
     groundPipeline.reset();

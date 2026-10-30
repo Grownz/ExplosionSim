@@ -591,6 +591,105 @@ bool CreateHostVisibleBuffer(VkPhysicalDevice physical, VkDevice device,
 
 } // namespace
 
+// Vulkan command list for the migrated renderer. It records into the device's
+// single in-flight command buffer; the frame lifecycle still belongs to the
+// device until the swapchain abstraction lands.
+class CommandListImpl final : public rhi::CommandList {
+public:
+    explicit CommandListImpl(Device* device) : device_(device) {}
+
+    void Begin() override {}
+    void End() override {}
+
+    void BeginRenderPass(rhi::Texture* color, rhi::Texture* depth,
+                         bool clearColor, bool clearDepth,
+                         const float clearColorValue[4]) override {
+        if (!device_ || !color || !depth) {
+            return;
+        }
+        const float r = clearColorValue ? clearColorValue[0] : 0.0f;
+        const float g = clearColorValue ? clearColorValue[1] : 0.0f;
+        const float b = clearColorValue ? clearColorValue[2] : 0.0f;
+        const float a = clearColorValue ? clearColorValue[3] : 1.0f;
+        device_->BeginFrameTexture(color, depth, clearColor || clearDepth, r, g,
+                                   b, a);
+    }
+
+    void EndRenderPass() override {
+        if (device_) {
+            device_->EndFrame(false);
+        }
+    }
+
+    void SetViewport(uint32_t width, uint32_t height) override {
+        if (!device_ || !device_->frameActive_ || width == 0 || height == 0) {
+            return;
+        }
+        VkViewport viewport{0.0f, float(height), float(width), -float(height),
+                            0.0f, 1.0f};
+        vkCmdSetViewport(device_->commandBuffer_, 0, 1, &viewport);
+        VkRect2D scissor{{0, 0}, {width, height}};
+        vkCmdSetScissor(device_->commandBuffer_, 0, 1, &scissor);
+    }
+
+    void ClearDepth(rhi::Texture*, float) override {}
+
+    void BindPipeline(rhi::Pipeline* pipeline) override {
+        if (device_) {
+            device_->BindPipeline(pipeline);
+        }
+    }
+    void BindDescriptorSet(rhi::DescriptorSet* set, uint32_t index) override {
+        if (device_) {
+            device_->BindDescriptorSet(set, index);
+        }
+    }
+    void BindVertexBuffer(rhi::Buffer* buffer, uint32_t stride,
+                          uint64_t offset) override {
+        if (device_) {
+            device_->BindVertexBuffer(buffer, stride, offset);
+        }
+    }
+    void BindIndexBuffer(rhi::Buffer* buffer, uint64_t offset) override {
+        if (device_) {
+            device_->BindIndexBuffer(buffer, offset);
+        }
+    }
+
+    void BindConstantBuffer(rhi::Buffer*, rhi::ShaderStage, uint32_t) override {}
+    void BindShaderResource(rhi::Buffer*, rhi::ShaderStage, uint32_t) override {}
+    void BindShaderResource(rhi::Texture*, rhi::ShaderStage, uint32_t) override {}
+    void BindSampler(rhi::Sampler*, rhi::ShaderStage, uint32_t) override {}
+
+    void Draw(uint32_t vertexCount, uint32_t firstVertex) override {
+        if (device_) {
+            device_->Draw(vertexCount, firstVertex);
+        }
+    }
+    void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
+                       uint32_t firstVertex, uint32_t firstInstance) override {
+        if (device_) {
+            device_->DrawInstanced(vertexCount, instanceCount, firstVertex,
+                                   firstInstance);
+        }
+    }
+    void DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,
+                              uint32_t firstIndex, int32_t baseVertex,
+                              uint32_t firstInstance) override {
+        if (device_) {
+            device_->DrawIndexedInstanced(indexCount, instanceCount, firstIndex,
+                                          baseVertex, firstInstance);
+        }
+    }
+
+    void* NativeHandle() const override {
+        return device_ ? device_->commandBuffer_ : VK_NULL_HANDLE;
+    }
+
+private:
+    Device* device_ = nullptr;
+};
+
 Device::~Device() {
     Shutdown();
 }
@@ -858,12 +957,21 @@ bool Device::CreateDevice() {
         extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     }
 
+    VkPhysicalDeviceFeatures supportedFeatures{};
+    vkGetPhysicalDeviceFeatures(physicalDevice_, &supportedFeatures);
+    samplerAnisotropy_ = supportedFeatures.samplerAnisotropy == VK_TRUE;
+
+    VkPhysicalDeviceFeatures enabledFeatures{};
+    enabledFeatures.samplerAnisotropy =
+        samplerAnisotropy_ ? VK_TRUE : VK_FALSE;
+
     VkDeviceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     info.queueCreateInfoCount = 1;
     info.pQueueCreateInfos = &queueInfo;
     info.enabledExtensionCount = uint32_t(extensions.size());
     info.ppEnabledExtensionNames = extensions.data();
+    info.pEnabledFeatures = &enabledFeatures;
 
     if (vkCreateDevice(physicalDevice_, &info, nullptr, &device_) != VK_SUCCESS) {
         LogError("Vulkan logical device creation failed.");
@@ -1702,6 +1810,10 @@ void Device::WaitIdle() {
     }
 }
 
+std::unique_ptr<rhi::CommandList> Device::CreateCommandList() {
+    return std::make_unique<CommandListImpl>(this);
+}
+
 bool Device::ExecuteImmediate(
     const std::function<void(VkCommandBuffer)>& record) {
     if (!WaitForFence() || !BeginCommandBuffer()) {
@@ -2022,8 +2134,9 @@ std::unique_ptr<Sampler> Device::CreateSampler(const SamplerDesc& desc) {
     info.minFilter = info.magFilter;
     info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
     const VkSamplerAddressMode address =
-        desc.clamp ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
-                   : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        desc.wrap ? VK_SAMPLER_ADDRESS_MODE_REPEAT
+                  : (desc.clamp ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
+                                : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER);
     info.addressModeU = address;
     info.addressModeV = address;
     info.addressModeW = address;
@@ -2033,6 +2146,10 @@ std::unique_ptr<Sampler> Device::CreateSampler(const SamplerDesc& desc) {
     info.compareEnable = desc.comparison ? VK_TRUE : VK_FALSE;
     info.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
     info.maxLod = desc.comparison ? 0.0f : VK_LOD_CLAMP_NONE;
+    if (!desc.comparison && desc.maxAnisotropy > 1 && samplerAnisotropy_) {
+        info.anisotropyEnable = VK_TRUE;
+        info.maxAnisotropy = float(desc.maxAnisotropy);
+    }
 
     VkSampler sampler = VK_NULL_HANDLE;
     if (vkCreateSampler(device_, &info, nullptr, &sampler) != VK_SUCCESS) {

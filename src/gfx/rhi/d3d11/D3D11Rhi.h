@@ -39,6 +39,8 @@ public:
         // D3D11 binds resources directly; descriptor sets are Vulkan-only.
         return nullptr;
     }
+    std::unique_ptr<CommandList> CreateCommandList() override;
+    Texture* DepthTarget() override { return depthTarget_.get(); }
     void BindDescriptorSet(DescriptorSet*, uint32_t) override {}
     void BindPipeline(Pipeline* pipeline) override;
     void BindVertexBuffer(Buffer* buffer, uint32_t stride,
@@ -93,6 +95,7 @@ private:
     ComPtr<ID3D11Texture2D> depthTexture_;
     ComPtr<ID3D11DepthStencilView> dsv_;
     ComPtr<ID3D11ShaderResourceView> depthSRV_;
+    std::unique_ptr<Texture> depthTarget_;
 
     ComPtr<ID3D11Texture2D> staging_;
 

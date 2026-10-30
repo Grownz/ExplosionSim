@@ -40,24 +40,23 @@ public:
 
     // Renders the intact buildings into the cached static shadow map. Skips the
     // work when `key` matches the previous call.
-    void RenderStaticShadow(ID3D11DeviceContext* context,
+    void RenderStaticShadow(rhi::CommandList* commandList,
                             const scene::Scene& scene,
                             const DirectX::XMFLOAT4X4& lightViewProj,
                             uint64_t key);
 
     // Renders the scene into the cascaded directional shadow maps and clears
     // them when the scene is disabled. Must run before the ground pass.
-    void RenderShadow(ID3D11DeviceContext* context, const scene::Scene& scene,
+    void RenderShadow(rhi::CommandList* commandList, const scene::Scene& scene,
                       const ViewInfo& view,
                       const DirectX::XMFLOAT4X4* lightViewProj,
                       const DirectX::XMFLOAT3& burstCenter);
 
     // Main opaque scene pass. Must run after the ground pass and before the
     // depth snapshot / volumetric pass.
-    void RenderScene(ID3D11DeviceContext* context, const scene::Scene& scene,
-                     ID3D11RenderTargetView* hdrRTV,
-                     ID3D11DepthStencilView* depthDSV, int width, int height,
-                     ID3D11SamplerState* surfaceSampler);
+    void RenderScene(rhi::CommandList* commandList, const scene::Scene& scene,
+                     rhi::Texture* hdrTarget, rhi::Texture* depthTarget,
+                     rhi::Sampler* surfaceSampler);
 
     ID3D11ShaderResourceView* ShadowSRV(int cascade) const {
         return shadowTexture_[cascade]
@@ -135,9 +134,8 @@ private:
 
     bool BuildChunkGeometry(const scene::Scene& scene);
     bool EnsureChunkInstanceCapacity(UINT capacity);
-    void UpdateChunkInstances(ID3D11DeviceContext* context,
-                              const scene::Scene& scene);
-    void DrawChunks(ID3D11DeviceContext* context, const scene::Scene& scene,
+    void UpdateChunkInstances(const scene::Scene& scene);
+    void DrawChunks(rhi::CommandList* commandList, const scene::Scene& scene,
                     bool shadowPass);
     bool EnsureStaticInstanceCapacity(UINT capacity);
 

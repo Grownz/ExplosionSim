@@ -1,12 +1,13 @@
 # Linux port and multi-platform RHI plan
 
-Status: **M0 done, M1 nearly done, M2 started.** The portable simulation core
-builds and passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The
-backend-neutral RHI interfaces and the D3D11 backend exist; `GfxDevice` and the
-swapchain run through the RHI. `SceneRenderer` creates its meshes,
+Status: **M0 done, M1 done, M2 nearly done, M3 in progress.** The portable
+simulation core builds and passes `core_tests` natively on Linux (Ubuntu 24.04 CI
+job). The backend-neutral RHI interfaces and the D3D11 backend exist; `GfxDevice`
+and the swapchain run through the RHI. `SceneRenderer` creates its meshes,
 instance/chunk/shadow buffers, shadow and surface-detail textures, shaders,
-input layouts, fixed-function states and samplers through the RHI. The pass code
-still binds resources through the temporary D3D11 context bridge.
+input layouts, fixed-function states and samplers through the RHI, and its
+shadow/main passes now record through `rhi::CommandList` instead of the D3D11
+context. `Renderer` owns its HDR/bloom targets as RHI textures.
 
 M2 now has an SDL3 window layer and a Vulkan 1.2 device with an offscreen
 target, swapchain, clear, present and readback (`vulkan_smoke`). The Vulkan
@@ -199,9 +200,10 @@ see [`linux-build.md`](linux-build.md).
 
 ### M1 — RHI core + D3D11 backend, Windows unchanged (10–15 days)
 
-Status: **in progress.** RHI device/swapchain, buffers, textures, samplers,
-shaders and pipelines are in place and `SceneRenderer` uses them. The temporary
-D3D11 context bridge remains for the render passes and the compute path.
+Status: **done.** RHI device/swapchain, buffers, textures, samplers, shaders,
+pipelines, command lists and the shared depth target are in place.
+`SceneRenderer` and the renderer targets use the RHI; the remaining D3D11 calls
+are confined to the not-yet-ported volume, particle, bloom and compute passes.
 
 - Add `src/gfx/rhi/Rhi.h`, `rhi/d3d11/*`.
 - Wrap `GfxDevice`/swapchain and port resource creation for the scene renderer.
@@ -211,10 +213,11 @@ D3D11 context bridge remains for the render passes and the compute path.
 
 ### M2 — SDL3 platform layer + Vulkan device/swapchain (10–15 days)
 
-Status: **in progress.** The SDL3 window/event layer, Vulkan instance, physical
+Status: **nearly done.** The SDL3 window/event layer, Vulkan instance, physical
 and logical device, offscreen target, swapchain, clear, present and readback
-exist and are exercised by `vulkan_smoke` on Windows and Linux. The application
-still uses the Win32/D3D11 path.
+exist and are exercised by `vulkan_smoke` on Windows and Linux. `rhi::CommandList`
+has D3D11 and Vulkan implementations. The application still uses the
+Win32/D3D11 path.
 
 - Add `src/platform/Platform.h` and `platform/sdl3/*`.
 - Create window, input, DPI, timer, clipboard and file dialogs.
@@ -225,7 +228,7 @@ still uses the Win32/D3D11 path.
 
 ### M3 — Reduced-order renderer on Vulkan (25–35 days)
 
-Status: **started.** Vulkan buffer, texture, sampler, shader-module, graphics
+Status: **in progress.** Vulkan buffer, texture, sampler, shader-module, graphics
 pipeline, descriptor-set and render-to-texture support exist. `vulkan_smoke`
 runs the real sky, ground, composite, bloom, scene, shock, volume and particle
 shaders plus a textured quad, triangle and a two-pass render-to-texture/

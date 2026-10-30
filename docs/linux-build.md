@@ -18,7 +18,8 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   `assets/shaders/sky.hlsl` with the shared frame constants; `--composite` runs
   the real tonemap/bloom composite with two sampled textures; `--ground` runs
   the ground plane with cascaded/static shadow maps and a 3D volume texture;
-  `--target` renders a pass into an offscreen texture and samples it afterwards;
+  `--target` renders a pass into an offscreen texture through `rhi::CommandList`
+  and samples it afterwards;
   `--bloom` runs the real downsample/upsample bloom chain into render targets;
   `--scene` draws an instanced cube through the real scene shader with
   structured instance buffers, shadow maps and surface detail; `--shock` runs
@@ -34,6 +35,12 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.
+
+The D3D11 application now records its scene shadow and main passes through
+`rhi::CommandList`; `Renderer` owns its HDR/bloom targets as RHI textures. The
+Vulkan backend implements the same command-list interface on top of the current
+single-frame command buffer, so the remaining renderer passes can move over
+without changing their logic.
 
 ## Dependencies
 

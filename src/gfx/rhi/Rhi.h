@@ -132,8 +132,12 @@ struct ShaderDesc {
 struct SamplerDesc {
     bool comparison = false;
     bool clamp = false;
+    // Repeat addressing for tiling textures; takes precedence over `clamp`.
+    bool wrap = false;
     float border[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     bool linear = true;
+    // 1 disables anisotropic filtering; 2..16 request that many taps.
+    uint32_t maxAnisotropy = 1;
 };
 
 class Buffer {
@@ -283,6 +287,57 @@ public:
     virtual void SetSampler(uint32_t binding, Sampler* sampler) = 0;
 };
 
+// Records rendering commands. On D3D11 this wraps the immediate device
+// context; on Vulkan it records into the device's active command buffer. The
+// render pass API is the backend-neutral replacement for OMSetRenderTargets /
+// RSSetViewports and for the Vulkan render-pass begin/end pair.
+class CommandList {
+public:
+    virtual ~CommandList() = default;
+
+    virtual void Begin() = 0;
+    virtual void End() = 0;
+
+    // Binds `color` (may be null for depth-only passes) and `depth` (may be
+    // null) and sets the viewport to the target extent.
+    virtual void BeginRenderPass(Texture* color, Texture* depth, bool clearColor,
+                                 bool clearDepth,
+                                 const float clearColorValue[4]) = 0;
+    virtual void EndRenderPass() = 0;
+    virtual void SetViewport(uint32_t width, uint32_t height) = 0;
+    virtual void ClearDepth(Texture* depth, float value = 1.0f) = 0;
+
+    virtual void BindPipeline(Pipeline* pipeline) = 0;
+    virtual void BindDescriptorSet(DescriptorSet* set, uint32_t index = 0) = 0;
+    virtual void BindVertexBuffer(Buffer* buffer, uint32_t stride,
+                                  uint64_t offset = 0) = 0;
+    virtual void BindIndexBuffer(Buffer* buffer, uint64_t offset = 0) = 0;
+
+    // Explicit resource binding used by the renderer while its passes are
+    // migrated to descriptor sets. `slot` is the D3D register index (b#, t#,
+    // s#); the Vulkan backend maps it through the shader binding convention.
+    virtual void BindConstantBuffer(Buffer* buffer, ShaderStage stage,
+                                    uint32_t slot) = 0;
+    virtual void BindShaderResource(Buffer* buffer, ShaderStage stage,
+                                    uint32_t slot) = 0;
+    virtual void BindShaderResource(Texture* texture, ShaderStage stage,
+                                    uint32_t slot) = 0;
+    virtual void BindSampler(Sampler* sampler, ShaderStage stage,
+                             uint32_t slot) = 0;
+
+    virtual void Draw(uint32_t vertexCount, uint32_t firstVertex = 0) = 0;
+    virtual void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
+                               uint32_t firstVertex = 0,
+                               uint32_t firstInstance = 0) = 0;
+    virtual void DrawIndexedInstanced(uint32_t indexCount,
+                                      uint32_t instanceCount,
+                                      uint32_t firstIndex = 0,
+                                      int32_t baseVertex = 0,
+                                      uint32_t firstInstance = 0) = 0;
+
+    virtual void* NativeHandle() const = 0;
+};
+
 // Owns the GPU device, the swapchain or offscreen target and the shared depth
 // buffer. Backends implement the resource factories; the renderer only sees
 // this interface once the legacy D3D11 bridge is removed.
@@ -297,6 +352,12 @@ public:
     virtual std::unique_ptr<Sampler> CreateSampler(const SamplerDesc& desc) = 0;
     virtual std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) = 0;
     virtual std::unique_ptr<DescriptorSet> CreateDescriptorSet(Pipeline* pipeline) = 0;
+    virtual std::unique_ptr<CommandList> CreateCommandList() = 0;
+
+    // Shared depth target for the current swapchain/offscreen extent. Null on
+    // backends that do not expose one yet.
+    virtual Texture* DepthTarget() = 0;
+
     // Temporary immediate-mode binding until the command list abstraction
     // lands; sets the pipeline's shaders and fixed-function state.
     virtual void BindPipeline(Pipeline* pipeline) = 0;

@@ -11,6 +11,8 @@
 
 namespace ex::rhi::vulkan {
 
+class CommandListImpl;
+
 // Vulkan implementation of the RHI. M2 covers the device, swapchain/offscreen
 // target, clear, present and readback. Buffers, textures, shaders and pipelines
 // are added in M3.
@@ -32,6 +34,8 @@ public:
     std::unique_ptr<Sampler> CreateSampler(const SamplerDesc& desc) override;
     std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) override;
     std::unique_ptr<DescriptorSet> CreateDescriptorSet(Pipeline* pipeline) override;
+    std::unique_ptr<CommandList> CreateCommandList() override;
+    Texture* DepthTarget() override { return nullptr; }
     void BindPipeline(Pipeline* pipeline) override;
     void BindDescriptorSet(DescriptorSet* set, uint32_t index = 0) override;
     bool Resize(int width, int height) override;
@@ -74,6 +78,8 @@ public:
     uint64_t DedicatedVideoMemory() const { return dedicatedVideoMemory_; }
 
 private:
+    friend class CommandListImpl;
+
     bool CreateInstance();
     bool CreateSurface();
     bool PickPhysicalDevice();
@@ -153,6 +159,7 @@ private:
     bool offscreen_ = false;
     bool initialized_ = false;
     bool frameActive_ = false;
+    bool samplerAnisotropy_ = false;
 };
 
 } // namespace ex::rhi::vulkan

@@ -835,9 +835,7 @@ bool SceneRenderer::EnsureChunkInstanceCapacity(UINT capacity) {
     return true;
 }
 
-void SceneRenderer::UpdateChunkInstances(ID3D11DeviceContext* context,
-                                         const scene::Scene& scene) {
-    (void)context;
+void SceneRenderer::UpdateChunkInstances(const scene::Scene& scene) {
     if (!chunkInstanceBuffer_ || chunkInstances_.empty() || chunkDraws_.empty()) {
         return;
     }
@@ -892,31 +890,29 @@ void SceneRenderer::UpdateChunkInstances(ID3D11DeviceContext* context,
     chunkInstanceBuffer_->Unmap();
 }
 
-void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
+void SceneRenderer::DrawChunks(rhi::CommandList* commandList,
                                const scene::Scene& scene, bool shadowPass) {
-    if (!context || chunkDraws_.empty() || !chunkVertexBuffer_ ||
+    if (!commandList || chunkDraws_.empty() || !chunkVertexBuffer_ ||
         !chunkIndexBuffer_ || !chunkInstanceBuffer_ ||
         !chunkInstanceBuffer_->NativeShaderResourceView()) {
         return;
     }
     const auto& objects = scene.Objects();
-    rhiDevice_->BindVertexBuffer(chunkVertexBuffer_.get(),
-                                 sizeof(ChunkVertex));
-    rhiDevice_->BindIndexBuffer(chunkIndexBuffer_.get());
-    rhiDevice_->BindPipeline(shadowPass ? chunkShadowPipeline_.get()
-                                        : chunkPipeline_.get());
-    ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(
-        chunkInstanceBuffer_->NativeShaderResourceView());
-    context->VSSetShaderResources(1, 1, &srv);
+    commandList->BindVertexBuffer(chunkVertexBuffer_.get(),
+                                  sizeof(ChunkVertex));
+    commandList->BindIndexBuffer(chunkIndexBuffer_.get());
+    commandList->BindPipeline(shadowPass ? chunkShadowPipeline_.get()
+                                         : chunkPipeline_.get());
+    commandList->BindShaderResource(chunkInstanceBuffer_.get(),
+                                    rhi::ShaderStage::Vertex, 1);
     for (const ChunkDraw& draw : chunkDraws_) {
         if (draw.objectIndex < 0 || draw.objectIndex >= int(objects.size()) ||
             !objects[draw.objectIndex].collapsed) {
             continue;
         }
-        rhiDevice_->DrawIndexedInstanced(draw.indexCount, 1, draw.indexOffset);
+        commandList->DrawIndexedInstanced(draw.indexCount, 1,
+                                          draw.indexOffset);
     }
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    context->VSSetShaderResources(1, 1, &nullSrv);
 }
 
 bool SceneRenderer::EnsureStaticInstanceCapacity(UINT capacity) {
@@ -941,11 +937,11 @@ bool SceneRenderer::EnsureStaticInstanceCapacity(UINT capacity) {
     return true;
 }
 
-void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
+void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
                                        const scene::Scene& scene,
                                        const XMFLOAT4X4& lightViewProj,
                                        uint64_t key) {
-    if (!rhiDevice_ || !context || !staticShadowTexture_ ||
+    if (!rhiDevice_ || !commandList || !staticShadowTexture_ ||
         !staticShadowTexture_->NativeDepthStencilView()) {
         return;
     }
@@ -957,11 +953,11 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
 
     // Always clear: a disabled or regenerated scene must not keep stale
     // building shadows.
-    context->ClearDepthStencilView(
-        static_cast<ID3D11DepthStencilView*>(
-            staticShadowTexture_->NativeDepthStencilView()),
-        D3D11_CLEAR_DEPTH, 1.0f, 0);
+    const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    commandList->BeginRenderPass(nullptr, staticShadowTexture_.get(), false,
+                                 true, clearColor);
     if (!scene.Settings().enabled || scene.Empty()) {
+        commandList->EndRenderPass();
         return;
     }
 
@@ -981,70 +977,55 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
     }
     if (instances.empty() ||
         !EnsureStaticInstanceCapacity(UINT(instances.size()))) {
+        commandList->EndRenderPass();
         return;
     }
 
     void* mapped = staticInstanceBuffer_->Map();
     if (!mapped) {
+        commandList->EndRenderPass();
         return;
     }
     std::memcpy(mapped, instances.data(), instances.size() * sizeof(Instance));
     staticInstanceBuffer_->Unmap();
 
-    D3D11_VIEWPORT viewport{0.0f, 0.0f, float(kStaticShadowSize),
-                            float(kStaticShadowSize), 0.0f, 1.0f};
-    context->RSSetViewports(1, &viewport);
-    context->OMSetRenderTargets(
-        0, nullptr,
-        static_cast<ID3D11DepthStencilView*>(
-            staticShadowTexture_->NativeDepthStencilView()));
-    rhiDevice_->BindPipeline(sceneShadowPipeline_.get());
+    commandList->BindPipeline(sceneShadowPipeline_.get());
 
     void* cascadeMapped = shadowCascadeBuffer_->Map();
     if (cascadeMapped) {
         std::memcpy(cascadeMapped, &lightViewProj, sizeof(XMFLOAT4X4));
         shadowCascadeBuffer_->Unmap();
     }
-    ID3D11Buffer* cascadeBuffer =
-        static_cast<ID3D11Buffer*>(shadowCascadeBuffer_->NativeHandle());
-    context->VSSetConstantBuffers(3, 1, &cascadeBuffer);
+    commandList->BindConstantBuffer(shadowCascadeBuffer_.get(),
+                                    rhi::ShaderStage::Vertex, 3);
 
     const Mesh& mesh = meshes_[0];
     if (mesh.vertexBuffer && mesh.indexBuffer && mesh.indexCount > 0) {
-        rhiDevice_->BindVertexBuffer(mesh.vertexBuffer.get(), sizeof(Vertex));
-        rhiDevice_->BindIndexBuffer(mesh.indexBuffer.get());
-        ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(
-            staticInstanceBuffer_->NativeShaderResourceView());
-        context->VSSetShaderResources(0, 1, &srv);
-        rhiDevice_->DrawIndexedInstanced(mesh.indexCount,
-                                         UINT(instances.size()));
+        commandList->BindVertexBuffer(mesh.vertexBuffer.get(), sizeof(Vertex));
+        commandList->BindIndexBuffer(mesh.indexBuffer.get());
+        commandList->BindShaderResource(staticInstanceBuffer_.get(),
+                                        rhi::ShaderStage::Vertex, 0);
+        commandList->DrawIndexedInstanced(mesh.indexCount,
+                                          UINT(instances.size()));
     }
-
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    context->VSSetShaderResources(0, 1, &nullSrv);
-    ID3D11Buffer* nullBuffer = nullptr;
-    context->VSSetConstantBuffers(3, 1, &nullBuffer);
+    commandList->EndRenderPass();
 }
 
-void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
+void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
                                  const scene::Scene& scene, const ViewInfo& view,
                                  const XMFLOAT4X4* lightViewProj,
                                  const XMFLOAT3& burstCenter) {
-    if (!rhiDevice_ || !context) {
+    if (!rhiDevice_ || !commandList) {
         return;
     }
     // Always clear so the ground samples a fully lit map when the scene is off.
-    for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
-        if (!shadowTexture_[cascade] ||
-            !shadowTexture_[cascade]->NativeDepthStencilView()) {
-            continue;
-        }
-        context->ClearDepthStencilView(
-            static_cast<ID3D11DepthStencilView*>(
-                shadowTexture_[cascade]->NativeDepthStencilView()),
-            D3D11_CLEAR_DEPTH, 1.0f, 0);
-    }
+    const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     if (!scene.Settings().enabled || scene.Empty()) {
+        for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
+            if (shadowTexture_[cascade]) {
+                commandList->ClearDepth(shadowTexture_[cascade].get(), 1.0f);
+            }
+        }
         return;
     }
 
@@ -1267,28 +1248,22 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
     }
 
     BuildChunkGeometry(scene);
-    UpdateChunkInstances(context, scene);
+    UpdateChunkInstances(scene);
 
     // --- Shadow pass: one draw per cascade -------------------------------
-    rhiDevice_->BindPipeline(sceneShadowPipeline_.get());
+    commandList->BindPipeline(sceneShadowPipeline_.get());
 
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
-        context->OMSetRenderTargets(
-            0, nullptr,
-            static_cast<ID3D11DepthStencilView*>(
-                shadowTexture_[cascade]->NativeDepthStencilView()));
-        const float size = float(ShadowSize(cascade));
-        D3D11_VIEWPORT shadowViewport{0.0f, 0.0f, size, size, 0.0f, 1.0f};
-        context->RSSetViewports(1, &shadowViewport);
+        commandList->BeginRenderPass(nullptr, shadowTexture_[cascade].get(),
+                                     false, true, clearColor);
 
         void* mapped = shadowCascadeBuffer_->Map();
         if (mapped) {
             std::memcpy(mapped, &lightViewProj[cascade], sizeof(XMFLOAT4X4));
             shadowCascadeBuffer_->Unmap();
         }
-        ID3D11Buffer* cascadeBuffer =
-            static_cast<ID3D11Buffer*>(shadowCascadeBuffer_->NativeHandle());
-        context->VSSetConstantBuffers(3, 1, &cascadeBuffer);
+        commandList->BindConstantBuffer(shadowCascadeBuffer_.get(),
+                                        rhi::ShaderStage::Vertex, 3);
 
         // Intact buildings (mesh 0) are cached in the static shadow map; the
         // dynamic cascades contain debris, vehicles and trees in every cascade,
@@ -1300,86 +1275,70 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             if (mesh.instances.empty() || !mesh.instanceBuffer) {
                 continue;
             }
-            rhiDevice_->BindVertexBuffer(mesh.vertexBuffer.get(),
-                                         sizeof(Vertex));
-            rhiDevice_->BindIndexBuffer(mesh.indexBuffer.get());
-            ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(mesh.instanceBuffer->NativeShaderResourceView());
-            context->VSSetShaderResources(0, 1, &srv);
-            rhiDevice_->DrawIndexedInstanced(mesh.indexCount,
-                                             UINT(mesh.instances.size()));
+            commandList->BindVertexBuffer(mesh.vertexBuffer.get(),
+                                          sizeof(Vertex));
+            commandList->BindIndexBuffer(mesh.indexBuffer.get());
+            commandList->BindShaderResource(mesh.instanceBuffer.get(),
+                                            rhi::ShaderStage::Vertex, 0);
+            commandList->DrawIndexedInstanced(mesh.indexCount,
+                                              UINT(mesh.instances.size()));
         }
 
         // Voronoi rubble (phase B chunks) with the chunk shadow shader.
-        DrawChunks(context, scene, true);
-        rhiDevice_->BindPipeline(sceneShadowPipeline_.get());
+        DrawChunks(commandList, scene, true);
+        commandList->BindPipeline(sceneShadowPipeline_.get());
+        commandList->EndRenderPass();
     }
-
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    context->VSSetShaderResources(0, 1, &nullSrv);
-    ID3D11Buffer* nullBuffer = nullptr;
-    context->VSSetConstantBuffers(3, 1, &nullBuffer);
 }
 
-void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene& scene,
-                                ID3D11RenderTargetView* hdrRTV,
-                                ID3D11DepthStencilView* depthDSV, int width,
-                                int height, ID3D11SamplerState* surfaceSampler) {
-    if (!rhiDevice_ || !context || !hdrRTV || !depthDSV) {
+void SceneRenderer::RenderScene(rhi::CommandList* commandList,
+                                const scene::Scene& scene,
+                                rhi::Texture* hdrTarget,
+                                rhi::Texture* depthTarget,
+                                rhi::Sampler* surfaceSampler) {
+    if (!rhiDevice_ || !commandList || !hdrTarget || !depthTarget) {
         return;
     }
     if (!scene.Settings().enabled || scene.Empty()) {
         return;
     }
 
-    context->OMSetRenderTargets(1, &hdrRTV, depthDSV);
-    rhiDevice_->BindPipeline(scenePipeline_.get());
+    const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    commandList->BeginRenderPass(hdrTarget, depthTarget, false, false,
+                                 clearColor);
+    commandList->BindPipeline(scenePipeline_.get());
 
-    D3D11_VIEWPORT viewport{0.0f, 0.0f, float(width), float(height), 0.0f, 1.0f};
-    context->RSSetViewports(1, &viewport);
-
-    ID3D11ShaderResourceView* shadowViews[4] = {
-        ShadowSRV(0), ShadowSRV(1), ShadowSRV(2), StaticShadowSRV()};
-    context->PSSetShaderResources(2, 4, shadowViews);
-    ID3D11SamplerState* shadowSampler =
-        static_cast<ID3D11SamplerState*>(shadowSampler_->NativeHandle());
-    context->PSSetSamplers(2, 1, &shadowSampler);
+    commandList->BindShaderResource(shadowTexture_[0].get(),
+                                    rhi::ShaderStage::Pixel, 2);
+    commandList->BindShaderResource(shadowTexture_[1].get(),
+                                    rhi::ShaderStage::Pixel, 3);
+    commandList->BindShaderResource(shadowTexture_[2].get(),
+                                    rhi::ShaderStage::Pixel, 4);
+    commandList->BindShaderResource(staticShadowTexture_.get(),
+                                    rhi::ShaderStage::Pixel, 5);
+    commandList->BindSampler(shadowSampler_.get(), rhi::ShaderStage::Pixel, 2);
 
     // Tiling grain for the procedural materials. The sampler is chosen by the
     // anisotropic-filtering setting, so objects benefit from it as well.
-    ID3D11ShaderResourceView* surfaceDetail =
-        surfaceDetailTexture_
-            ? static_cast<ID3D11ShaderResourceView*>(
-                  surfaceDetailTexture_->NativeShaderResourceView())
-            : nullptr;
-    context->PSSetShaderResources(6, 1, &surfaceDetail);
-    ID3D11SamplerState* detailSampler = surfaceSampler;
-    context->PSSetSamplers(3, 1, &detailSampler);
+    commandList->BindShaderResource(surfaceDetailTexture_.get(),
+                                    rhi::ShaderStage::Pixel, 6);
+    commandList->BindSampler(surfaceSampler, rhi::ShaderStage::Pixel, 3);
 
     for (Mesh& mesh : meshes_) {
         if (mesh.instances.empty() || !mesh.instanceBuffer) {
             continue;
         }
-        rhiDevice_->BindVertexBuffer(mesh.vertexBuffer.get(), sizeof(Vertex));
-        rhiDevice_->BindIndexBuffer(mesh.indexBuffer.get());
-        ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(mesh.instanceBuffer->NativeShaderResourceView());
-        context->VSSetShaderResources(0, 1, &srv);
-        rhiDevice_->DrawIndexedInstanced(mesh.indexCount,
-                                         UINT(mesh.instances.size()));
+        commandList->BindVertexBuffer(mesh.vertexBuffer.get(), sizeof(Vertex));
+        commandList->BindIndexBuffer(mesh.indexBuffer.get());
+        commandList->BindShaderResource(mesh.instanceBuffer.get(),
+                                        rhi::ShaderStage::Vertex, 0);
+        commandList->DrawIndexedInstanced(mesh.indexCount,
+                                          UINT(mesh.instances.size()));
     }
 
     // Voronoi rubble with the chunk vertex shader and the shared pixel shader.
-    DrawChunks(context, scene, false);
-
-    ID3D11ShaderResourceView* nullSrv = nullptr;
-    ID3D11ShaderResourceView* nullShadow[4] = {nullptr, nullptr, nullptr,
-                                               nullptr};
-    context->PSSetShaderResources(2, 4, nullShadow);
-    ID3D11ShaderResourceView* nullDetail = nullptr;
-    context->PSSetShaderResources(6, 1, &nullDetail);
-    ID3D11SamplerState* nullSampler = nullptr;
-    context->PSSetSamplers(2, 1, &nullSampler);
-    context->PSSetSamplers(3, 1, &nullSampler);
-    context->VSSetShaderResources(0, 1, &nullSrv);
+    DrawChunks(commandList, scene, false);
+    commandList->EndRenderPass();
 }
 
 } // namespace ex::gfx
