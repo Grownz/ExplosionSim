@@ -1186,9 +1186,39 @@ bool Device::CreateDevice() {
     vkGetPhysicalDeviceFeatures(physicalDevice_, &supportedFeatures);
     samplerAnisotropy_ = supportedFeatures.samplerAnisotropy == VK_TRUE;
 
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physicalDevice_, &properties);
+    const bool supports12 = properties.apiVersion >= VK_API_VERSION_1_2;
+
+    VkPhysicalDeviceVulkan12Features supported12{};
+    supported12.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    bool hostQueryReset = false;
+    if (supports12) {
+        VkPhysicalDeviceFeatures2 features2{};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &supported12;
+        vkGetPhysicalDeviceFeatures2(physicalDevice_, &features2);
+        hostQueryReset = supported12.hostQueryReset == VK_TRUE;
+    }
+    if (!hostQueryReset) {
+        // vkResetQueryPool needs the hostQueryReset feature; without it the
+        // solver benchmark falls back to wall-clock timing.
+        timestampValidBits_ = 0;
+    }
+
     VkPhysicalDeviceFeatures enabledFeatures{};
     enabledFeatures.samplerAnisotropy =
         samplerAnisotropy_ ? VK_TRUE : VK_FALSE;
+
+    VkPhysicalDeviceVulkan12Features enabled12{};
+    enabled12.sType =
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    enabled12.hostQueryReset = hostQueryReset ? VK_TRUE : VK_FALSE;
+    VkPhysicalDeviceFeatures2 enabledFeatures2{};
+    enabledFeatures2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    enabledFeatures2.features = enabledFeatures;
+    enabledFeatures2.pNext = supports12 ? &enabled12 : nullptr;
 
     VkDeviceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -1196,7 +1226,8 @@ bool Device::CreateDevice() {
     info.pQueueCreateInfos = &queueInfo;
     info.enabledExtensionCount = uint32_t(extensions.size());
     info.ppEnabledExtensionNames = extensions.data();
-    info.pEnabledFeatures = &enabledFeatures;
+    info.pNext = supports12 ? &enabledFeatures2 : nullptr;
+    info.pEnabledFeatures = supports12 ? nullptr : &enabledFeatures;
 
     if (vkCreateDevice(physicalDevice_, &info, nullptr, &device_) != VK_SUCCESS) {
         LogError("Vulkan logical device creation failed.");
