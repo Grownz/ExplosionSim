@@ -1325,6 +1325,9 @@ bool LinuxPreview::UploadVolume(const ex::sim::VolumeFrame& frame) {
     if (volumeSet_) {
         volumeSet_->SetImage(8, volumeTexture_.get());
     }
+    if (chunkSet_) {
+        chunkSet_->SetImage(15, volumeTexture_.get());
+    }
     for (SceneDraw& draw : sceneDraws_) {
         if (draw.set) {
             draw.set->SetImage(15, volumeTexture_.get());

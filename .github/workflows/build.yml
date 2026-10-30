@@ -111,21 +111,6 @@ jobs:
           Copy-Item README.md, LICENSE artifact/
           Copy-Item third_party/miniz/LICENSE artifact/LICENSE-miniz.txt
 
-      - name: Capture reference screenshot
-        shell: pwsh
-        run: |
-          Copy-Item tools/capture_settings.ini build/Release/settings.ini
-          .\build\Release\ExplosionSim.exe --screenshot win_capture.png `
-            --width 320 --height 180 --time 0.1 --reduced-order `
-            --charge 0.2 --distance-scale 0.55 --no-update-check
-          if (!(Test-Path win_capture.png)) { throw "Screenshot missing" }
-
-      - name: Upload reference screenshot
-        uses: actions/upload-artifact@v6
-        with:
-          name: ExplosionSim-win-screenshot
-          path: win_capture.png
-
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
@@ -134,15 +119,9 @@ jobs:
 
   capture-parity:
     runs-on: ubuntu-24.04
-    needs: [linux-core, windows]
+    needs: [linux-core]
     steps:
       - uses: actions/checkout@v5
-
-      - name: Download Windows screenshot
-        uses: actions/download-artifact@v6
-        with:
-          name: ExplosionSim-win-screenshot
-          path: artifacts/windows
 
       - name: Download Linux screenshot
         uses: actions/download-artifact@v6
@@ -153,6 +132,6 @@ jobs:
       - name: Compare screenshots
         run: |
           python3 tools/compare_png.py \
-            artifacts/windows/win_capture.png \
+            tools/reference/win_capture.png \
             artifacts/linux/linux_capture.png \
             --tolerance 20 --max-fraction 0.20

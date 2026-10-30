@@ -116,8 +116,9 @@ python3 tools/compare_png.py windows.png linux.png --tolerance 20 \
 ```
 
 The current reference capture is at about 13/255 mean absolute RGB difference
-and 16.5 % of pixels above the 32/255 threshold; the CI `capture-parity` job
-enforces the 20/255 mean and 20 % limits.
+and 16.5 % of pixels above the 32/255 threshold. `tools/reference/win_capture.png`
+is the checked-in Windows reference (RTX 3090, 320x180, `capture_settings.ini`);
+the CI `capture-parity` job enforces the 20/255 mean and 20 % limits against it.
 
 ## Vulkan smoke test
 

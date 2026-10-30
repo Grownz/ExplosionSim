@@ -15,8 +15,9 @@ swapchain, clear, present and readback (`vulkan_smoke`), and the native
 drives `sim::Simulation`, loads the Windows settings keys, uploads the CPU volume
 bake and the additive/fire/alpha particle batches, renders Voronoi chunks and
 runs the reduced-order chain through the RHI. The CI `capture-parity` job
-compares Windows and Linux screenshots with a documented tolerance. See
-[`linux-build.md`](linux-build.md) for the current Linux build instructions.
+compares the Linux capture against the checked-in Windows reference with a
+documented tolerance. See [`linux-build.md`](linux-build.md) for the current
+Linux build instructions.
 
 ## 1. Goal
 
