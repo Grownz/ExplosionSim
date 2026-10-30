@@ -1982,7 +1982,7 @@ int main(int argc, char** argv) {
             device->Draw(3);
 
             device->BindPipeline(scenePipeline.get());
-            device->BindVertexBuffer(sceneVertexBuffer.get());
+            device->BindVertexBuffer(sceneVertexBuffer.get(), sizeof(ex::gfx::SceneMeshVertex));
             device->BindIndexBuffer(sceneIndexBuffer.get());
             for (const SceneDraw& draw : sceneDraws) {
                 device->BindDescriptorSet(draw.set.get());
@@ -2080,7 +2080,7 @@ int main(int argc, char** argv) {
                                       1.0f);
             device->BindPipeline(quadPipeline.get());
             device->BindDescriptorSet(quadSet.get());
-            device->BindVertexBuffer(quadVertexBuffer.get());
+            device->BindVertexBuffer(quadVertexBuffer.get(), 20);
             device->Draw(6);
             device->EndFrame(false);
 
@@ -2093,12 +2093,12 @@ int main(int argc, char** argv) {
             device->BeginFrame(0.1f + 0.2f * t, 0.2f, 0.4f - 0.2f * t, 1.0f);
             if (pipeline) {
                 device->BindPipeline(pipeline.get());
-                device->BindVertexBuffer(vertexBuffer.get());
+                device->BindVertexBuffer(vertexBuffer.get(), 24);
                 device->Draw(3);
             } else if (quadPipeline) {
                 device->BindPipeline(quadPipeline.get());
                 device->BindDescriptorSet(quadSet.get());
-                device->BindVertexBuffer(quadVertexBuffer.get());
+                device->BindVertexBuffer(quadVertexBuffer.get(), 20);
                 device->Draw(6);
             } else if (skyPipeline) {
                 device->BindPipeline(skyPipeline.get());
@@ -2122,7 +2122,7 @@ int main(int argc, char** argv) {
                 device->DrawInstanced(6, 1);
             } else if (scenePipeline) {
                 device->BindPipeline(scenePipeline.get());
-                device->BindVertexBuffer(sceneVertexBuffer.get());
+                device->BindVertexBuffer(sceneVertexBuffer.get(), sizeof(ex::gfx::SceneMeshVertex));
                 device->BindIndexBuffer(sceneIndexBuffer.get());
                 for (const SceneDraw& draw : sceneDraws) {
                     device->BindDescriptorSet(draw.set.get());

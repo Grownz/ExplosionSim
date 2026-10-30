@@ -978,4 +978,48 @@ void Device::BindPipeline(Pipeline* pipeline) {
     }
 }
 
+void Device::BindVertexBuffer(Buffer* buffer, uint32_t stride,
+                              uint64_t offset) {
+    if (!context_ || !buffer) {
+        return;
+    }
+    ID3D11Buffer* native =
+        static_cast<ID3D11Buffer*>(buffer->NativeHandle());
+    UINT strideValue = stride;
+    UINT offsetValue = UINT(offset);
+    context_->IASetVertexBuffers(0, 1, &native, &strideValue, &offsetValue);
+}
+
+void Device::BindIndexBuffer(Buffer* buffer, uint64_t offset) {
+    if (!context_ || !buffer) {
+        return;
+    }
+    context_->IASetIndexBuffer(
+        static_cast<ID3D11Buffer*>(buffer->NativeHandle()),
+        DXGI_FORMAT_R32_UINT, UINT(offset));
+}
+
+void Device::Draw(uint32_t vertexCount, uint32_t firstVertex) {
+    if (context_) {
+        context_->Draw(vertexCount, firstVertex);
+    }
+}
+
+void Device::DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
+                           uint32_t firstVertex, uint32_t firstInstance) {
+    if (context_) {
+        context_->DrawInstanced(vertexCount, instanceCount, firstVertex,
+                                firstInstance);
+    }
+}
+
+void Device::DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,
+                                  uint32_t firstIndex, int32_t baseVertex,
+                                  uint32_t firstInstance) {
+    if (context_) {
+        context_->DrawIndexedInstanced(indexCount, instanceCount, firstIndex,
+                                       baseVertex, firstInstance);
+    }
+}
+
 } // namespace ex::rhi::d3d11

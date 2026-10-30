@@ -41,6 +41,16 @@ public:
     }
     void BindDescriptorSet(DescriptorSet*, uint32_t) override {}
     void BindPipeline(Pipeline* pipeline) override;
+    void BindVertexBuffer(Buffer* buffer, uint32_t stride,
+                          uint64_t offset = 0) override;
+    void BindIndexBuffer(Buffer* buffer, uint64_t offset = 0) override;
+    void Draw(uint32_t vertexCount, uint32_t firstVertex = 0) override;
+    void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
+                       uint32_t firstVertex = 0,
+                       uint32_t firstInstance = 0) override;
+    void DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,
+                              uint32_t firstIndex = 0, int32_t baseVertex = 0,
+                              uint32_t firstInstance = 0) override;
     bool Resize(int width, int height) override;
     void WaitIdle() override;
     void* NativeHandle() const override;

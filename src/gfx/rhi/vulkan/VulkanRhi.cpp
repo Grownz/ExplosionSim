@@ -2288,7 +2288,9 @@ void Device::BindPipeline(Pipeline* pipeline) {
     boundPipelineLayout_ = impl ? impl->Layout() : VK_NULL_HANDLE;
 }
 
-void Device::BindVertexBuffer(Buffer* buffer, uint64_t offset) {
+void Device::BindVertexBuffer(Buffer* buffer, uint32_t stride,
+                              uint64_t offset) {
+    (void)stride;
     auto* impl = dynamic_cast<BufferImpl*>(buffer);
     boundVertexBuffer_ = impl ? impl->Handle() : VK_NULL_HANDLE;
     boundVertexOffset_ = offset;

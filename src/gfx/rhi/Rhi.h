@@ -301,6 +301,20 @@ public:
     // lands; sets the pipeline's shaders and fixed-function state.
     virtual void BindPipeline(Pipeline* pipeline) = 0;
     virtual void BindDescriptorSet(DescriptorSet* set, uint32_t index = 0) = 0;
+    // Temporary immediate-mode geometry binding and draws. Replaced by a
+    // command list in a later milestone.
+    virtual void BindVertexBuffer(Buffer* buffer, uint32_t stride,
+                                  uint64_t offset = 0) = 0;
+    virtual void BindIndexBuffer(Buffer* buffer, uint64_t offset = 0) = 0;
+    virtual void Draw(uint32_t vertexCount, uint32_t firstVertex = 0) = 0;
+    virtual void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
+                               uint32_t firstVertex = 0,
+                               uint32_t firstInstance = 0) = 0;
+    virtual void DrawIndexedInstanced(uint32_t indexCount,
+                                      uint32_t instanceCount,
+                                      uint32_t firstIndex = 0,
+                                      int32_t baseVertex = 0,
+                                      uint32_t firstInstance = 0) = 0;
 
     virtual bool Resize(int width, int height) = 0;
     virtual void WaitIdle() = 0;

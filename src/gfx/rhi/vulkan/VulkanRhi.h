@@ -53,14 +53,16 @@ public:
 
     // Temporary immediate-mode draw path used by the M3 bring-up tests. The
     // command-list abstraction replaces these calls later.
-    void BindVertexBuffer(Buffer* buffer, uint64_t offset = 0);
-    void BindIndexBuffer(Buffer* buffer, uint64_t offset = 0);
-    void Draw(uint32_t vertexCount, uint32_t firstVertex = 0);
+    void BindVertexBuffer(Buffer* buffer, uint32_t stride,
+                          uint64_t offset = 0) override;
+    void BindIndexBuffer(Buffer* buffer, uint64_t offset = 0) override;
+    void Draw(uint32_t vertexCount, uint32_t firstVertex = 0) override;
     void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
-                       uint32_t firstVertex = 0, uint32_t firstInstance = 0);
+                       uint32_t firstVertex = 0,
+                       uint32_t firstInstance = 0) override;
     void DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,
                               uint32_t firstIndex = 0, int32_t baseVertex = 0,
-                              uint32_t firstInstance = 0);
+                              uint32_t firstInstance = 0) override;
 
     // Offscreen only: copies the last rendered BGRA8 image into `bgra`.
     bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight);
