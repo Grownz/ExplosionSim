@@ -59,6 +59,18 @@ private:
         uint32_t instanceCount = 0;
     };
 
+    struct ChunkVertex {
+        DirectX::XMFLOAT3 position;
+        DirectX::XMFLOAT3 normal;
+        uint32_t chunkId = 0;
+    };
+
+    struct ChunkDraw {
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
+        int objectIndex = -1;
+    };
+
     bool CreateTargets(ex::rhi::Device* device, int width, int height);
     bool CreateSky(ex::rhi::Device* device);
     bool CreateGround(ex::rhi::Device* device);
@@ -68,6 +80,7 @@ private:
     bool CreateShock(ex::rhi::Device* device);
     bool CreateComposite(ex::rhi::Device* device);
     bool SetScene(const ex::scene::Scene& scene);
+    bool BuildChunks(const ex::scene::Scene& scene);
     bool UploadVolume(const ex::sim::VolumeFrame& frame);
     void UploadParticles(
         const std::vector<ex::sim::ParticleInstance>& particles);
@@ -97,6 +110,7 @@ private:
     std::unique_ptr<ex::rhi::Texture> volumeTexture_;
     std::unique_ptr<ex::rhi::Sampler> shadowSampler_;
     std::unique_ptr<ex::rhi::Sampler> volumeSampler_;
+    std::unique_ptr<ex::rhi::Sampler> surfaceSampler_;
     std::unique_ptr<ex::rhi::Shader> groundVS_;
     std::unique_ptr<ex::rhi::Shader> groundPS_;
     std::unique_ptr<ex::rhi::Pipeline> groundPipeline_;
@@ -115,6 +129,16 @@ private:
     MeshRange vehicleRange_;
     MeshRange treeRange_;
     uint64_t sceneKey_ = 0;
+
+    // Voronoi chunks.
+    std::unique_ptr<ex::rhi::Buffer> chunkVertexBuffer_;
+    std::unique_ptr<ex::rhi::Buffer> chunkIndexBuffer_;
+    std::unique_ptr<ex::rhi::Buffer> chunkInstanceBuffer_;
+    std::unique_ptr<ex::rhi::Shader> chunkVS_;
+    std::unique_ptr<ex::rhi::Pipeline> chunkPipeline_;
+    std::unique_ptr<ex::rhi::DescriptorSet> chunkSet_;
+    std::vector<ChunkDraw> chunkDraws_;
+    uint32_t chunkInstanceCount_ = 0;
 
     // Volumetric smoke.
     std::unique_ptr<ex::rhi::Texture> volumeNoiseTexture_;

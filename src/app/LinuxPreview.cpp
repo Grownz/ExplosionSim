@@ -7,6 +7,7 @@
 #include "sim/Simulation.h"
 
 #include "BloomShaders.h"
+#include "ChunkShaders.h"
 #include "CompositeShaders.h"
 #include "GroundShaders.h"
 #include "ParticleExtraShaders.h"
@@ -19,6 +20,7 @@
 #include <DirectXMath.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
@@ -41,6 +43,124 @@ struct MeshRange {
     uint32_t indexOffset = 0;
     uint32_t indexCount = 0;
 };
+
+std::unique_ptr<ex::rhi::Texture> MakeSurfaceDetailTexture(
+    ex::rhi::Device* device) {
+    constexpr int kSize = 256;
+    auto hash = [](int x, int y, int seed) {
+        uint32_t h = uint32_t(x) * 374761393u + uint32_t(y) * 668265263u +
+                     uint32_t(seed) * 2246822519u;
+        h = (h ^ (h >> 13)) * 1274126177u;
+        h ^= h >> 16;
+        return float(h & 0x00ffffffu) / 16777215.0f;
+    };
+    auto wrap = [](int v, int period) {
+        v %= period;
+        return v < 0 ? v + period : v;
+    };
+    auto noise = [&hash, &wrap](float x, float y, int period) {
+        const int x0 = int(std::floor(x));
+        const int y0 = int(std::floor(y));
+        const float fx = x - float(x0);
+        const float fy = y - float(y0);
+        const float sx = fx * fx * (3.0f - 2.0f * fx);
+        const float sy = fy * fy * (3.0f - 2.0f * fy);
+        const int xa = wrap(x0, period);
+        const int ya = wrap(y0, period);
+        const int xb = wrap(x0 + 1, period);
+        const int yb = wrap(y0 + 1, period);
+        const float n00 = hash(xa, ya, period);
+        const float n10 = hash(xb, ya, period);
+        const float n01 = hash(xa, yb, period);
+        const float n11 = hash(xb, yb, period);
+        const float nx0 = n00 + (n10 - n00) * sx;
+        const float nx1 = n01 + (n11 - n01) * sx;
+        return nx0 + (nx1 - nx0) * sy;
+    };
+    auto fbm = [&noise](float x, float y, int basePeriod, int seedOffset) {
+        float value = 0.0f;
+        float amplitude = 0.55f;
+        float scale = 1.0f;
+        int period = basePeriod;
+        for (int octave = 0; octave < 5; ++octave) {
+            value += amplitude * noise(x * scale + float(seedOffset),
+                                       y * scale + float(seedOffset), period);
+            amplitude *= 0.5f;
+            scale *= 2.0f;
+            period *= 2;
+        }
+        return std::clamp(value, 0.0f, 1.0f);
+    };
+
+    std::vector<uint8_t> base(size_t(kSize) * kSize * 4);
+    for (int y = 0; y < kSize; ++y) {
+        for (int x = 0; x < kSize; ++x) {
+            const float u = float(x) / float(kSize);
+            const float v = float(y) / float(kSize);
+            const float grain = fbm(u * 8.0f, v * 8.0f, 8, 0);
+            const float grime = fbm(u * 3.0f, v * 3.0f, 3, 17);
+            const float speckle = hash(x, y, 91);
+            const size_t index = (size_t(y) * kSize + size_t(x)) * 4;
+            base[index + 0] =
+                uint8_t(std::clamp(grain, 0.0f, 1.0f) * 255.0f);
+            base[index + 1] =
+                uint8_t(std::clamp(grime, 0.0f, 1.0f) * 255.0f);
+            base[index + 2] = uint8_t(speckle * 255.0f);
+            base[index + 3] = 255;
+        }
+    }
+
+    std::vector<std::vector<uint8_t>> levels;
+    levels.push_back(std::move(base));
+    int width = kSize;
+    while (width > 1) {
+        const int nextWidth = width / 2;
+        std::vector<uint8_t> next(size_t(nextWidth) * nextWidth * 4);
+        const std::vector<uint8_t>& src = levels.back();
+        for (int y = 0; y < nextWidth; ++y) {
+            for (int x = 0; x < nextWidth; ++x) {
+                for (int channel = 0; channel < 4; ++channel) {
+                    int sum = 0;
+                    for (int dy = 0; dy < 2; ++dy) {
+                        for (int dx = 0; dx < 2; ++dx) {
+                            const size_t index =
+                                (size_t(y * 2 + dy) * width +
+                                 size_t(x * 2 + dx)) *
+                                    4 +
+                                size_t(channel);
+                            sum += src[index];
+                        }
+                    }
+                    const size_t index =
+                        (size_t(y) * nextWidth + size_t(x)) * 4 +
+                        size_t(channel);
+                    next[index] = uint8_t(sum / 4);
+                }
+            }
+        }
+        levels.push_back(std::move(next));
+        width = nextWidth;
+    }
+
+    ex::rhi::TextureDesc desc{};
+    desc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+    desc.width = kSize;
+    desc.height = kSize;
+    desc.mipLevels = uint32_t(levels.size());
+    desc.usage = ex::rhi::TextureUsage::Sampled;
+    std::vector<ex::rhi::TextureSubresource> subresources(levels.size());
+    int levelWidth = kSize;
+    for (size_t level = 0; level < levels.size(); ++level) {
+        subresources[level].data = levels[level].data();
+        subresources[level].width = uint32_t(levelWidth);
+        subresources[level].height = uint32_t(levelWidth);
+        subresources[level].rowPitch = uint32_t(levelWidth * 4);
+        levelWidth = std::max(1, levelWidth / 2);
+    }
+    desc.subresources = subresources.data();
+    desc.subresourceCount = uint32_t(subresources.size());
+    return device->CreateTexture(desc);
+}
 
 } // namespace
 
@@ -99,6 +219,7 @@ void LinuxPreview::Shutdown() {
     volumePipeline_.reset();
     volumePS_.reset();
     volumeVS_.reset();
+    surfaceSampler_.reset();
     volumeNoiseSampler_.reset();
     volumeDepthTexture_.reset();
     volumeAuxTexture_.reset();
@@ -111,6 +232,12 @@ void LinuxPreview::Shutdown() {
     scenePipeline_.reset();
     scenePS_.reset();
     sceneVS_.reset();
+    chunkSet_.reset();
+    chunkPipeline_.reset();
+    chunkVS_.reset();
+    chunkInstanceBuffer_.reset();
+    chunkIndexBuffer_.reset();
+    chunkVertexBuffer_.reset();
     surfaceTexture_.reset();
     sceneCascadeBuffer_.reset();
     sceneIndexBuffer_.reset();
@@ -290,23 +417,13 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
     volumeSampler_ = device->CreateSampler(volumeSamplerDesc);
     volumeNoiseSampler_ = device->CreateSampler(volumeSamplerDesc);
 
-    const uint8_t surfacePixels[16] = {
-        128, 128, 128, 255, 128, 128, 128, 255,
-        128, 128, 128, 255, 128, 128, 128, 255,
-    };
-    ex::rhi::TextureSubresource surfaceSubresource{};
-    surfaceSubresource.data = surfacePixels;
-    surfaceSubresource.width = 2;
-    surfaceSubresource.height = 2;
-    surfaceSubresource.rowPitch = 8;
-    ex::rhi::TextureDesc surfaceDesc{};
-    surfaceDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
-    surfaceDesc.width = 2;
-    surfaceDesc.height = 2;
-    surfaceDesc.usage = ex::rhi::TextureUsage::Sampled;
-    surfaceDesc.subresources = &surfaceSubresource;
-    surfaceDesc.subresourceCount = 1;
-    surfaceTexture_ = device->CreateTexture(surfaceDesc);
+    ex::rhi::SamplerDesc surfaceSamplerDesc{};
+    surfaceSamplerDesc.linear = true;
+    surfaceSamplerDesc.wrap = true;
+    surfaceSamplerDesc.maxAnisotropy = 8;
+    surfaceSampler_ = device->CreateSampler(surfaceSamplerDesc);
+
+    surfaceTexture_ = MakeSurfaceDetailTexture(device);
 
     float cascade[16] = {};
     cascade[0] = 1.0f;
@@ -377,7 +494,8 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
               shadowConstants_ && volumeTexture_ && volumeAuxTexture_ &&
               volumeNoiseTexture_ && volumeLightTexture_ &&
               volumeDepthTexture_ && volumeNoiseSampler_ &&
-              shadowSampler_ && volumeSampler_ && surfaceTexture_ &&
+              shadowSampler_ && volumeSampler_ && surfaceSampler_ &&
+              surfaceTexture_ &&
               sceneCascadeBuffer_ && bloomTexture_ && bloomDownTarget_ &&
               bloomUpTarget_ && shockTarget_ && shockDepthProxy_ &&
               bloomConstants_ && commandList_;
@@ -580,6 +698,25 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
     pipelineDesc.cullMode = ex::rhi::CullMode::None;
     scenePipeline_ = device->CreatePipeline(pipelineDesc);
 
+    ex::rhi::ShaderDesc chunkShaderDesc{};
+    chunkShaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+    chunkShaderDesc.data = kSceneVSChunk;
+    chunkShaderDesc.size = kSceneVSChunkSize;
+    chunkShaderDesc.name = "VSChunk";
+    chunkVS_ = device->CreateShader(chunkShaderDesc);
+
+    ex::rhi::VertexAttribute chunkAttributes[] = {
+        {"POSITION", 0, ex::rhi::VertexFormat::Float3, 0, 0},
+        {"NORMAL", 0, ex::rhi::VertexFormat::Float3, 12, 0},
+        {"CHUNKID", 0, ex::rhi::VertexFormat::UInt, 24, 0},
+    };
+    ex::rhi::PipelineDesc chunkPipelineDesc = pipelineDesc;
+    chunkPipelineDesc.vertexShader = chunkVS_.get();
+    chunkPipelineDesc.vertexAttributes = chunkAttributes;
+    chunkPipelineDesc.vertexAttributeCount = 3;
+    chunkPipelineDesc.vertexStride = sizeof(ChunkVertex);
+    chunkPipeline_ = device->CreatePipeline(chunkPipelineDesc);
+
     return sceneVertexBuffer_ && sceneIndexBuffer_ && sceneVS_ && scenePS_ &&
            scenePipeline_;
 }
@@ -603,6 +740,8 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
         if (object.type == ex::scene::SceneObjectType::Tree) {
             world = DirectX::XMMatrixScaling(object.size.x * 2.0f, object.size.y,
                                              object.size.x * 2.0f) *
+                    DirectX::XMMatrixRotationY(
+                        DirectX::XMConvertToRadians(object.yaw)) *
                     DirectX::XMMatrixTranslation(object.position.x, 0.0f,
                                                  object.position.z);
             item.params[3] = 2.0f;
@@ -611,6 +750,8 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
             const float uniform =
                 object.size.z > 1e-4f ? object.size.z / 2.8f : 1.0f;
             world = DirectX::XMMatrixScaling(uniform, uniform, uniform) *
+                    DirectX::XMMatrixRotationY(
+                        DirectX::XMConvertToRadians(object.yaw)) *
                     DirectX::XMMatrixTranslation(object.position.x, 0.0f,
                                                  object.position.z);
             item.params[3] = 1.0f;
@@ -618,6 +759,8 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
         } else {
             world = DirectX::XMMatrixScaling(object.size.x, object.size.y,
                                              object.size.z) *
+                    DirectX::XMMatrixRotationY(
+                        DirectX::XMConvertToRadians(object.yaw)) *
                     DirectX::XMMatrixTranslation(object.position.x,
                                                  object.position.y,
                                                  object.position.z);
@@ -684,7 +827,7 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
         set->SetImage(14, surfaceTexture_.get());
         set->SetImage(15, volumeTexture_.get());
         set->SetSampler(18, shadowSampler_.get());
-        set->SetSampler(19, volumeSampler_.get());
+        set->SetSampler(19, surfaceSampler_.get());
         set->SetSampler(20, volumeSampler_.get());
 
         SceneDraw draw;
@@ -702,7 +845,147 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
     LogInfo("Preview scene: buildings=%zu vehicles=%zu trees=%zu",
             buildingInstances.size(), vehicleInstances.size(),
             treeInstances.size());
+    if (!BuildChunks(scene)) {
+        return false;
+    }
     return !sceneDraws_.empty();
+}
+
+bool LinuxPreview::BuildChunks(const ex::scene::Scene& scene) {
+    chunkDraws_.clear();
+    chunkVertexBuffer_.reset();
+    chunkIndexBuffer_.reset();
+    chunkInstanceBuffer_.reset();
+    chunkSet_.reset();
+    chunkInstanceCount_ = 0;
+    if (!device_ || !chunkPipeline_ ||
+        !scene.Settings().voronoiChunks) {
+        return true;
+    }
+
+    std::vector<ChunkVertex> vertices;
+    std::vector<uint32_t> indices;
+    std::vector<SceneInstance> instances;
+    const auto& objects = scene.Objects();
+    const auto& bodies = scene.Physics().Bodies();
+    uint32_t chunkId = 0;
+    for (size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex) {
+        const ex::scene::SceneObject& object = objects[objectIndex];
+        if (object.chunks.empty() ||
+            object.chunks.front().hullPositions.empty()) {
+            continue;
+        }
+        ChunkDraw draw;
+        draw.indexOffset = uint32_t(indices.size());
+        draw.objectIndex = int(objectIndex);
+        for (const ex::scene::SceneChunk& chunk : object.chunks) {
+            if (chunk.hullPositions.empty() ||
+                chunk.hullNormals.size() != chunk.hullPositions.size()) {
+                continue;
+            }
+            const uint32_t id = chunkId++;
+            const uint32_t base = uint32_t(vertices.size());
+            for (size_t v = 0; v < chunk.hullPositions.size(); ++v) {
+                vertices.push_back(
+                    {chunk.hullPositions[v], chunk.hullNormals[v], id});
+            }
+            for (uint32_t index : chunk.hullIndices) {
+                indices.push_back(base + index);
+            }
+
+            SceneInstance item{};
+            DirectX::XMMATRIX world = DirectX::XMMatrixIdentity();
+            if (chunk.bodyIndex >= 0 &&
+                chunk.bodyIndex < int(bodies.size())) {
+                const ex::scene::RigidBody& body = bodies[chunk.bodyIndex];
+                const DirectX::XMMATRIX initial =
+                    DirectX::XMMatrixRotationQuaternion(
+                        DirectX::XMLoadFloat4(&chunk.orientation));
+                const DirectX::XMMATRIX current =
+                    DirectX::XMMatrixRotationQuaternion(
+                        DirectX::XMLoadFloat4(&body.orientation));
+                world = DirectX::XMMatrixTranslation(
+                            -chunk.center.x, -chunk.center.y, -chunk.center.z) *
+                        DirectX::XMMatrixTranspose(initial) * current *
+                        DirectX::XMMatrixTranslation(body.position.x,
+                                                     body.position.y,
+                                                     body.position.z);
+            }
+            DirectX::XMFLOAT4X4 matrix{};
+            DirectX::XMStoreFloat4x4(&matrix, world);
+            std::memcpy(item.transform, &matrix, sizeof(matrix));
+            item.color[0] = chunk.color.x;
+            item.color[1] = chunk.color.y;
+            item.color[2] = chunk.color.z;
+            item.color[3] = chunk.color.w;
+            item.params[0] = object.damageAmount * 0.7f;
+            item.params[3] = 3.0f;
+            item.textureScale[0] = 1.0f;
+            item.textureScale[1] = 1.0f;
+            item.textureScale[2] = 1.0f;
+            item.textureScale[3] = float(object.meshVariant & 3);
+            instances.push_back(item);
+        }
+        draw.indexCount = uint32_t(indices.size()) - draw.indexOffset;
+        if (draw.indexCount > 0) {
+            chunkDraws_.push_back(draw);
+        }
+    }
+    if (vertices.empty() || indices.empty()) {
+        return true;
+    }
+
+    ex::rhi::BufferDesc vertexDesc{};
+    vertexDesc.size = vertices.size() * sizeof(ChunkVertex);
+    vertexDesc.usage = ex::rhi::BufferUsage::Vertex;
+    vertexDesc.initialData = vertices.data();
+    chunkVertexBuffer_ = device_->CreateBuffer(vertexDesc);
+
+    ex::rhi::BufferDesc indexDesc{};
+    indexDesc.size = indices.size() * sizeof(uint32_t);
+    indexDesc.usage = ex::rhi::BufferUsage::Index;
+    indexDesc.initialData = indices.data();
+    chunkIndexBuffer_ = device_->CreateBuffer(indexDesc);
+
+    ex::rhi::BufferDesc instanceDesc{};
+    instanceDesc.size =
+        std::max<size_t>(1, instances.size()) * sizeof(SceneInstance);
+    instanceDesc.usage = ex::rhi::BufferUsage::Storage |
+                         ex::rhi::BufferUsage::ShaderRead |
+                         ex::rhi::BufferUsage::Dynamic;
+    instanceDesc.structureStride = sizeof(SceneInstance);
+    instanceDesc.initialData =
+        instances.empty() ? nullptr : instances.data();
+    chunkInstanceBuffer_ = device_->CreateBuffer(instanceDesc);
+
+    if (chunkPipeline_) {
+        chunkSet_ = device_->CreateDescriptorSet(chunkPipeline_.get());
+    }
+    if (chunkSet_ && chunkInstanceBuffer_) {
+        chunkSet_->SetBuffer(0, frameConstants_.get(), 0,
+                             frameConstants_->Size());
+        chunkSet_->SetBuffer(2, shadowConstants_.get(), 0,
+                             shadowConstants_->Size());
+        chunkSet_->SetBuffer(3, sceneCascadeBuffer_.get(), 0,
+                             sceneCascadeBuffer_->Size());
+        chunkSet_->SetBuffer(8, chunkInstanceBuffer_.get(), 0,
+                             chunkInstanceBuffer_->Size());
+        chunkSet_->SetBuffer(9, chunkInstanceBuffer_.get(), 0,
+                             chunkInstanceBuffer_->Size());
+        for (int i = 0; i < 4; ++i) {
+            chunkSet_->SetImage(uint32_t(10 + i), shadowTextures_[i].get());
+        }
+        chunkSet_->SetImage(14, surfaceTexture_.get());
+        chunkSet_->SetImage(15, volumeTexture_.get());
+        chunkSet_->SetSampler(18, shadowSampler_.get());
+        chunkSet_->SetSampler(19, surfaceSampler_.get());
+        chunkSet_->SetSampler(20, volumeSampler_.get());
+    }
+    chunkInstanceCount_ = uint32_t(instances.size());
+    LogInfo("Preview chunks: %u chunks in %zu objects", chunkInstanceCount_,
+            chunkDraws_.size());
+    return chunkVertexBuffer_ && chunkIndexBuffer_ && chunkInstanceBuffer_ &&
+           chunkSet_;
 }
 
 bool LinuxPreview::CreateVolume(ex::rhi::Device* device) {
@@ -1334,6 +1617,24 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
             commandList_->BindDescriptorSet(draw.set.get());
             commandList_->DrawIndexedInstanced(draw.indexCount,
                                                draw.instanceCount,
+                                               draw.indexOffset);
+        }
+    }
+    if (chunkPipeline_ && chunkSet_ && chunkVertexBuffer_ &&
+        chunkIndexBuffer_ && !chunkDraws_.empty()) {
+        const auto& objects = simulation.Scene().Objects();
+        commandList_->BindPipeline(chunkPipeline_.get());
+        commandList_->BindVertexBuffer(chunkVertexBuffer_.get(),
+                                       sizeof(ChunkVertex));
+        commandList_->BindIndexBuffer(chunkIndexBuffer_.get());
+        commandList_->BindDescriptorSet(chunkSet_.get());
+        for (const ChunkDraw& draw : chunkDraws_) {
+            if (draw.objectIndex < 0 ||
+                draw.objectIndex >= int(objects.size()) ||
+                !objects[draw.objectIndex].collapsed) {
+                continue;
+            }
+            commandList_->DrawIndexedInstanced(draw.indexCount, 1,
                                                draw.indexOffset);
         }
     }

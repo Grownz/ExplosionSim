@@ -12,11 +12,11 @@ context. `Renderer` owns its HDR/bloom targets as RHI textures.
 M2 now has an SDL3 window layer, a Vulkan 1.2 device with an offscreen target,
 swapchain, clear, present and readback (`vulkan_smoke`), and the native
 `explosion_linux` application shell with resize and PNG/PPM captures. The shell
-drives `sim::Simulation`, uploads the CPU volume bake and the additive/fire/alpha
-particle batches, and renders the reduced-order chain through the RHI. Voronoi
-chunk geometry, settings-file loading and the remaining capture-parity work are
-next. See [`linux-build.md`](linux-build.md) for the current Linux build
-instructions.
+drives `sim::Simulation`, loads the Windows settings keys, uploads the CPU volume
+bake and the additive/fire/alpha particle batches, renders Voronoi chunks and
+runs the reduced-order chain through the RHI. The CI `capture-parity` job
+compares Windows and Linux screenshots with a documented tolerance. See
+[`linux-build.md`](linux-build.md) for the current Linux build instructions.
 
 ## 1. Goal
 
@@ -249,10 +249,11 @@ from the shared mesh library, plus a volumetric smoke cloud, an additive
 particle burst and the shock-front refraction, through the same frame. The
 Vulkan viewport flips Y so both backends share D3D's screen-space convention.
 The `vulkan_shaders` CMake target compiles all shader entry points to SPIR-V
-with DXC; the native Linux shell now drives `sim::Simulation`, uploads the CPU
-volume bake and the additive/fire/alpha particle batches, and runs the sky,
-ground, scene, volume, particle, shock, bloom and composite chain on top of the
-RHI. Voronoi chunks, settings-file loading and capture parity are next.
+with DXC; the native Linux shell now drives `sim::Simulation`, loads the shared
+settings keys, uploads the CPU volume bake and the additive/fire/alpha particle
+batches, renders Voronoi chunks, and runs the sky, ground, scene, volume,
+particle, shock, bloom and composite chain on top of the RHI. CI compares the
+Windows and Linux captures with a tolerance.
 
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,
   particles and the shadow maps.

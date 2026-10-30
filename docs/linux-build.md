@@ -102,17 +102,22 @@ the additive/fire/alpha particle batches, the shock-front refraction, bloom and
 the tonemap composite. The camera follows the same reduced-order framing as the
 Windows app. `--screenshot` accepts `.png` and `.ppm`; the scene seed, density,
 charge, burst height, volume resolution and the main render settings can be
-overridden from the command line for capture comparisons. Voronoi chunk
-geometry and loading the Windows `settings.ini` are the remaining parity gaps.
+overridden from the command line for capture comparisons. The shell loads the
+same `settings.ini` keys as the Windows app and renders the Voronoi chunk
+geometry for collapsed buildings. `tools/capture_settings.ini` is the shared
+deterministic capture profile; pass `--settings <path>` to load any compatible
+file.
 
 For a capture comparison, render the same settings on both platforms and run:
 
 ```sh
-python3 tools/compare_png.py windows.png linux.png --tolerance 20
+python3 tools/compare_png.py windows.png linux.png --tolerance 20 \
+  --max-fraction 0.20
 ```
 
-The current reference capture is at about 13/255 mean absolute RGB difference;
-the tool also reports the fraction of pixels above a 32/255 threshold.
+The current reference capture is at about 13/255 mean absolute RGB difference
+and 16.5 % of pixels above the 32/255 threshold; the CI `capture-parity` job
+enforces the 20/255 mean and 20 % limits.
 
 ## Vulkan smoke test
 

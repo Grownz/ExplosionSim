@@ -74,14 +74,18 @@ jobs:
 
       - name: Linux application screenshot (lavapipe)
         run: |
-          ./build/explosion_linux --headless --width 320 --height 180 \
-            --frames 2 --time 0.1 --charge 0.2 --hob 23.03 \
-            --distance-scale 0.55 --scene-seed 69715 --scene-density 1.79 \
-            --volume-resolution 128 --raymarch-steps 132 \
-            --bloom-strength 0.61 --particle-scale 1.67 \
-            --sun-azimuth 255 --sun-elevation 22 \
+          ./build/explosion_linux --settings tools/capture_settings.ini \
+            --headless --width 320 --height 180 --frames 2 --time 0.1 \
+            --charge 0.2 --distance-scale 0.55 \
             --screenshot /tmp/explosion_linux.png
           test -s /tmp/explosion_linux.png
+          cp /tmp/explosion_linux.png linux_capture.png
+
+      - name: Upload Linux screenshot
+        uses: actions/upload-artifact@v6
+        with:
+          name: ExplosionSim-linux-screenshot
+          path: linux_capture.png
 
   windows:
     runs-on: windows-2022
@@ -107,8 +111,48 @@ jobs:
           Copy-Item README.md, LICENSE artifact/
           Copy-Item third_party/miniz/LICENSE artifact/LICENSE-miniz.txt
 
+      - name: Capture reference screenshot
+        shell: pwsh
+        run: |
+          Copy-Item tools/capture_settings.ini build/Release/settings.ini
+          .\build\Release\ExplosionSim.exe --screenshot win_capture.png `
+            --width 320 --height 180 --time 0.1 --reduced-order `
+            --charge 0.2 --distance-scale 0.55 --no-update-check
+          if (!(Test-Path win_capture.png)) { throw "Screenshot missing" }
+
+      - name: Upload reference screenshot
+        uses: actions/upload-artifact@v6
+        with:
+          name: ExplosionSim-win-screenshot
+          path: win_capture.png
+
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
           name: ExplosionSim-win64
           path: artifact/
+
+  capture-parity:
+    runs-on: ubuntu-24.04
+    needs: [linux-core, windows]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download Windows screenshot
+        uses: actions/download-artifact@v6
+        with:
+          name: ExplosionSim-win-screenshot
+          path: artifacts/windows
+
+      - name: Download Linux screenshot
+        uses: actions/download-artifact@v6
+        with:
+          name: ExplosionSim-linux-screenshot
+          path: artifacts/linux
+
+      - name: Compare screenshots
+        run: |
+          python3 tools/compare_png.py \
+            artifacts/windows/win_capture.png \
+            artifacts/linux/linux_capture.png \
+            --tolerance 20 --max-fraction 0.20

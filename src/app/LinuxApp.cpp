@@ -11,6 +11,7 @@
 #include "sim/Simulation.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -18,7 +19,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,15 +39,26 @@ struct Options {
     double captureTime = 0.12;
     double chargeMassKg = -1.0;
     double heightOfBurstM = -1.0;
+    double timeScale = 0.06;
+    double fuseSeconds = 2.0;
+    double windSpeed = 1.0;
+    double ambientTemperature = 288.15;
+    int particleBudget = 40000;
     float azimuth = 128.0f;
     float elevation = 14.0f;
     float distanceScale = 1.0f;
-    uint32_t sceneSeed = 0;
+    uint32_t sceneSeed = 69707;
     bool sceneSeedSet = false;
     float sceneDensity = 1.0f;
     bool sceneDensitySet = false;
     bool sceneEnabled = true;
     bool sceneEnabledSet = false;
+    int sceneQuality = 1;
+    float sceneChunkScale = 1.0f;
+    bool sceneVoronoiChunks = true;
+    bool sceneBuildings = true;
+    bool sceneVehicles = true;
+    bool sceneVegetation = true;
     int volumeResolution = 0;
     int raymarchSteps = 128;
     float exposure = 0.8f;
@@ -132,6 +146,118 @@ bool ParseSeed(const char* text, uint32_t& value) {
     return true;
 }
 
+std::string Trim(std::string value) {
+    const size_t first = value.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) {
+        return {};
+    }
+    const size_t last = value.find_last_not_of(" \t\r\n");
+    return value.substr(first, last - first + 1);
+}
+
+bool IniBool(const std::string& value, bool fallback) {
+    std::string lowered = value;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) { return char(std::tolower(c)); });
+    if (lowered == "true" || lowered == "1" || lowered == "yes") {
+        return true;
+    }
+    if (lowered == "false" || lowered == "0" || lowered == "no") {
+        return false;
+    }
+    return fallback;
+}
+
+void LoadSettingsFile(const std::string& path, Options& options) {
+    std::ifstream file(path);
+    if (!file) {
+        return;
+    }
+    std::map<std::string, std::string> values;
+    std::string line;
+    while (std::getline(file, line)) {
+        line = Trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == '[') {
+            continue;
+        }
+        const size_t separator = line.find('=');
+        if (separator == std::string::npos) {
+            continue;
+        }
+        values[Trim(line.substr(0, separator))] =
+            Trim(line.substr(separator + 1));
+    }
+    auto number = [&](const char* key, double fallback) {
+        const auto it = values.find(key);
+        return it == values.end() ? fallback : std::atof(it->second.c_str());
+    };
+    auto integer = [&](const char* key, int fallback) {
+        const auto it = values.find(key);
+        return it == values.end() ? fallback : std::atoi(it->second.c_str());
+    };
+    auto boolean = [&](const char* key, bool fallback) {
+        const auto it = values.find(key);
+        return it == values.end() ? fallback : IniBool(it->second, fallback);
+    };
+
+    options.chargeMassKg = number("chargeMassKg", options.chargeMassKg);
+    options.heightOfBurstM =
+        number("heightOfBurstM", options.heightOfBurstM);
+    options.timeScale = number("timeScale", options.timeScale);
+    options.fuseSeconds = number("fuseSeconds", options.fuseSeconds);
+    options.windSpeed = number("windSpeedMs", options.windSpeed);
+    options.ambientTemperature =
+        number("ambientTemperatureK", options.ambientTemperature);
+    options.particleBudget =
+        integer("particleBudget", options.particleBudget);
+    options.volumeResolution =
+        integer("volumeResolution", options.volumeResolution);
+
+    options.sceneEnabled = boolean("sceneEnabled", options.sceneEnabled);
+    options.sceneEnabledSet = true;
+    options.sceneSeed =
+        uint32_t(std::clamp(integer("sceneSeed", int(options.sceneSeed)), 0,
+                            1000000));
+    options.sceneSeedSet = true;
+    options.sceneDensity =
+        float(number("sceneDensity", options.sceneDensity));
+    options.sceneDensitySet = true;
+    options.sceneBuildings =
+        boolean("sceneBuildings", options.sceneBuildings);
+    options.sceneVehicles = boolean("sceneVehicles", options.sceneVehicles);
+    options.sceneVegetation =
+        boolean("sceneVegetation", options.sceneVegetation);
+    options.sceneVoronoiChunks =
+        boolean("sceneVoronoiChunks", options.sceneVoronoiChunks);
+    options.sceneQuality =
+        std::clamp(integer("sceneQuality", options.sceneQuality), 0, 2);
+    options.sceneChunkScale =
+        float(std::clamp(number("sceneChunkScale", options.sceneChunkScale),
+                         0.25, 2.0));
+
+    options.raymarchSteps =
+        std::clamp(integer("raymarchSteps", options.raymarchSteps), 16, 512);
+    options.exposure =
+        float(std::clamp(number("exposure", options.exposure), 0.01, 8.0));
+    options.bloomStrength =
+        float(std::clamp(number("bloomStrength", options.bloomStrength), 0.0,
+                         4.0));
+    options.volumeEnabled =
+        boolean("enableVolume", options.volumeEnabled);
+    options.particlesEnabled =
+        boolean("enableParticles", options.particlesEnabled);
+    options.groundEnabled = boolean("enableGround", options.groundEnabled);
+    options.bloomEnabled = boolean("enableBloom", options.bloomEnabled);
+    options.showGrid = boolean("showGrid", options.showGrid);
+    options.sunAzimuth =
+        float(number("sunAzimuthDeg", options.sunAzimuth));
+    options.sunElevation =
+        float(number("sunElevationDeg", options.sunElevation));
+    options.particleScale =
+        float(std::clamp(number("particleScale", options.particleScale), 0.0,
+                         8.0));
+}
+
 bool ParseOptions(int argc, char** argv, Options& options) {
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
@@ -142,6 +268,15 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         if (std::strcmp(arg, "--version") == 0) {
             std::printf("%s\n", EXPLOSION_VERSION_STRING);
             std::exit(0);
+        }
+        if (std::strcmp(arg, "--settings") == 0 && i + 1 < argc) {
+            ++i;
+            continue;
+        }
+        if (std::strcmp(arg, "--reduced-order") == 0 ||
+            std::strcmp(arg, "--high-fidelity") == 0 ||
+            std::strcmp(arg, "--no-update-check") == 0) {
+            continue;
         }
         if (std::strcmp(arg, "--headless") == 0) {
             options.headless = true;
@@ -476,6 +611,38 @@ bool WriteImage(const std::string& path, const std::vector<uint8_t>& bgra,
 
 int main(int argc, char** argv) {
     Options options{};
+    std::string settingsPath;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::strcmp(argv[i], "--settings") == 0) {
+            settingsPath = argv[i + 1];
+            break;
+        }
+    }
+    if (settingsPath.empty()) {
+        const char* home = std::getenv("HOME");
+        const std::filesystem::path candidates[] = {
+            std::filesystem::path("settings.ini"),
+            std::filesystem::path(argv[0]).parent_path() / "settings.ini",
+            home ? std::filesystem::path(home) / ".config" /
+                       "ExplosionSim" / "settings.ini"
+                 : std::filesystem::path(),
+        };
+        for (const auto& candidate : candidates) {
+            if (!candidate.empty() &&
+                std::filesystem::exists(candidate)) {
+                settingsPath = candidate.string();
+                break;
+            }
+        }
+    }
+    if (!settingsPath.empty()) {
+        if (std::filesystem::exists(settingsPath)) {
+            LoadSettingsFile(settingsPath, options);
+            ex::LogInfo("Loaded settings: %s", settingsPath.c_str());
+        } else {
+            ex::LogWarn("Settings file not found: %s", settingsPath.c_str());
+        }
+    }
     if (!ParseOptions(argc, argv, options)) {
         PrintUsage();
         return 2;
@@ -526,21 +693,29 @@ int main(int argc, char** argv) {
     simulationSettings.mode = ex::sim::SimulationMode::ReducedOrder;
     simulationSettings.gpuParticles = false;
     simulationSettings.gpuVolumeBake = false;
-    simulationSettings.fuseSeconds = options.headless ? 0.0 : 2.0;
+    simulationSettings.timeScale = options.timeScale;
+    simulationSettings.fuseSeconds =
+        options.headless ? 0.0 : options.fuseSeconds;
+    simulationSettings.windSpeedMs = options.windSpeed;
+    simulationSettings.ambientTemperatureK = options.ambientTemperature;
+    simulationSettings.particleBudget =
+        std::clamp(options.particleBudget, 1024, 200000);
     simulationSettings.volumeResolution =
         options.volumeResolution > 0
             ? std::clamp(options.volumeResolution, 32, 512)
             : 128;
-    if (options.sceneSeedSet) {
-        simulationSettings.scene.seed = options.sceneSeed;
-    }
-    if (options.sceneDensitySet) {
-        simulationSettings.scene.density =
-            std::clamp(options.sceneDensity, 0.0f, 4.0f);
-    }
-    if (options.sceneEnabledSet) {
-        simulationSettings.scene.enabled = options.sceneEnabled;
-    }
+    simulationSettings.scene.seed = options.sceneSeed;
+    simulationSettings.scene.density =
+        std::clamp(options.sceneDensity, 0.0f, 4.0f);
+    simulationSettings.scene.enabled = options.sceneEnabled;
+    simulationSettings.scene.quality =
+        std::clamp(options.sceneQuality, 0, 2);
+    simulationSettings.scene.chunkScale =
+        std::clamp(options.sceneChunkScale, 0.25f, 2.0f);
+    simulationSettings.scene.voronoiChunks = options.sceneVoronoiChunks;
+    simulationSettings.scene.buildings = options.sceneBuildings;
+    simulationSettings.scene.vehicles = options.sceneVehicles;
+    simulationSettings.scene.vegetation = options.sceneVegetation;
 
     ex::sim::Simulation simulation;
     if (!simulation.Initialize(simulationSettings, pool, false)) {
