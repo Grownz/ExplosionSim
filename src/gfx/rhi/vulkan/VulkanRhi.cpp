@@ -230,8 +230,9 @@ bool Device::CreateInstance() {
     info.enabledLayerCount = uint32_t(layers.size());
     info.ppEnabledLayerNames = layers.data();
 
-    if (vkCreateInstance(&info, nullptr, &instance_) != VK_SUCCESS) {
-        LogError("Vulkan instance creation failed.");
+    const VkResult result = vkCreateInstance(&info, nullptr, &instance_);
+    if (result != VK_SUCCESS) {
+        LogError("Vulkan instance creation failed (%d).", int(result));
         return false;
     }
 

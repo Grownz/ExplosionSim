@@ -29,8 +29,8 @@ jobs:
 
       - name: Vulkan smoke (lavapipe)
         run: |
-          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
-            ./build/vulkan_smoke --headless --width 320 --height 180 \
+          ls -l /usr/share/vulkan/icd.d || true
+          ./build/vulkan_smoke --headless --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_smoke.ppm
 
   windows:
