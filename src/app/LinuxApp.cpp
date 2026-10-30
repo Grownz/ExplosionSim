@@ -3,9 +3,12 @@
 
 #include "Version.h"
 #include "app/LinuxPreview.h"
+#include "app/SettingsPath.h"
+#include "app/SplashSdl.h"
 #include "core/Log.h"
 #include "core/ThreadPool.h"
 #include "gfx/Camera.h"
+#include "gfx/ImageIO.h"
 #include "gfx/GpuVolumeBaker.h"
 #include "gfx/GpuParticleSystem.h"
 #include "gfx/RhiEulerSolver.h"
@@ -35,6 +38,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -82,6 +86,9 @@ struct Options {
     bool solverHemisphere = false;
     bool solverBenchmark = false;
     long long solverStepCount = 0;
+    bool splashTest = false;
+    std::string splashScreenshot;
+    std::string writeSettings;
     int raymarchSteps = 128;
     float exposure = 0.8f;
     float bloomStrength = 0.10f;
@@ -120,6 +127,8 @@ void PrintUsage() {
     std::printf("  --solver-time <s>    Solver time for the high-fidelity capture.\n");
     std::printf("  --solver-benchmark   Run the high-fidelity solver benchmark and exit.\n");
     std::printf("  --solver-step-count <n>  Measured solver steps for the benchmark.\n");
+    std::printf("  --splash-test        Show the SDL3 splash briefly and exit.\n");
+    std::printf("  --write-settings <path>  Write the active settings and exit.\n");
     std::printf("  --no-solver-auto-scale  Disable high-fidelity domain auto-scale.\n");
     std::printf("  --raymarch-steps <n>     Volume raymarch steps (default 128).\n");
     std::printf("  --exposure <x>       Tonemap exposure (default 0.8).\n");
@@ -299,6 +308,69 @@ void LoadSettingsFile(const std::string& path, Options& options) {
     options.particleScale =
         float(std::clamp(number("particleScale", options.particleScale), 0.0,
                          8.0));
+    options.gpuParticles = boolean("gpuParticles", options.gpuParticles);
+    options.gpuVolumeBake = boolean("gpuVolumeBake", options.gpuVolumeBake);
+}
+
+const char* IniBoolText(bool value) {
+    return value ? "true" : "false";
+}
+
+bool SaveSettingsFile(const std::string& path, const Options& options) {
+    std::ofstream file(path);
+    if (!file) {
+        return false;
+    }
+    const double chargeMassKg =
+        options.chargeMassKg > 0.0 ? options.chargeMassKg : 0.2;
+    const double heightOfBurstM =
+        options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 0.4;
+    file << "# Explosion Simulator settings written by explosion_linux\n\n";
+    file << "[simulation]\n";
+    file << "chargeMassKg=" << chargeMassKg << "\n";
+    file << "heightOfBurstM=" << heightOfBurstM << "\n";
+    file << "ambientTemperatureK=" << options.ambientTemperature << "\n";
+    file << "windSpeedMs=" << options.windSpeed << "\n";
+    file << "timeScale=" << options.timeScale << "\n";
+    file << "fuseSeconds=" << options.fuseSeconds << "\n";
+    file << "simulationMode=" << (options.highFidelity ? 1 : 0) << "\n";
+    file << "solverResolution="
+         << (options.solverResolution > 0 ? options.solverResolution : 128)
+         << "\n";
+    file << "solverStepsPerFrame="
+         << (options.solverSteps > 0 ? options.solverSteps : 96) << "\n";
+    file << "solverAutoScale=" << IniBoolText(options.solverAutoScale) << "\n";
+    file << "solverHemisphere=" << IniBoolText(options.solverHemisphere)
+         << "\n";
+    file << "particleBudget=" << options.particleBudget << "\n";
+    file << "gpuParticles=" << IniBoolText(options.gpuParticles) << "\n";
+    file << "volumeResolution="
+         << (options.volumeResolution > 0 ? options.volumeResolution : 128)
+         << "\n";
+    file << "gpuVolumeBake=" << IniBoolText(options.gpuVolumeBake) << "\n";
+    file << "sceneEnabled=" << IniBoolText(options.sceneEnabled) << "\n";
+    file << "sceneSeed=" << options.sceneSeed << "\n";
+    file << "sceneDensity=" << options.sceneDensity << "\n";
+    file << "sceneBuildings=" << IniBoolText(options.sceneBuildings) << "\n";
+    file << "sceneVehicles=" << IniBoolText(options.sceneVehicles) << "\n";
+    file << "sceneVegetation=" << IniBoolText(options.sceneVegetation) << "\n";
+    file << "sceneVoronoiChunks=" << IniBoolText(options.sceneVoronoiChunks)
+         << "\n";
+    file << "sceneQuality=" << options.sceneQuality << "\n";
+    file << "sceneChunkScale=" << options.sceneChunkScale << "\n\n";
+    file << "[render]\n";
+    file << "raymarchSteps=" << options.raymarchSteps << "\n";
+    file << "exposure=" << options.exposure << "\n";
+    file << "bloomStrength=" << options.bloomStrength << "\n";
+    file << "enableVolume=" << IniBoolText(options.volumeEnabled) << "\n";
+    file << "enableParticles=" << IniBoolText(options.particlesEnabled) << "\n";
+    file << "enableGround=" << IniBoolText(options.groundEnabled) << "\n";
+    file << "enableBloom=" << IniBoolText(options.bloomEnabled) << "\n";
+    file << "showGrid=" << IniBoolText(options.showGrid) << "\n";
+    file << "sunAzimuthDeg=" << options.sunAzimuth << "\n";
+    file << "sunElevationDeg=" << options.sunElevation << "\n";
+    file << "particleScale=" << options.particleScale << "\n";
+    return file.good();
 }
 
 bool ParseOptions(int argc, char** argv, Options& options) {
@@ -357,6 +429,18 @@ bool ParseOptions(int argc, char** argv, Options& options) {
             options.solverBenchmark = true;
             options.highFidelity = true;
             options.headless = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--splash-test") == 0) {
+            options.splashTest = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--splash-screenshot") == 0 && i + 1 < argc) {
+            options.splashScreenshot = argv[++i];
+            continue;
+        }
+        if (std::strcmp(arg, "--write-settings") == 0 && i + 1 < argc) {
+            options.writeSettings = argv[++i];
             continue;
         }
         if (std::strcmp(arg, "--solver-step-count") == 0 && i + 1 < argc) {
@@ -879,6 +963,35 @@ bool WriteImage(const std::string& path, const std::vector<uint8_t>& bgra,
                : WritePng(path, bgra, width, height);
 }
 
+std::filesystem::path FindAssetDirectory(const char* argv0) {
+    std::error_code error;
+    const std::filesystem::path executable =
+        std::filesystem::weakly_canonical(std::filesystem::path(argv0), error);
+    std::vector<std::filesystem::path> candidates;
+    if (!error) {
+        candidates.push_back(executable.parent_path() / "assets");
+    }
+    candidates.push_back(std::filesystem::current_path() / "assets");
+    candidates.push_back(std::filesystem::path("assets"));
+    for (const auto& candidate : candidates) {
+        if (std::filesystem::exists(candidate / "splash")) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+std::vector<std::string> SplashFrames(const std::filesystem::path& assets) {
+    std::vector<std::string> frames;
+    frames.reserve(20);
+    for (int i = 0; i < 20; ++i) {
+        char name[32] = {};
+        std::snprintf(name, sizeof(name), "frame_%02d.jpg", i);
+        frames.push_back((assets / "splash" / name).string());
+    }
+    return frames;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -895,6 +1008,7 @@ int main(int argc, char** argv) {
         const std::filesystem::path candidates[] = {
             std::filesystem::path("settings.ini"),
             std::filesystem::path(argv[0]).parent_path() / "settings.ini",
+            ex::app::UserSettingsPath(false),
             home ? std::filesystem::path(home) / ".config" /
                        "ExplosionSim" / "settings.ini"
                  : std::filesystem::path(),
@@ -919,6 +1033,62 @@ int main(int argc, char** argv) {
         PrintUsage();
         return 2;
     }
+
+    if (!options.writeSettings.empty()) {
+        if (!SaveSettingsFile(options.writeSettings, options)) {
+            ex::LogError("Could not write settings: %s",
+                         options.writeSettings.c_str());
+            return 1;
+        }
+        ex::LogInfo("Wrote settings: %s", options.writeSettings.c_str());
+        return 0;
+    }
+
+    if (options.splashTest) {
+        ex::app::SplashSdl splash;
+        if (!splash.Show(SplashFrames(FindAssetDirectory(argv[0])),
+                         "Explosion Simulator", "Splash test")) {
+            return 1;
+        }
+        splash.SetProgress(1.0f, "Loading assets...", 0.4f);
+        const auto start = std::chrono::steady_clock::now();
+        while (std::chrono::duration<double>(
+                   std::chrono::steady_clock::now() - start)
+                   .count() < 0.8) {
+            splash.Pump();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        if (!options.splashScreenshot.empty()) {
+            std::vector<uint8_t> pixels;
+            int width = 0;
+            int height = 0;
+            if (splash.Capture(pixels, width, height)) {
+                ex::gfx::SavePng(options.splashScreenshot, pixels.data(), width,
+                                 height);
+            }
+        }
+        splash.Close();
+        return 0;
+    }
+    std::unique_ptr<ex::app::SplashSdl> splash;
+    bool splashVisible = false;
+    const auto splashStart = std::chrono::steady_clock::now();
+    if (!options.headless) {
+        splash = std::make_unique<ex::app::SplashSdl>();
+        splashVisible =
+            splash->Show(SplashFrames(FindAssetDirectory(argv[0])),
+                         "Explosion Simulator", "Native Linux / Vulkan");
+        if (splashVisible) {
+            splash->SetProgress(0.02f, "Initializing SDL3...", 0.10f);
+            splash->Pump();
+        }
+    }
+    auto pumpSplash = [&](float progress, const char* status, float expected) {
+        if (splashVisible) {
+            splash->SetProgress(progress, status, expected);
+            splash->Pump();
+        }
+    };
 
     std::unique_ptr<ex::platform::Window> window;
     ex::rhi::DeviceDesc desc{};
@@ -949,12 +1119,14 @@ int main(int argc, char** argv) {
         desc.surface.user = window.get();
         desc.surface.create = &CreateVulkanSurface;
     }
+    pumpSplash(0.12f, "Creating the window...", 0.10f);
 
     std::unique_ptr<ex::rhi::Device> device = ex::rhi::CreateVulkanDevice(desc);
     if (!device) {
         ex::LogError("Could not create the Vulkan device.");
         return 1;
     }
+    pumpSplash(0.30f, "Initializing Vulkan...", 0.20f);
 
     HighFidelityRuntime highFidelityRuntime;
     bool highFidelity = false;
@@ -1009,6 +1181,7 @@ int main(int argc, char** argv) {
     if (!gpuParticlesReady) {
         ex::LogWarn("GPU particles unavailable; using the CPU particle path.");
     }
+    pumpSplash(0.50f, "Compiling compute pipelines...", 0.25f);
 
     ex::core::ThreadPool pool;
     ex::sim::SimulationSettings simulationSettings{};
@@ -1057,6 +1230,7 @@ int main(int argc, char** argv) {
         ex::LogError("Could not initialize the simulation.");
         return 1;
     }
+    pumpSplash(0.70f, "Generating the scene...", 0.30f);
 
     ex::gfx::Camera camera;
     camera.SetViewport(options.width, options.height);
@@ -1087,6 +1261,7 @@ int main(int argc, char** argv) {
                                 gpuParticles.FireBuffer(),
                                 gpuParticles.IndirectBuffer());
     }
+    pumpSplash(0.92f, "Preparing the renderer...", 0.25f);
     ex::LogInfo("Linux app ready: %dx%d, %s", device->Width(),
                 device->Height(), options.headless ? "offscreen" : "windowed");
 
@@ -1249,6 +1424,17 @@ int main(int argc, char** argv) {
                 }
             }
         }
+    }
+    if (splashVisible) {
+        splash->SetProgress(1.0f, "Ready", 0.15f);
+        while (std::chrono::duration<double>(
+                   std::chrono::steady_clock::now() - splashStart)
+                   .count() < 1.0) {
+            splash->Pump();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        splash->Close();
+        splashVisible = false;
     }
     FrameCamera(simulation, camera, options,
                 highFidelity ? &highFidelityRuntime.solver.Stats() : nullptr);

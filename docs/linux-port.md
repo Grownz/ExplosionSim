@@ -1,13 +1,15 @@
 # Linux port and multi-platform RHI plan
 
-Status: **M0-M4 done.** The portable simulation core builds and passes
+Status: **M0-M5 done.** The portable simulation core builds and passes
 `core_tests` natively on Linux (Ubuntu 24.04 CI job). The backend-neutral RHI
 interfaces, D3D11 and Vulkan backends, `SceneRenderer`, command lists, compute
 pipelines and the native Linux app are in place. The app drives
 `sim::Simulation`, loads the Windows settings keys, uses the GPU volume bake and
 GPU particle integration (with CPU fallbacks), renders Voronoi chunks, runs the
 reduced-order chain through the RHI, and runs the high-fidelity GPU Euler solver
-(`--high-fidelity`) with its render and light volumes.
+(`--high-fidelity`) with its render and light volumes. M5 adds portable
+stb-based image I/O, an SDL3 Linux splash, XDG/`%LOCALAPPDATA%` settings paths
+and a self-contained Linux tar.gz package.
 
 M2 now has an SDL3 window layer, a Vulkan 1.2 device with an offscreen target,
 swapchain, clear, present and readback (`vulkan_smoke`), and the native
@@ -287,15 +289,17 @@ timings as the Windows benchmark.
 
 ### M5 — Splash, image I/O, settings, packaging (10–15 days)
 
-- Replace GDI/WIC splash with SDL3 + SDL_image/SDL_ttf, keeping the 980:640 layout,
-  20 frames and 5 % progress steps.
-- Replace WIC with `stb_image`/`libpng` for PNG/JPEG loading on both platforms.
-- Portable settings paths (`std::filesystem`, XDG on Linux, `%LOCALAPPDATA%` on Windows).
-- Linux package: AppImage or tar.gz with assets; desktop entry and icon.
-- Updater: Linux v1 uses GitHub releases and the package manager; the Windows
-  self-updater stays behind a platform interface and is disabled on Linux.
-- Acceptance: splash animation, settings round-trip and screenshot loading work on
-  Linux; package runs from a clean directory.
+Status: **done.** WIC is replaced by stb_image/stb_image_write on both
+platforms. The Linux shell uses a cooperative SDL3 splash with the same
+980x640 layout, 20 frames and 5 % progress steps as the Windows splash;
+`--splash-test` renders it with the dummy video driver for CI. Settings use an
+XDG path on Linux and `%LOCALAPPDATA%` on Windows while still preferring a
+portable `settings.ini` next to the executable. `--write-settings` round-trips
+the active profile exactly. `package_linux` produces a self-contained tar.gz
+with the binary, assets, desktop entry, icon and README; CI extracts it and runs
+a parity capture from the clean directory. The Windows splash still uses GDI for
+its threaded animation; its image decoding now goes through stb. The Linux v1
+updater is the GitHub release archive (no self-updater).
 
 ### M6 — Parity, performance and hardening (10–20 days)
 

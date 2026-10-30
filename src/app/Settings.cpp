@@ -1,5 +1,6 @@
 #include "app/Settings.h"
 
+#include "app/SettingsPath.h"
 #include "gfx/Shader.h"
 
 #include <algorithm>
@@ -102,9 +103,15 @@ long long ParseLongLong(const std::map<std::string, std::string>& values, const 
 } // namespace
 
 std::wstring DefaultSettingsPath() {
+    // A settings.ini next to the executable or in the working directory keeps
+    // portable installs working. Otherwise fall back to the per-user location.
     const std::wstring resolved = ex::gfx::ResolveAssetPath(L"settings.ini");
     if (!resolved.empty()) {
         return resolved;
+    }
+    const std::filesystem::path user = ex::app::UserSettingsPath(true);
+    if (!user.empty()) {
+        return user.wstring();
     }
     return L"settings.ini";
 }

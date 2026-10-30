@@ -2,119 +2,104 @@
 
 #include "core/Log.h"
 
-#include <wincodec.h>
-#include <wrl/client.h>
+#include <filesystem>
+
+#ifdef _MSC_VER
+#pragma warning(push, 0)
+#endif
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace ex::gfx {
 
+namespace {
+
+std::string ToUtf8(const std::wstring& path) {
+#ifdef _WIN32
+    if (path.empty()) {
+        return {};
+    }
+    const int size = WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, nullptr, 0,
+                                         nullptr, nullptr);
+    if (size <= 0) {
+        return {};
+    }
+    std::string result(size_t(size - 1), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, path.c_str(), -1, result.data(), size, nullptr,
+                        nullptr);
+    return result;
+#else
+    return std::filesystem::path(path).string();
+#endif
+}
+
+} // namespace
+
+bool SavePng(const std::string& path, const uint8_t* bgra, int width, int height) {
+    if (!bgra || width <= 0 || height <= 0 || path.empty()) {
+        return false;
+    }
+    const size_t pixels = size_t(width) * size_t(height);
+    std::vector<uint8_t> rgba(pixels * 4);
+    for (size_t i = 0; i < pixels; ++i) {
+        rgba[i * 4 + 0] = bgra[i * 4 + 2];
+        rgba[i * 4 + 1] = bgra[i * 4 + 1];
+        rgba[i * 4 + 2] = bgra[i * 4 + 0];
+        rgba[i * 4 + 3] = bgra[i * 4 + 3];
+    }
+    if (!stbi_write_png(path.c_str(), width, height, 4, rgba.data(),
+                        width * 4)) {
+        LogError("Could not write PNG '%s'.", path.c_str());
+        return false;
+    }
+    LogInfo("Saved screenshot: %s (%dx%d)", path.c_str(), width, height);
+    return true;
+}
+
 bool SavePng(const std::wstring& path, const uint8_t* bgra, int width, int height) {
-    using Microsoft::WRL::ComPtr;
+    return SavePng(ToUtf8(path), bgra, width, height);
+}
 
-    ComPtr<IWICImagingFactory> factory;
-    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&factory));
-    if (FAILED(hr)) {
-        LogError("WIC factory creation failed (0x%08X).", unsigned(hr));
+bool LoadImageBgra(const std::string& path, std::vector<uint8_t>& bgra, int& width,
+                   int& height) {
+    int w = 0;
+    int h = 0;
+    int channels = 0;
+    stbi_uc* pixels = stbi_load(path.c_str(), &w, &h, &channels, 4);
+    if (!pixels || w <= 0 || h <= 0) {
+        LogError("Could not load image '%s': %s", path.c_str(),
+                 stbi_failure_reason() ? stbi_failure_reason() : "unknown error");
+        if (pixels) {
+            stbi_image_free(pixels);
+        }
         return false;
     }
-
-    ComPtr<IWICStream> stream;
-    if (FAILED(hr = factory->CreateStream(&stream)) ||
-        FAILED(hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE))) {
-        LogError("Could not open '%ls' for writing (0x%08X).", path.c_str(), unsigned(hr));
-        return false;
+    const size_t count = size_t(w) * size_t(h);
+    bgra.resize(count * 4);
+    for (size_t i = 0; i < count; ++i) {
+        bgra[i * 4 + 0] = pixels[i * 4 + 2];
+        bgra[i * 4 + 1] = pixels[i * 4 + 1];
+        bgra[i * 4 + 2] = pixels[i * 4 + 0];
+        bgra[i * 4 + 3] = pixels[i * 4 + 3];
     }
-
-    ComPtr<IWICBitmapEncoder> encoder;
-    if (FAILED(hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) ||
-        FAILED(hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache))) {
-        LogError("Could not create PNG encoder (0x%08X).", unsigned(hr));
-        return false;
-    }
-
-    ComPtr<IWICBitmapFrameEncode> frame;
-    if (FAILED(hr = encoder->CreateNewFrame(&frame, nullptr)) ||
-        FAILED(hr = frame->Initialize(nullptr)) ||
-        FAILED(hr = frame->SetSize(UINT(width), UINT(height)))) {
-        LogError("Could not configure PNG frame (0x%08X).", unsigned(hr));
-        return false;
-    }
-
-    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
-    if (FAILED(hr = frame->SetPixelFormat(&format))) {
-        LogError("Could not set PNG pixel format (0x%08X).", unsigned(hr));
-        return false;
-    }
-
-    const UINT stride = UINT(width) * 4;
-    const UINT size = stride * UINT(height);
-    if (FAILED(hr = frame->WritePixels(UINT(height), stride, size, const_cast<BYTE*>(bgra)))) {
-        LogError("Could not write PNG pixels (0x%08X).", unsigned(hr));
-        return false;
-    }
-
-    if (FAILED(hr = frame->Commit()) || FAILED(hr = encoder->Commit())) {
-        LogError("Could not finalize PNG (0x%08X).", unsigned(hr));
-        return false;
-    }
-
-    LogInfo("Saved screenshot: %ls (%dx%d)", path.c_str(), width, height);
+    stbi_image_free(pixels);
+    width = w;
+    height = h;
     return true;
 }
 
 bool LoadImageBgra(const std::wstring& path, std::vector<uint8_t>& bgra, int& width,
                    int& height) {
-    using Microsoft::WRL::ComPtr;
-
-    ComPtr<IWICImagingFactory> factory;
-    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                  IID_PPV_ARGS(&factory));
-    if (FAILED(hr)) {
-        LogError("WIC factory creation failed (0x%08X).", unsigned(hr));
-        return false;
-    }
-
-    ComPtr<IWICBitmapDecoder> decoder;
-    if (FAILED(hr = factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-                                                       WICDecodeMetadataCacheOnLoad,
-                                                       &decoder))) {
-        LogError("Could not open image '%ls' (0x%08X).", path.c_str(), unsigned(hr));
-        return false;
-    }
-
-    ComPtr<IWICBitmapFrameDecode> frame;
-    if (FAILED(hr = decoder->GetFrame(0, &frame))) {
-        LogError("Could not read image frame '%ls' (0x%08X).", path.c_str(), unsigned(hr));
-        return false;
-    }
-
-    ComPtr<IWICFormatConverter> converter;
-    if (FAILED(hr = factory->CreateFormatConverter(&converter)) ||
-        FAILED(hr = converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
-                                          WICBitmapDitherTypeNone, nullptr, 0.0,
-                                          WICBitmapPaletteTypeCustom))) {
-        LogError("Could not convert image '%ls' (0x%08X).", path.c_str(), unsigned(hr));
-        return false;
-    }
-
-    UINT w = 0;
-    UINT h = 0;
-    if (FAILED(hr = converter->GetSize(&w, &h)) || w == 0 || h == 0) {
-        LogError("Invalid image size for '%ls'.", path.c_str());
-        return false;
-    }
-
-    const UINT stride = w * 4;
-    bgra.resize(size_t(stride) * size_t(h));
-    if (FAILED(hr = converter->CopyPixels(nullptr, stride, UINT(bgra.size()),
-                                          bgra.data()))) {
-        LogError("Could not copy image pixels '%ls' (0x%08X).", path.c_str(), unsigned(hr));
-        return false;
-    }
-
-    width = int(w);
-    height = int(h);
-    return true;
+    return LoadImageBgra(ToUtf8(path), bgra, width, height);
 }
 
 } // namespace ex::gfx

@@ -17,7 +17,10 @@ into it (milestones M2-M4 in [`linux-port.md`](linux-port.md)).
   reduced-order chain (sky, ground, procedural scene, volume bake, particles,
   shock, bloom and composite) through the RHI. `--high-fidelity` switches the
   volume source to the GPU Euler solver (state sweeps, reduction, render and
-  light volumes). It can write an offscreen `--screenshot` as PNG or PPM.
+  light volumes). It shows the SDL3 splash in windowed mode and can write an
+  offscreen `--screenshot` as PNG or PPM.
+- `package_linux`: builds a self-contained `ExplosionSim-linux-x86_64.tar.gz`
+  with the binary, assets, desktop entry, icon and Linux README.
 - `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and
   (with a desktop) an SDL3 window with a swapchain. `--triangle` exercises
   vertex buffers, SPIR-V shader modules and a graphics pipeline; `--quad` adds
@@ -61,8 +64,8 @@ Required now:
   (`mesa-vulkan-drivers`)
 - Desktop development headers for a windowed SDL3 build (`libx11-dev` and
   friends, or Wayland)
-- Network access on the first configure for the Jolt, Vulkan-Headers and SDL3
-  FetchContent downloads
+- Network access on the first configure for the Jolt, Vulkan-Headers, SDL3 and
+  stb FetchContent downloads
 
 Planned for the application build:
 
@@ -150,6 +153,46 @@ the GPU timestamps per pass, mirroring the Windows benchmark:
 The output includes the GPU total, the three sweeps, the reduction and the
 render-volume pass. Timestamps are read once after all steps are submitted, so
 the benchmark itself adds no per-step synchronisation.
+
+### Splash, settings and packaging
+
+Windowed runs show the SDL3 splash while the device, pipelines and scene are
+prepared. It uses the same 980x640 layout and 20 stills as the Windows splash,
+one per 5 % progress step. The frames are decoded by the portable stb image
+loader; no WIC or SDL_image is required. The splash can be exercised without a
+display:
+
+```sh
+SDL_VIDEODRIVER=dummy ./build/explosion_linux --splash-test \
+  --splash-screenshot /tmp/splash.png
+```
+
+Settings are resolved in this order: `settings.ini` in the working directory,
+next to the executable, then the per-user path
+(`$XDG_CONFIG_HOME/explosionsim/settings.ini`, falling back to
+`~/.config/explosionsim/settings.ini`). The Windows app uses
+`%LOCALAPPDATA%\ExplosionSim\settings.ini` as its fallback. `--write-settings`
+dumps the active profile and exits; reloading it reproduces the capture exactly:
+
+```sh
+./build/explosion_linux --settings tools/capture_settings.ini \
+  --write-settings /tmp/roundtrip.ini
+./build/explosion_linux --settings /tmp/roundtrip.ini --headless \
+  --width 320 --height 180 --frames 1 --time 0.1 --charge 0.2 \
+  --distance-scale 0.55 --screenshot /tmp/roundtrip.png
+```
+
+Build the Linux package with:
+
+```sh
+cmake --build build --target package_linux
+```
+
+This writes `build/ExplosionSim-linux-x86_64.tar.gz`. Extracting it and running
+`./ExplosionSim` from the extracted directory is a supported clean-directory
+install; the assets and `explosionsim.desktop`/`explosionsim.png` are included.
+Linux v1 updates by replacing the extracted directory with a newer GitHub
+release archive; there is no in-app self-updater.
 
 For a capture comparison, render the same settings on both platforms and run:
 

@@ -89,6 +89,16 @@ if(NOT MSVC)
     target_compile_options(directxmath INTERFACE -Wno-strict-aliasing)
 endif()
 
+# stb provides the portable PNG/JPEG image I/O that replaces WIC. The headers
+# are header-only; a pinned commit keeps the download reproducible.
+FetchContent_Declare(stb
+    URL https://github.com/nothings/stb/archive/003501f6d7a8668ce8b6d875e34dd97ad0d5d5b5.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR cmake/no-subdirectory)
+FetchContent_MakeAvailable(stb)
+add_library(stb INTERFACE)
+target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
+
 if(EXPLOSION_BUILD_VULKAN_SMOKE)
     # Vulkan-Headers are fetched so the backend can be built without a local
     # Vulkan SDK. The loader itself comes from the SDK or the system package.
@@ -351,9 +361,12 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
     add_executable(explosion_linux
         src/app/LinuxApp.cpp
         src/app/LinuxPreview.cpp
+        src/app/SplashSdl.cpp
+        src/app/SettingsPath.cpp
         src/gfx/GpuVolumeBaker.cpp
         src/gfx/GpuParticleSystem.cpp
-        src/gfx/RhiEulerSolver.cpp)
+        src/gfx/RhiEulerSolver.cpp
+        src/gfx/ImageIO.cpp)
     target_include_directories(explosion_linux PRIVATE
         src
         ${CMAKE_BINARY_DIR}/generated
@@ -361,7 +374,8 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
     target_link_libraries(explosion_linux PRIVATE
         explosion_vulkan_rhi
         explosion_platform_sdl3
-        explosion_core)
+        explosion_core
+        stb)
     ex_target_warnings(explosion_linux)
 
     add_custom_command(TARGET explosion_linux POST_BUILD
@@ -372,6 +386,46 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
                 ${CMAKE_SOURCE_DIR}/CHANGELOG.md
                 $<TARGET_FILE_DIR:explosion_linux>/CHANGELOG.md
         COMMENT "Copying assets next to the Linux application")
+
+    set(EXPLOSION_LINUX_PACKAGE_NAME ExplosionSim-linux-x86_64)
+    set(EXPLOSION_LINUX_PACKAGE_DIR
+        ${CMAKE_BINARY_DIR}/package/${EXPLOSION_LINUX_PACKAGE_NAME})
+    file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/package)
+    add_custom_target(package_linux
+        COMMAND ${CMAKE_COMMAND} -E remove_directory
+                ${EXPLOSION_LINUX_PACKAGE_DIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+                ${EXPLOSION_LINUX_PACKAGE_DIR}
+        COMMAND ${CMAKE_COMMAND} -E copy
+                $<TARGET_FILE:explosion_linux>
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/ExplosionSim
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/assets
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/assets
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_SOURCE_DIR}/README.md
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/README.md
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_SOURCE_DIR}/LICENSE
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/LICENSE
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_SOURCE_DIR}/CHANGELOG.md
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/CHANGELOG.md
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_SOURCE_DIR}/packaging/explosionsim.desktop
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/explosionsim.desktop
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_SOURCE_DIR}/packaging/explosionsim.png
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/explosionsim.png
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_SOURCE_DIR}/packaging/README-linux.txt
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/README-linux.txt
+        COMMAND ${CMAKE_COMMAND} -E tar czf
+                ${CMAKE_BINARY_DIR}/${EXPLOSION_LINUX_PACKAGE_NAME}.tar.gz
+                --format=gnutar ${EXPLOSION_LINUX_PACKAGE_NAME}
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/package
+        DEPENDS explosion_linux
+        COMMENT "Packaging the Linux application")
 endif()
 
 # ---------------------------------------------------------------------------
@@ -409,6 +463,7 @@ if(EXPLOSION_BUILD_APP)
         src/app/App.cpp
         src/app/Changelog.cpp
         src/app/Settings.cpp
+        src/app/SettingsPath.cpp
         src/app/Splash.cpp
         src/gfx/GfxDevice.cpp
         src/gfx/rhi/d3d11/D3D11Rhi.cpp
@@ -436,10 +491,10 @@ if(EXPLOSION_BUILD_APP)
         dwmapi
         winmm
         winhttp
-        windowscodecs
         msimg32
         ole32
-        shell32)
+        shell32
+        stb)
 
     target_compile_definitions(ExplosionSim PRIVATE
         NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _USE_MATH_DEFINES)
@@ -480,6 +535,7 @@ if(EXPLOSION_BUILD_TESTS)
             tests/physics_tests.cpp
             src/app/Changelog.cpp
             src/app/Settings.cpp
+            src/app/SettingsPath.cpp
             src/update/Sha256.cpp
             src/update/Version.cpp)
         target_link_libraries(explosion_tests PRIVATE explosion_core bcrypt)

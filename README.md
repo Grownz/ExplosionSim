@@ -119,8 +119,18 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-The graphical application is still Windows-only; see
-[docs/linux-build.md](docs/linux-build.md) for dependencies and the WSL flow.
+The native Linux application builds as `explosion_linux` and renders through
+Vulkan. It supports the reduced-order renderer, the high-fidelity GPU Euler
+solver, GPU volume bake/particles, the SDL3 splash and a self-contained
+package:
+
+```sh
+cmake --build build --target package_linux
+# build/ExplosionSim-linux-x86_64.tar.gz
+```
+
+See [docs/linux-build.md](docs/linux-build.md) for dependencies, the WSL flow,
+settings paths, the splash test and the packaging/capture commands.
 
 ## Run
 

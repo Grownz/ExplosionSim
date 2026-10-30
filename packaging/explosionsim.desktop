@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Explosion Simulator
+Comment=Physically based explosion simulation
+Exec=ExplosionSim
+Icon=explosionsim
+Terminal=false
+Categories=Graphics;Simulation;
+StartupNotify=true
