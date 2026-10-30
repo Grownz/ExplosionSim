@@ -235,8 +235,8 @@ a 3D volume texture; bloom uses the real downsample/upsample chain; shock
 samples scene color/depth; volume uses the 3D volume/noise/light textures with
 premultiplied blending; particles use additive billboards and a structured
 instance buffer. The Vulkan viewport flips Y so both backends share D3D's
-screen-space convention. The general HLSL→SPIR-V build integration and the
-application/renderer wiring are next.
+screen-space convention. The `vulkan_shaders` CMake target compiles all shader
+entry points to SPIR-V with DXC; the application/renderer wiring is next.
 
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,
   particles and the shadow maps.

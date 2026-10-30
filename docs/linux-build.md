@@ -48,8 +48,11 @@ Planned for the application build:
 
 - DXC for HLSL to SPIR-V compilation
 
-Without X11 or Wayland headers SDL3 is configured in console mode, so the
-offscreen Vulkan path still builds and runs; only window creation is unavailable.
+The `vulkan_shaders` CMake target compiles every real shader entry point to
+SPIR-V with DXC. It is optional and only exists when `dxc` is found; CI installs
+the pinned DXC release. Without X11 or Wayland headers SDL3 is configured in
+console mode, so the offscreen Vulkan path still builds and runs; only window
+creation is unavailable.
 
 ## Build and test
 

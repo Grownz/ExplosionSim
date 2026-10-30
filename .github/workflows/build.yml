@@ -18,11 +18,22 @@ jobs:
             libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
             libxfixes-dev libxss-dev libwayland-dev libxkbcommon-dev
 
+      - name: Install DXC
+        run: |
+          curl -sSL -o /tmp/dxc.tar.gz \
+            https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz
+          echo "96faadc7f5c282d2ffda49804beb4c3ee38127bc252b723234e3c5cdf7aa39a1  /tmp/dxc.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/dxc"
+          tar xzf /tmp/dxc.tar.gz -C "$HOME/dxc"
+          echo "LD_LIBRARY_PATH=$HOME/dxc/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DDXC_EXECUTABLE="$HOME/dxc/bin/dxc"
 
       - name: Build
-        run: cmake --build build --parallel
+        run: |
+          cmake --build build --parallel
+          cmake --build build --target vulkan_shaders
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
