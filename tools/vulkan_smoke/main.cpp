@@ -1721,7 +1721,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> particlesPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> particlesSet;
 
-    if (options.particles) {
+    if (options.particles || options.city) {
         struct ParticleInstance {
             float position[3];
             float size;
@@ -1732,8 +1732,9 @@ int main(int argc, char** argv) {
             float padding[2];
         };
         ParticleInstance instance{};
+        instance.position[1] = options.city ? 10.0f : 0.0f;
         instance.position[2] = 0.0f;
-        instance.size = 1.0f;
+        instance.size = options.city ? 6.0f : 1.0f;
         instance.color[0] = 1.0f;
         instance.color[1] = 0.6f;
         instance.color[2] = 0.2f;
@@ -1882,6 +1883,11 @@ int main(int argc, char** argv) {
                 device->DrawIndexedInstanced(draw.indexCount,
                                              draw.instanceCount,
                                              draw.indexOffset);
+            }
+            if (particlesPipeline) {
+                device->BindPipeline(particlesPipeline.get());
+                device->BindDescriptorSet(particlesSet.get());
+                device->DrawInstanced(6, 1);
             }
             device->EndFrame(false);
 
