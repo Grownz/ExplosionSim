@@ -688,11 +688,7 @@ void Device::DestroyOffscreenTarget() {
 }
 
 bool Device::WaitForFence() {
-    if (vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
-        return false;
-    }
-    vkResetFences(device_, 1, &fence_);
-    return true;
+    return vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
 }
 
 bool Device::BeginCommandBuffer() {
@@ -771,7 +767,8 @@ void Device::EndFrame(bool vsync) {
         submit.pSignalSemaphores = &renderFinished_;
     }
 
-    if (vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS) {
+    if (vkResetFences(device_, 1, &fence_) != VK_SUCCESS ||
+        vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS) {
         return;
     }
 
@@ -849,7 +846,8 @@ bool Device::ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight)
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &commandBuffer_;
-    if (vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS ||
+    if (vkResetFences(device_, 1, &fence_) != VK_SUCCESS ||
+        vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS ||
         vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
         vkDestroyBuffer(device_, buffer, nullptr);
         vkFreeMemory(device_, memory, nullptr);
