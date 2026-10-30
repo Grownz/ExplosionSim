@@ -44,6 +44,7 @@ struct Options {
     bool shock = false;
     bool volume = false;
     bool particles = false;
+    bool frame = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -110,6 +111,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--particles") == 0) {
             options.particles = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--frame") == 0) {
+            options.frame = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -206,6 +211,23 @@ int main(int argc, char** argv) {
         return 1;
     }
     auto* device = static_cast<ex::rhi::vulkan::Device*>(base.get());
+
+    std::unique_ptr<ex::rhi::Texture> frameHdrTarget;
+    std::unique_ptr<ex::rhi::DescriptorSet> frameBloomDownSet;
+    std::unique_ptr<ex::rhi::DescriptorSet> frameCompositeSet;
+    if (options.frame) {
+        ex::rhi::TextureDesc hdrDesc{};
+        hdrDesc.format = ex::rhi::Format::B8G8R8A8_UNORM;
+        hdrDesc.width = uint32_t(options.width);
+        hdrDesc.height = uint32_t(options.height);
+        hdrDesc.usage = ex::rhi::TextureUsage::RenderTarget |
+                        ex::rhi::TextureUsage::Sampled;
+        frameHdrTarget = device->CreateTexture(hdrDesc);
+        if (!frameHdrTarget) {
+            std::fprintf(stderr, "Vulkan frame target failed.\n");
+            return 1;
+        }
+    }
 
     struct TriangleVertex {
         float position[3];
@@ -376,7 +398,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> skyPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> skySet;
 
-    if (options.sky) {
+    if (options.sky || options.frame) {
         // Layout must match FrameConstants in src/gfx/Renderer.h.
         float constants[112] = {};
         constants[0] = 1.0f;
@@ -466,7 +488,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> compositePipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> compositeSet;
 
-    if (options.composite || options.target || options.bloom) {
+    if (options.composite || options.target || options.bloom || options.frame) {
         const uint8_t scenePixels[16] = {
             128, 64, 32, 255, 128, 64, 32, 255,
             128, 64, 32, 255, 128, 64, 32, 255,
@@ -838,7 +860,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::DescriptorSet> bloomUpSet;
     std::unique_ptr<ex::rhi::DescriptorSet> bloomCompositeSet;
 
-    if (options.bloom) {
+    if (options.bloom || options.frame) {
         uint8_t sourcePixels[4 * 4 * 4] = {};
         for (int y = 1; y <= 2; ++y) {
             for (int x = 1; x <= 2; ++x) {
@@ -877,8 +899,12 @@ int main(int argc, char** argv) {
         samplerDesc.clamp = true;
         bloomSampler = device->CreateSampler(samplerDesc);
 
+        const float bloomSourceWidth = options.frame ? float(options.width) : 4.0f;
+        const float bloomSourceHeight =
+            options.frame ? float(options.height) : 4.0f;
         float bloomConstants[8] = {
-            1.0f / 4.0f, 1.0f / 4.0f, 1.0f / 4.0f, 1.0f / 4.0f,
+            1.0f / bloomSourceWidth, 1.0f / bloomSourceHeight,
+            1.0f / bloomSourceWidth, 1.0f / bloomSourceHeight,
             0.5f, 1.0f, 1.0f, 1.0f,
         };
         ex::rhi::BufferDesc uniformDesc{};
@@ -1177,6 +1203,34 @@ int main(int argc, char** argv) {
             !sceneVertexShader || !scenePixelShader || !scenePipeline ||
             !sceneSet) {
             std::fprintf(stderr, "Vulkan scene resources failed.\n");
+            return 1;
+        }
+    }
+
+    if (options.frame) {
+        if (bloomDownPipeline) {
+            frameBloomDownSet =
+                device->CreateDescriptorSet(bloomDownPipeline.get());
+        }
+        if (frameBloomDownSet) {
+            frameBloomDownSet->SetImage(8, frameHdrTarget.get());
+            frameBloomDownSet->SetSampler(16, bloomSampler.get());
+            frameBloomDownSet->SetBuffer(1, bloomUniformBuffer.get(), 0,
+                                         bloomUniformBuffer->Size());
+        }
+        if (compositePipeline) {
+            frameCompositeSet =
+                device->CreateDescriptorSet(compositePipeline.get());
+        }
+        if (frameCompositeSet) {
+            frameCompositeSet->SetImage(8, frameHdrTarget.get());
+            frameCompositeSet->SetImage(9, bloomUpTarget.get());
+            frameCompositeSet->SetSampler(16, compositeSampler.get());
+            frameCompositeSet->SetBuffer(1, compositeUniformBuffer.get(), 0,
+                                         compositeUniformBuffer->Size());
+        }
+        if (!frameBloomDownSet || !frameCompositeSet) {
+            std::fprintf(stderr, "Vulkan frame composite resources failed.\n");
             return 1;
         }
     }
@@ -1688,7 +1742,34 @@ int main(int argc, char** argv) {
             break;
         }
         const float t = float(frame % 120) / 120.0f;
-        if (options.bloom) {
+        if (options.frame) {
+            device->BeginFrameTexture(frameHdrTarget.get(), 0.02f, 0.02f,
+                                      0.03f, 1.0f);
+            device->BindPipeline(skyPipeline.get());
+            device->BindDescriptorSet(skySet.get());
+            device->Draw(3);
+            device->EndFrame(false);
+
+            device->BeginFrameTexture(bloomDownTarget.get(), 0.0f, 0.0f, 0.0f,
+                                      1.0f);
+            device->BindPipeline(bloomDownPipeline.get());
+            device->BindDescriptorSet(frameBloomDownSet.get());
+            device->Draw(3);
+            device->EndFrame(false);
+
+            device->BeginFrameTexture(bloomUpTarget.get(), 0.0f, 0.0f, 0.0f,
+                                      1.0f);
+            device->BindPipeline(bloomUpPipeline.get());
+            device->BindDescriptorSet(bloomUpSet.get());
+            device->Draw(3);
+            device->EndFrame(false);
+
+            device->BeginFrame(0.02f, 0.02f, 0.03f, 1.0f);
+            device->BindPipeline(compositePipeline.get());
+            device->BindDescriptorSet(frameCompositeSet.get());
+            device->Draw(3);
+            device->EndFrame(true);
+        } else if (options.bloom) {
             device->BeginFrameTexture(bloomDownTarget.get(), 0.0f, 0.0f, 0.0f,
                                       1.0f);
             device->BindPipeline(bloomDownPipeline.get());
@@ -1791,6 +1872,9 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    frameCompositeSet.reset();
+    frameBloomDownSet.reset();
+    frameHdrTarget.reset();
     particlesSet.reset();
     particlesPipeline.reset();
     particlesPixelShader.reset();

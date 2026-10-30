@@ -234,7 +234,8 @@ instanced draws; ground uses cascaded/static comparison-sampled shadow maps and
 a 3D volume texture; bloom uses the real downsample/upsample chain; shock
 samples scene color/depth; volume uses the 3D volume/noise/light textures with
 premultiplied blending; particles use additive billboards and a structured
-instance buffer. The Vulkan viewport flips Y so both backends share D3D's
+instance buffer; `--frame` composes sky → bloom → composite across render
+targets in one frame. The Vulkan viewport flips Y so both backends share D3D's
 screen-space convention. The `vulkan_shaders` CMake target compiles all shader
 entry points to SPIR-V with DXC; the application/renderer wiring is next.
 
