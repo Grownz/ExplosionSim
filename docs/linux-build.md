@@ -12,10 +12,11 @@ the reduced-order renderer is ported into it next (milestones M2/M3 in
   generation, Voronoi fracture, Jolt physics, thread pool.
 - `core_tests`: portable smoke tests for the blast model, deterministic scene
   generation and the CPU volume bake.
-- `explosion_linux`: native SDL3 + Vulkan application shell. It opens a window,
-  handles resize and renders the reduced-order preview (sky, ground, procedural
-  scene, volumetric smoke, particles, shock refraction, bloom and composite)
-  through the RHI. It can write an offscreen `--screenshot` as PNG or PPM.
+- `explosion_linux`: native SDL3 + Vulkan application shell. It drives
+  `sim::Simulation`, frames the blast with `gfx::Camera` and renders the
+  reduced-order chain (sky, ground, procedural scene, volume bake, particles,
+  shock, bloom and composite) through the RHI. It can write an offscreen
+  `--screenshot` as PNG or PPM.
 - `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and
   (with a desktop) an SDL3 window with a swapchain. `--triangle` exercises
   vertex buffers, SPIR-V shader modules and a graphics pipeline; `--quad` adds
@@ -95,12 +96,14 @@ separate `explosion_linux` target whenever Vulkan and SDL3 are available.
 ./build/explosion_linux
 ```
 
-The shell runs the full reduced-order preview through the Vulkan RHI: sky,
-ground, the generated town, volumetric smoke, an additive particle, the
-shock-front refraction, bloom and the tonemap composite. The preview currently
-uses a fixed generated scene, camera and placeholder volume/particle data; the
-next step is to drive it from `sim::Simulation` and the real volume bake.
-`--screenshot` accepts `.png` and `.ppm`.
+The shell runs `sim::Simulation` and renders the full reduced-order preview
+through the Vulkan RHI: sky, ground, the generated town, the CPU volume bake,
+the additive/fire/alpha particle batches, the shock-front refraction, bloom and
+the tonemap composite. The camera follows the same reduced-order framing as the
+Windows app. `--screenshot` accepts `.png` and `.ppm`; the scene seed, density,
+charge, burst height, volume resolution and the main render settings can be
+overridden from the command line for capture comparisons. Voronoi chunk
+geometry and loading the Windows `settings.ini` are the remaining parity gaps.
 
 ## Vulkan smoke test
 

@@ -1,24 +1,56 @@
 #pragma once
 
 #include "gfx/rhi/Rhi.h"
+#include "scene/SceneTypes.h"
+#include "sim/ParticleSystem.h"
+#include "sim/VolumeBaker.h"
 
 #include <cstdint>
 #include <memory>
 #include <vector>
 
+namespace ex::gfx {
+class Camera;
+}
+namespace ex::sim {
+class Simulation;
+}
+
 namespace ex::app {
 
 // Reduced-order preview used by the native Linux shell while the Windows
 // renderer is ported pass by pass. It owns the HDR/depth targets, the sky,
-// ground and procedural scene pipelines, and the composite pass.
+// ground and procedural scene pipelines, the volume/particle/shock passes and
+// the composite pass.
 class LinuxPreview {
 public:
+    struct Settings {
+        int raymarchSteps = 128;
+        float exposure = 0.8f;
+        float bloomStrength = 0.10f;
+        bool enableVolume = true;
+        bool enableParticles = true;
+        bool enableGround = true;
+        bool enableBloom = true;
+        bool showGrid = true;
+        float sunAzimuthDeg = 302.0f;
+        float sunElevationDeg = 13.0f;
+        float particleScale = 1.0f;
+    };
+
     bool Initialize(ex::rhi::Device* device, int width, int height);
     void Shutdown();
-    void Render(ex::rhi::Device* device, int width, int height, float time,
+    void SetSettings(const Settings& settings) { settings_ = settings; }
+    void Render(ex::rhi::Device* device, ex::sim::Simulation& simulation,
+                const ex::gfx::Camera& camera, int width, int height,
                 bool vsync);
 
 private:
+    struct MeshRange {
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
+    };
+
     struct SceneDraw {
         std::unique_ptr<ex::rhi::Buffer> instanceBuffer;
         std::unique_ptr<ex::rhi::DescriptorSet> set;
@@ -35,9 +67,20 @@ private:
     bool CreateParticles(ex::rhi::Device* device);
     bool CreateShock(ex::rhi::Device* device);
     bool CreateComposite(ex::rhi::Device* device);
-    void UpdateFrameConstants(int width, int height, float time);
+    bool SetScene(const ex::scene::Scene& scene);
+    bool UploadVolume(const ex::sim::VolumeFrame& frame);
+    void UploadParticles(
+        const std::vector<ex::sim::ParticleInstance>& particles);
+    void UploadParticleBatch(
+        std::unique_ptr<ex::rhi::Buffer>& buffer, size_t& capacity,
+        ex::rhi::DescriptorSet* set, uint32_t& count,
+        const std::vector<ex::sim::ParticleInstance>& particles);
+    void UpdateFrameConstants(const ex::sim::Simulation& simulation,
+                              const ex::gfx::Camera& camera, int width,
+                              int height);
 
     std::unique_ptr<ex::rhi::CommandList> commandList_;
+    ex::rhi::Device* device_ = nullptr;
     std::unique_ptr<ex::rhi::Texture> hdrTarget_;
     std::unique_ptr<ex::rhi::Texture> depthTarget_;
     std::unique_ptr<ex::rhi::Buffer> frameConstants_;
@@ -68,6 +111,10 @@ private:
     std::unique_ptr<ex::rhi::Shader> scenePS_;
     std::unique_ptr<ex::rhi::Pipeline> scenePipeline_;
     std::vector<SceneDraw> sceneDraws_;
+    MeshRange buildingRange_;
+    MeshRange vehicleRange_;
+    MeshRange treeRange_;
+    uint64_t sceneKey_ = 0;
 
     // Volumetric smoke.
     std::unique_ptr<ex::rhi::Texture> volumeNoiseTexture_;
@@ -75,11 +122,11 @@ private:
     std::unique_ptr<ex::rhi::Texture> volumeAuxTexture_;
     std::unique_ptr<ex::rhi::Texture> volumeDepthTexture_;
     std::unique_ptr<ex::rhi::Sampler> volumeNoiseSampler_;
-    std::unique_ptr<ex::rhi::Buffer> volumeUniformBuffer_;
     std::unique_ptr<ex::rhi::Shader> volumeVS_;
     std::unique_ptr<ex::rhi::Shader> volumePS_;
     std::unique_ptr<ex::rhi::Pipeline> volumePipeline_;
     std::unique_ptr<ex::rhi::DescriptorSet> volumeSet_;
+    uint64_t volumeVersion_ = 0;
 
     // Additive particles.
     std::unique_ptr<ex::rhi::Buffer> particleInstanceBuffer_;
@@ -87,12 +134,25 @@ private:
     std::unique_ptr<ex::rhi::Shader> particlePS_;
     std::unique_ptr<ex::rhi::Pipeline> particlePipeline_;
     std::unique_ptr<ex::rhi::DescriptorSet> particleSet_;
+    uint32_t particleCount_ = 0;
+    size_t particleCapacity_ = 0;
+    std::unique_ptr<ex::rhi::Buffer> particleFireBuffer_;
+    std::unique_ptr<ex::rhi::Shader> particleFirePS_;
+    std::unique_ptr<ex::rhi::Pipeline> particleFirePipeline_;
+    std::unique_ptr<ex::rhi::DescriptorSet> particleFireSet_;
+    uint32_t particleFireCount_ = 0;
+    size_t particleFireCapacity_ = 0;
+    std::unique_ptr<ex::rhi::Buffer> particleAlphaBuffer_;
+    std::unique_ptr<ex::rhi::Shader> particleAlphaPS_;
+    std::unique_ptr<ex::rhi::Pipeline> particleAlphaPipeline_;
+    std::unique_ptr<ex::rhi::DescriptorSet> particleAlphaSet_;
+    uint32_t particleAlphaCount_ = 0;
+    size_t particleAlphaCapacity_ = 0;
 
     // Shock-front refraction.
     std::unique_ptr<ex::rhi::Texture> shockTarget_;
     std::unique_ptr<ex::rhi::Texture> shockDepthProxy_;
     std::unique_ptr<ex::rhi::Sampler> shockSampler_;
-    std::unique_ptr<ex::rhi::Buffer> shockUniformBuffer_;
     std::unique_ptr<ex::rhi::Shader> shockVS_;
     std::unique_ptr<ex::rhi::Shader> shockPS_;
     std::unique_ptr<ex::rhi::Pipeline> shockPipeline_;
@@ -118,6 +178,9 @@ private:
 
     float frameConstantsData_[112]{};
     float bloomConstantsData_[8]{};
+    Settings settings_{};
+    float lastSimTime_ = 0.0f;
+    uint32_t frameIndex_ = 0;
 };
 
 } // namespace ex::app

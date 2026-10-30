@@ -75,7 +75,12 @@ jobs:
       - name: Linux application screenshot (lavapipe)
         run: |
           ./build/explosion_linux --headless --width 320 --height 180 \
-            --frames 2 --screenshot /tmp/explosion_linux.png
+            --frames 2 --time 0.1 --charge 0.2 --hob 23.03 \
+            --distance-scale 0.55 --scene-seed 69715 --scene-density 1.79 \
+            --volume-resolution 128 --raymarch-steps 132 \
+            --bloom-strength 0.61 --particle-scale 1.67 \
+            --sun-azimuth 255 --sun-elevation 22 \
+            --screenshot /tmp/explosion_linux.png
           test -s /tmp/explosion_linux.png
 
   windows:

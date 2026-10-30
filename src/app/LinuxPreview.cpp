@@ -1,13 +1,15 @@
 #include "app/LinuxPreview.h"
 
 #include "core/Log.h"
+#include "gfx/Camera.h"
 #include "gfx/SceneMeshLibrary.h"
 #include "scene/SceneTypes.h"
-#include "sim/BlastModel.h"
+#include "sim/Simulation.h"
 
 #include "BloomShaders.h"
 #include "CompositeShaders.h"
 #include "GroundShaders.h"
+#include "ParticleExtraShaders.h"
 #include "ParticleShaders.h"
 #include "SceneShaders.h"
 #include "ShockShaders.h"
@@ -46,13 +48,13 @@ bool LinuxPreview::Initialize(ex::rhi::Device* device, int width, int height) {
     if (!device) {
         return false;
     }
+    device_ = device;
     if (!CreateTargets(device, width, height) || !CreateSky(device) ||
         !CreateGround(device) || !CreateScene(device) ||
         !CreateVolume(device) || !CreateParticles(device) ||
         !CreateShock(device) || !CreateComposite(device)) {
         return false;
     }
-    UpdateFrameConstants(width, height, 0.0f);
     return true;
 }
 
@@ -77,7 +79,6 @@ void LinuxPreview::Shutdown() {
     shockPipeline_.reset();
     shockPS_.reset();
     shockVS_.reset();
-    shockUniformBuffer_.reset();
     shockSampler_.reset();
     shockDepthProxy_.reset();
     shockTarget_.reset();
@@ -86,11 +87,18 @@ void LinuxPreview::Shutdown() {
     particlePS_.reset();
     particleVS_.reset();
     particleInstanceBuffer_.reset();
+    particleAlphaSet_.reset();
+    particleAlphaPipeline_.reset();
+    particleAlphaPS_.reset();
+    particleAlphaBuffer_.reset();
+    particleFireSet_.reset();
+    particleFirePipeline_.reset();
+    particleFirePS_.reset();
+    particleFireBuffer_.reset();
     volumeSet_.reset();
     volumePipeline_.reset();
     volumePS_.reset();
     volumeVS_.reset();
-    volumeUniformBuffer_.reset();
     volumeNoiseSampler_.reset();
     volumeDepthTexture_.reset();
     volumeAuxTexture_.reset();
@@ -355,8 +363,8 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
     bloomConstantsData_[3] = bloomConstantsData_[1];
     bloomConstantsData_[4] = 0.5f;
     bloomConstantsData_[5] = 1.0f;
-    bloomConstantsData_[6] = 1.0f;
-    bloomConstantsData_[7] = 1.0f;
+    bloomConstantsData_[6] = settings_.exposure;
+    bloomConstantsData_[7] = settings_.bloomStrength;
     ex::rhi::BufferDesc bloomDescBuffer{};
     bloomDescBuffer.size = sizeof(bloomConstantsData_);
     bloomDescBuffer.usage = ex::rhi::BufferUsage::Uniform |
@@ -495,9 +503,9 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
         }
         return MeshRange{indexOffset, uint32_t(mesh.indices.size())};
     };
-    const MeshRange buildingRange = appendMesh(buildingMesh);
-    const MeshRange vehicleRange = appendMesh(vehicleMesh);
-    const MeshRange treeRange = appendMesh(treeMesh);
+    buildingRange_ = appendMesh(buildingMesh);
+    vehicleRange_ = appendMesh(vehicleMesh);
+    treeRange_ = appendMesh(treeMesh);
 
     ex::rhi::BufferDesc vertexDesc{};
     vertexDesc.size = vertices.size() * sizeof(SceneMeshVertex);
@@ -510,71 +518,6 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
     indexDesc.usage = ex::rhi::BufferUsage::Index;
     indexDesc.initialData = indices.data();
     sceneIndexBuffer_ = device->CreateBuffer(indexDesc);
-
-    ex::sim::BlastModel blast;
-    blast.Configure({}, {});
-    ex::scene::SceneSettings settings{};
-    settings.seed = 42;
-    settings.density = 0.6f;
-    settings.quality = 1;
-    settings.voronoiChunks = false;
-    ex::scene::Scene scene;
-    scene.Generate(settings, blast);
-
-    std::vector<SceneInstance> buildingInstances;
-    std::vector<SceneInstance> vehicleInstances;
-    std::vector<SceneInstance> treeInstances;
-    float maxVehicleSize = 0.0f;
-    float maxTreeSize = 0.0f;
-    for (const ex::scene::SceneObject& object : scene.Objects()) {
-        SceneInstance item{};
-        DirectX::XMMATRIX world;
-        if (object.type == ex::scene::SceneObjectType::Tree) {
-            world = DirectX::XMMatrixScaling(object.size.x * 2.0f, object.size.y,
-                                             object.size.x * 2.0f) *
-                    DirectX::XMMatrixTranslation(object.position.x, 0.0f,
-                                                 object.position.z);
-            item.params[3] = 2.0f;
-            item.textureScale[3] = 2.0f;
-            maxTreeSize = std::max(maxTreeSize, object.size.y);
-        } else if (object.type == ex::scene::SceneObjectType::Vehicle) {
-            const float uniform =
-                object.size.z > 1e-4f ? object.size.z / 2.8f : 1.0f;
-            world = DirectX::XMMatrixScaling(uniform, uniform, uniform) *
-                    DirectX::XMMatrixTranslation(object.position.x, 0.0f,
-                                                 object.position.z);
-            item.params[3] = 1.0f;
-            item.textureScale[3] = 0.0f;
-            maxVehicleSize = std::max(maxVehicleSize, object.size.z);
-        } else {
-            world = DirectX::XMMatrixScaling(object.size.x, object.size.y,
-                                             object.size.z) *
-                    DirectX::XMMatrixTranslation(object.position.x,
-                                                 object.position.y,
-                                                 object.position.z);
-            item.params[3] = 0.0f;
-            item.textureScale[3] = 0.0f;
-        }
-        DirectX::XMFLOAT4X4 matrix{};
-        DirectX::XMStoreFloat4x4(&matrix, world);
-        std::memcpy(item.transform, &matrix, sizeof(matrix));
-        item.color[0] = object.color.x;
-        item.color[1] = object.color.y;
-        item.color[2] = object.color.z;
-        item.color[3] = object.color.w;
-        item.textureOrigin[0] = object.position.x;
-        item.textureOrigin[2] = object.position.z;
-        item.textureScale[0] = object.size.x;
-        item.textureScale[1] = object.size.y;
-        item.textureScale[2] = object.size.z;
-        if (object.type == ex::scene::SceneObjectType::Tree) {
-            treeInstances.push_back(item);
-        } else if (object.type == ex::scene::SceneObjectType::Vehicle) {
-            vehicleInstances.push_back(item);
-        } else {
-            buildingInstances.push_back(item);
-        }
-    }
 
     ex::rhi::ShaderDesc shaderDesc{};
     shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
@@ -637,6 +580,71 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
     pipelineDesc.cullMode = ex::rhi::CullMode::None;
     scenePipeline_ = device->CreatePipeline(pipelineDesc);
 
+    return sceneVertexBuffer_ && sceneIndexBuffer_ && sceneVS_ && scenePS_ &&
+           scenePipeline_;
+}
+
+bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
+    if (!device_) {
+        return false;
+    }
+    device_->WaitIdle();
+    sceneDraws_.clear();
+
+    std::vector<SceneInstance> buildingInstances;
+    std::vector<SceneInstance> vehicleInstances;
+    std::vector<SceneInstance> treeInstances;
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        if (object.collapsed) {
+            continue;
+        }
+        SceneInstance item{};
+        DirectX::XMMATRIX world;
+        if (object.type == ex::scene::SceneObjectType::Tree) {
+            world = DirectX::XMMatrixScaling(object.size.x * 2.0f, object.size.y,
+                                             object.size.x * 2.0f) *
+                    DirectX::XMMatrixTranslation(object.position.x, 0.0f,
+                                                 object.position.z);
+            item.params[3] = 2.0f;
+            item.textureScale[3] = 2.0f;
+        } else if (object.type == ex::scene::SceneObjectType::Vehicle) {
+            const float uniform =
+                object.size.z > 1e-4f ? object.size.z / 2.8f : 1.0f;
+            world = DirectX::XMMatrixScaling(uniform, uniform, uniform) *
+                    DirectX::XMMatrixTranslation(object.position.x, 0.0f,
+                                                 object.position.z);
+            item.params[3] = 1.0f;
+            item.textureScale[3] = 0.0f;
+        } else {
+            world = DirectX::XMMatrixScaling(object.size.x, object.size.y,
+                                             object.size.z) *
+                    DirectX::XMMatrixTranslation(object.position.x,
+                                                 object.position.y,
+                                                 object.position.z);
+            item.params[3] = 0.0f;
+            item.textureScale[3] = 0.0f;
+        }
+        DirectX::XMFLOAT4X4 matrix{};
+        DirectX::XMStoreFloat4x4(&matrix, world);
+        std::memcpy(item.transform, &matrix, sizeof(matrix));
+        item.color[0] = object.color.x;
+        item.color[1] = object.color.y;
+        item.color[2] = object.color.z;
+        item.color[3] = object.color.w;
+        item.textureOrigin[0] = object.position.x;
+        item.textureOrigin[2] = object.position.z;
+        item.textureScale[0] = object.size.x;
+        item.textureScale[1] = object.size.y;
+        item.textureScale[2] = object.size.z;
+        if (object.type == ex::scene::SceneObjectType::Tree) {
+            treeInstances.push_back(item);
+        } else if (object.type == ex::scene::SceneObjectType::Vehicle) {
+            vehicleInstances.push_back(item);
+        } else {
+            buildingInstances.push_back(item);
+        }
+    }
+
     auto makeInstanceBuffer = [&](const std::vector<SceneInstance>& data) {
         ex::rhi::BufferDesc desc{};
         desc.size = std::max<size_t>(1, data.size()) * sizeof(SceneInstance);
@@ -645,7 +653,7 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
                      ex::rhi::BufferUsage::Dynamic;
         desc.structureStride = sizeof(SceneInstance);
         desc.initialData = data.empty() ? nullptr : data.data();
-        return device->CreateBuffer(desc);
+        return device_->CreateBuffer(desc);
     };
 
     auto addDraw = [&](const MeshRange& range,
@@ -659,7 +667,7 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
             return;
         }
         std::unique_ptr<ex::rhi::DescriptorSet> set =
-            device->CreateDescriptorSet(scenePipeline_.get());
+            device_->CreateDescriptorSet(scenePipeline_.get());
         if (!set) {
             return;
         }
@@ -687,74 +695,18 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
         draw.instanceCount = uint32_t(data.size());
         sceneDraws_.push_back(std::move(draw));
     };
-    addDraw(buildingRange, buildingInstances);
-    addDraw(vehicleRange, vehicleInstances);
-    addDraw(treeRange, treeInstances);
-    LogInfo("Preview instances: buildings=%zu vehicles=%zu trees=%zu "
-            "maxVehicleZ=%.2f maxTreeY=%.2f",
-            buildingInstances.size(), vehicleInstances.size(),
-            treeInstances.size(), maxVehicleSize, maxTreeSize);
+    addDraw(buildingRange_, buildingInstances);
+    addDraw(vehicleRange_, vehicleInstances);
+    addDraw(treeRange_, treeInstances);
 
-    return sceneVertexBuffer_ && sceneIndexBuffer_ && sceneVS_ && scenePS_ &&
-           scenePipeline_ && !sceneDraws_.empty();
+    LogInfo("Preview scene: buildings=%zu vehicles=%zu trees=%zu",
+            buildingInstances.size(), vehicleInstances.size(),
+            treeInstances.size());
+    return !sceneDraws_.empty();
 }
 
 bool LinuxPreview::CreateVolume(ex::rhi::Device* device) {
-    float constants[112] = {};
-    constants[0] = 1.0f;
-    constants[5] = 1.0f;
-    constants[10] = 1.0f;
-    constants[15] = 1.0f;
-    constants[16] = 1.0f;
-    constants[21] = 1.0f;
-    constants[26] = 1.0f;
-    constants[31] = 1.0f;
-    constants[32] = 0.0f;
-    constants[33] = 55.0f;
-    constants[34] = -150.0f;
-    constants[36] = 0.3f;
-    constants[37] = 0.8f;
-    constants[38] = 0.5f;
-    constants[39] = 1.0f;
-    constants[40] = 1.0f;
-    constants[41] = 0.7f;
-    constants[42] = 0.44f;
-    constants[43] = 1.0f;
-    constants[44] = -15.0f;
-    constants[45] = 0.0f;
-    constants[46] = -15.0f;
-    constants[47] = 0.05f;
-    constants[48] = 15.0f;
-    constants[49] = 25.0f;
-    constants[50] = 15.0f;
-    constants[51] = 32.0f;
-    constants[60] = 0.0f;
-    constants[61] = 0.0f;
-    constants[62] = 8.0f;
-    constants[63] = 0.0f;
-    constants[64] = 0.0f;
-    constants[65] = 1.0f / 60.0f;
-    constants[66] = 0.0f;
-    constants[67] = 0.0f;
-    constants[88] = 0.0f;
-    constants[89] = 10.0f;
-    constants[90] = 0.0f;
-    constants[91] = 1.0f;
-    constants[92] = 0.5f;
-    constants[93] = 0.0f;
-    constants[94] = 0.5f;
-    constants[95] = 0.5f;
-    constants[96] = 1.0f;
-    constants[97] = 0.2f;
-    constants[98] = 0.2f;
-    constants[99] = 0.0f;
 
-    ex::rhi::BufferDesc uniformDesc{};
-    uniformDesc.size = sizeof(constants);
-    uniformDesc.usage = ex::rhi::BufferUsage::Uniform |
-                        ex::rhi::BufferUsage::Dynamic;
-    uniformDesc.initialData = constants;
-    volumeUniformBuffer_ = device->CreateBuffer(uniformDesc);
 
     ex::rhi::ShaderDesc shaderDesc{};
     shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
@@ -800,8 +752,8 @@ bool LinuxPreview::CreateVolume(ex::rhi::Device* device) {
         volumeSet_ = device->CreateDescriptorSet(volumePipeline_.get());
     }
     if (volumeSet_) {
-        volumeSet_->SetBuffer(0, volumeUniformBuffer_.get(), 0,
-                              volumeUniformBuffer_->Size());
+        volumeSet_->SetBuffer(0, frameConstants_.get(), 0,
+                              frameConstants_->Size());
         volumeSet_->SetImage(8, volumeTexture_.get());
         volumeSet_->SetImage(9, volumeDepthTexture_.get());
         volumeSet_->SetImage(10, volumeNoiseTexture_.get());
@@ -810,39 +762,11 @@ bool LinuxPreview::CreateVolume(ex::rhi::Device* device) {
         volumeSet_->SetSampler(16, volumeSampler_.get());
         volumeSet_->SetSampler(17, volumeNoiseSampler_.get());
     }
-    return volumeUniformBuffer_ && volumeVS_ && volumePS_ && volumePipeline_ &&
+    return volumeVS_ && volumePS_ && volumePipeline_ &&
            volumeSet_;
 }
 
 bool LinuxPreview::CreateParticles(ex::rhi::Device* device) {
-    struct ParticleInstance {
-        float position[3];
-        float size;
-        float color[3];
-        float opacity;
-        float rotation;
-        float variation;
-        float padding[2];
-    };
-    ParticleInstance instance{};
-    instance.position[1] = 10.0f;
-    instance.position[2] = 0.0f;
-    instance.size = 6.0f;
-    instance.color[0] = 1.0f;
-    instance.color[1] = 0.6f;
-    instance.color[2] = 0.2f;
-    instance.opacity = 1.0f;
-    instance.padding[0] = 1.0f;
-
-    ex::rhi::BufferDesc instanceDesc{};
-    instanceDesc.size = sizeof(instance);
-    instanceDesc.usage = ex::rhi::BufferUsage::Storage |
-                         ex::rhi::BufferUsage::ShaderRead |
-                         ex::rhi::BufferUsage::Dynamic;
-    instanceDesc.structureStride = sizeof(ParticleInstance);
-    instanceDesc.initialData = &instance;
-    particleInstanceBuffer_ = device->CreateBuffer(instanceDesc);
-
     ex::rhi::ShaderDesc shaderDesc{};
     shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
     shaderDesc.data = kParticlesVS;
@@ -854,6 +778,14 @@ bool LinuxPreview::CreateParticles(ex::rhi::Device* device) {
     shaderDesc.size = kParticlesPSSize;
     shaderDesc.name = "PSAdditive";
     particlePS_ = device->CreateShader(shaderDesc);
+    shaderDesc.data = kParticlesPSFire;
+    shaderDesc.size = kParticlesPSFireSize;
+    shaderDesc.name = "PSFire";
+    particleFirePS_ = device->CreateShader(shaderDesc);
+    shaderDesc.data = kParticlesPSAlpha;
+    shaderDesc.size = kParticlesPSAlphaSize;
+    shaderDesc.name = "PSAlpha";
+    particleAlphaPS_ = device->CreateShader(shaderDesc);
 
     const ex::rhi::DescriptorBinding bindings[] = {
         {0, ex::rhi::DescriptorType::UniformBuffer, 1,
@@ -881,55 +813,46 @@ bool LinuxPreview::CreateParticles(ex::rhi::Device* device) {
     if (particleSet_) {
         particleSet_->SetBuffer(0, frameConstants_.get(), 0,
                                 frameConstants_->Size());
-        particleSet_->SetBuffer(8, particleInstanceBuffer_.get(), 0,
-                                particleInstanceBuffer_->Size());
         particleSet_->SetImage(9, depthTarget_.get());
         particleSet_->SetSampler(16, volumeSampler_.get());
     }
-    return particleInstanceBuffer_ && particleVS_ && particlePS_ &&
-           particlePipeline_ && particleSet_;
+
+    pipelineDesc.pixelShader = particleFirePS_.get();
+    pipelineDesc.blendEnable = true;
+    pipelineDesc.additiveBlend = true;
+    pipelineDesc.premultipliedBlend = false;
+    particleFirePipeline_ = device->CreatePipeline(pipelineDesc);
+    if (particleFirePipeline_) {
+        particleFireSet_ =
+            device->CreateDescriptorSet(particleFirePipeline_.get());
+    }
+    if (particleFireSet_) {
+        particleFireSet_->SetBuffer(0, frameConstants_.get(), 0,
+                                    frameConstants_->Size());
+        particleFireSet_->SetImage(9, depthTarget_.get());
+        particleFireSet_->SetSampler(16, volumeSampler_.get());
+    }
+
+    pipelineDesc.pixelShader = particleAlphaPS_.get();
+    pipelineDesc.additiveBlend = false;
+    particleAlphaPipeline_ = device->CreatePipeline(pipelineDesc);
+    if (particleAlphaPipeline_) {
+        particleAlphaSet_ =
+            device->CreateDescriptorSet(particleAlphaPipeline_.get());
+    }
+    if (particleAlphaSet_) {
+        particleAlphaSet_->SetBuffer(0, frameConstants_.get(), 0,
+                                     frameConstants_->Size());
+        particleAlphaSet_->SetImage(9, depthTarget_.get());
+        particleAlphaSet_->SetSampler(16, volumeSampler_.get());
+    }
+    return particleVS_ && particlePS_ && particlePipeline_ && particleSet_ &&
+           particleFirePS_ && particleFirePipeline_ && particleFireSet_ &&
+           particleAlphaPS_ && particleAlphaPipeline_ && particleAlphaSet_;
 }
 
 bool LinuxPreview::CreateShock(ex::rhi::Device* device) {
-    float constants[112] = {};
-    constants[0] = 1.0f;
-    constants[5] = 1.0f;
-    constants[10] = 1.0f;
-    constants[15] = 1.0f;
-    constants[16] = 1.0f;
-    constants[21] = 1.0f;
-    constants[26] = 1.0f;
-    constants[31] = 1.0f;
-    constants[32] = 0.0f;
-    constants[33] = 55.0f;
-    constants[34] = -150.0f;
-    constants[36] = 0.3f;
-    constants[37] = 0.8f;
-    constants[38] = 0.5f;
-    constants[39] = 1.0f;
-    constants[40] = 1.0f;
-    constants[41] = 0.7f;
-    constants[42] = 0.44f;
-    constants[43] = 1.0f;
-    constants[52] = 1600.0f;
-    constants[53] = 900.0f;
-    constants[54] = 1.0f / 1600.0f;
-    constants[55] = 1.0f / 900.0f;
-    constants[64] = 0.0f;
-    constants[65] = 1.0f / 60.0f;
-    constants[66] = 0.0f;
-    constants[67] = 60.0f;
-    constants[108] = 0.0f;
-    constants[109] = 10.0f;
-    constants[110] = 0.0f;
-    constants[111] = 2.0f;
 
-    ex::rhi::BufferDesc uniformDesc{};
-    uniformDesc.size = sizeof(constants);
-    uniformDesc.usage = ex::rhi::BufferUsage::Uniform |
-                        ex::rhi::BufferUsage::Dynamic;
-    uniformDesc.initialData = constants;
-    shockUniformBuffer_ = device->CreateBuffer(uniformDesc);
 
     ex::rhi::SamplerDesc samplerDesc{};
     samplerDesc.linear = true;
@@ -970,15 +893,14 @@ bool LinuxPreview::CreateShock(ex::rhi::Device* device) {
         shockSet_ = device->CreateDescriptorSet(shockPipeline_.get());
     }
     if (shockSet_) {
-        shockSet_->SetBuffer(0, shockUniformBuffer_.get(), 0,
-                             shockUniformBuffer_->Size());
+        shockSet_->SetBuffer(0, frameConstants_.get(), 0,
+                             frameConstants_->Size());
         shockSet_->SetImage(8, hdrTarget_.get());
         shockSet_->SetImage(9, shockDepthProxy_.get());
         shockSet_->SetSampler(16, shockSampler_.get());
     }
     return shockTarget_ && shockDepthProxy_ && shockSampler_ &&
-           shockUniformBuffer_ && shockVS_ && shockPS_ && shockPipeline_ &&
-           shockSet_;
+           shockVS_ && shockPS_ && shockPipeline_ && shockSet_;
 }
 
 bool LinuxPreview::CreateComposite(ex::rhi::Device* device) {
@@ -1085,16 +1007,107 @@ bool LinuxPreview::CreateComposite(ex::rhi::Device* device) {
            bloomDownSet_ && bloomUpSet_;
 }
 
-void LinuxPreview::UpdateFrameConstants(int width, int height, float time) {
+bool LinuxPreview::UploadVolume(const ex::sim::VolumeFrame& frame) {
+    if (!device_ || frame.empty() || !frame.halfFloat ||
+        frame.bytesPerVoxel != 8) {
+        return false;
+    }
+    // The RHI has no texture update path yet; replacing the 3D image must not
+    // race the previous frame that sampled it.
+    device_->WaitIdle();
+    const uint32_t resolution = uint32_t(frame.resolution);
+    ex::rhi::TextureSubresource subresource{};
+    subresource.data = frame.rgba.data();
+    subresource.width = resolution;
+    subresource.height = resolution;
+    subresource.rowPitch = resolution * 8;
+    subresource.slicePitch = resolution * resolution * 8;
+    ex::rhi::TextureDesc desc{};
+    desc.format = ex::rhi::Format::R16G16B16A16_FLOAT;
+    desc.width = resolution;
+    desc.height = resolution;
+    desc.depth = resolution;
+    desc.usage = ex::rhi::TextureUsage::Sampled;
+    desc.subresources = &subresource;
+    desc.subresourceCount = 1;
+    std::unique_ptr<ex::rhi::Texture> texture = device_->CreateTexture(desc);
+    if (!texture) {
+        LogError("Could not upload the %u^3 volume texture.", resolution);
+        return false;
+    }
+    volumeTexture_ = std::move(texture);
+    if (groundSet_) {
+        groundSet_->SetImage(14, volumeTexture_.get());
+    }
+    if (volumeSet_) {
+        volumeSet_->SetImage(8, volumeTexture_.get());
+    }
+    for (SceneDraw& draw : sceneDraws_) {
+        if (draw.set) {
+            draw.set->SetImage(15, volumeTexture_.get());
+        }
+    }
+    return true;
+}
+
+void LinuxPreview::UploadParticleBatch(
+    std::unique_ptr<ex::rhi::Buffer>& buffer, size_t& capacity,
+    ex::rhi::DescriptorSet* set, uint32_t& count,
+    const std::vector<ex::sim::ParticleInstance>& particles) {
+    if (!device_ || !set) {
+        count = 0;
+        return;
+    }
+    const size_t particleCount = particles.size();
+    if (particleCount > capacity || !buffer) {
+        device_->WaitIdle();
+        const size_t newCapacity = std::max<size_t>(particleCount, 64);
+        ex::rhi::BufferDesc desc{};
+        desc.size = newCapacity * sizeof(ex::sim::ParticleInstance);
+        desc.usage = ex::rhi::BufferUsage::Storage |
+                     ex::rhi::BufferUsage::ShaderRead |
+                     ex::rhi::BufferUsage::Dynamic;
+        desc.structureStride = sizeof(ex::sim::ParticleInstance);
+        desc.initialData =
+            particleCount > 0 ? particles.data() : nullptr;
+        std::unique_ptr<ex::rhi::Buffer> newBuffer =
+            device_->CreateBuffer(desc);
+        if (!newBuffer) {
+            count = 0;
+            return;
+        }
+        buffer = std::move(newBuffer);
+        capacity = newCapacity;
+        set->SetBuffer(8, buffer.get(), 0, buffer->Size());
+    }
+    if (particleCount > 0) {
+        void* mapped = buffer->Map();
+        if (mapped) {
+            std::memcpy(mapped, particles.data(),
+                        particleCount * sizeof(ex::sim::ParticleInstance));
+            buffer->Unmap();
+        }
+    }
+    count = uint32_t(particleCount);
+}
+
+void LinuxPreview::UploadParticles(
+    const std::vector<ex::sim::ParticleInstance>& particles) {
+    UploadParticleBatch(particleInstanceBuffer_, particleCapacity_,
+                        particleSet_.get(), particleCount_, particles);
+}
+
+void LinuxPreview::UpdateFrameConstants(const ex::sim::Simulation& simulation,
+                                       const ex::gfx::Camera& camera, int width,
+                                       int height) {
     using namespace DirectX;
+    const ex::sim::BlastModel& blast = simulation.Blast();
+    const ex::sim::BlastState& state = blast.State();
+    const ex::sim::Environment& environment = blast.GetEnvironment();
+
     std::memset(frameConstantsData_, 0, sizeof(frameConstantsData_));
-    const float aspect = height > 0 ? float(width) / float(height) : 1.0f;
-    const XMMATRIX view = XMMatrixLookAtLH(
-        XMVectorSet(0.0f, 55.0f, -150.0f, 0.0f),
-        XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f),
-        XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
-    const XMMATRIX projection = XMMatrixPerspectiveFovLH(
-        XMConvertToRadians(50.0f), aspect, 0.5f, 20000.0f);
+    const XMMATRIX view = camera.ViewMatrix();
+    const XMMATRIX projection = camera.ProjectionMatrix();
     const XMMATRIX viewProjection = view * projection;
     const XMMATRIX inverseViewProjection =
         XMMatrixInverse(nullptr, viewProjection);
@@ -1105,60 +1118,131 @@ void LinuxPreview::UpdateFrameConstants(int width, int height, float time) {
     std::memcpy(&frameConstantsData_[0], &vp, sizeof(vp));
     std::memcpy(&frameConstantsData_[16], &inv, sizeof(inv));
 
-    frameConstantsData_[32] = 0.0f;
-    frameConstantsData_[33] = 55.0f;
-    frameConstantsData_[34] = -150.0f;
-    frameConstantsData_[35] = time;
-    frameConstantsData_[36] = 0.3f;
-    frameConstantsData_[37] = 0.8f;
-    frameConstantsData_[38] = 0.5f;
-    frameConstantsData_[39] = 1.0f;
+    XMFLOAT3 cameraRight{};
+    XMFLOAT3 cameraUp{};
+    camera.Basis(cameraRight, cameraUp);
+    const XMFLOAT3 position = camera.Position();
+    frameConstantsData_[32] = position.x;
+    frameConstantsData_[33] = position.y;
+    frameConstantsData_[34] = position.z;
+    frameConstantsData_[35] = float(state.time);
+
+    const float azimuth = XMConvertToRadians(settings_.sunAzimuthDeg);
+    const float elevation = XMConvertToRadians(settings_.sunElevationDeg);
+    const XMFLOAT3 sunDirection(std::cos(elevation) * std::sin(azimuth),
+                                std::sin(elevation),
+                                std::cos(elevation) * std::cos(azimuth));
+    frameConstantsData_[36] = sunDirection.x;
+    frameConstantsData_[37] = sunDirection.y;
+    frameConstantsData_[38] = sunDirection.z;
+    frameConstantsData_[39] = settings_.exposure;
     frameConstantsData_[40] = 1.0f;
-    frameConstantsData_[41] = 0.7f;
+    frameConstantsData_[41] = 0.70f;
     frameConstantsData_[42] = 0.44f;
-    frameConstantsData_[43] = 1.0f;
-    frameConstantsData_[44] = 0.0f;
-    frameConstantsData_[45] = 0.0f;
-    frameConstantsData_[46] = 0.0f;
-    frameConstantsData_[47] = 0.1f;
-    frameConstantsData_[48] = 1.0f;
-    frameConstantsData_[49] = 1.0f;
-    frameConstantsData_[50] = 1.0f;
-    frameConstantsData_[51] = 32.0f;
+    frameConstantsData_[43] = settings_.bloomStrength;
+
+    const ex::sim::VolumeFrame& volume = simulation.Volume().Current();
+    const bool volumeValid =
+        simulation.Volume().HasData() && !volume.empty();
+    XMFLOAT3 volumeMin{0.0f, 0.0f, 0.0f};
+    XMFLOAT3 volumeMax{1.0f, 1.0f, 1.0f};
+    float extinctionScale = 0.1f;
+    int volumeResolution = 1;
+    if (volumeValid) {
+        volumeMin = volume.bounds.min;
+        volumeMax = volume.bounds.max;
+        extinctionScale = volume.extinctionScale;
+        volumeResolution = std::max(volume.resolution, 1);
+    }
+    frameConstantsData_[44] = volumeMin.x;
+    frameConstantsData_[45] = volumeMin.y;
+    frameConstantsData_[46] = volumeMin.z;
+    frameConstantsData_[47] = extinctionScale;
+    frameConstantsData_[48] = volumeMax.x;
+    frameConstantsData_[49] = volumeMax.y;
+    frameConstantsData_[50] = volumeMax.z;
+    frameConstantsData_[51] = float(settings_.raymarchSteps);
+
     frameConstantsData_[52] = float(width);
     frameConstantsData_[53] = float(height);
     frameConstantsData_[54] = 1.0f / float(std::max(width, 1));
     frameConstantsData_[55] = 1.0f / float(std::max(height, 1));
-    frameConstantsData_[56] = 0.0f;
-    frameConstantsData_[57] = 0.0f;
-    frameConstantsData_[58] = 0.0f;
-    frameConstantsData_[59] = 0.2f;
-    frameConstantsData_[60] = 0.0f;
-    frameConstantsData_[61] = 0.0f;
-    frameConstantsData_[62] = 0.5f;
-    frameConstantsData_[63] = 0.0f;
-    frameConstantsData_[64] = time;
-    frameConstantsData_[65] = 1.0f / 60.0f;
-    frameConstantsData_[66] = 0.0f;
-    frameConstantsData_[67] = 0.0f;
-    frameConstantsData_[68] = 1.0f;
+
+    const double scorch = std::max(blast.RadiusForThermalFluence(40000.0),
+                                   state.fireballRadius * 1.6);
+    const double blastRadius = blast.RadiusForOverpressure(34474.0);
+    frameConstantsData_[56] = float(scorch);
+    frameConstantsData_[57] = float(blastRadius);
+    frameConstantsData_[58] = float(state.dustRingRadius);
+    frameConstantsData_[59] = float(environment.temperatureK);
+    frameConstantsData_[60] = float(state.cloudRadius);
+    frameConstantsData_[61] = float(state.cloudCenterY);
+    frameConstantsData_[62] = float(state.fireballRadius);
+    frameConstantsData_[63] = float(state.fireballTemperatureK);
+    frameConstantsData_[64] = float(state.time);
+    frameConstantsData_[65] = float(state.time) - lastSimTime_;
+    frameConstantsData_[66] = float(frameIndex_);
+    frameConstantsData_[67] = float(state.shockRadius);
+    lastSimTime_ = float(state.time);
+    ++frameIndex_;
+
+    frameConstantsData_[68] = float(environment.WindX());
     frameConstantsData_[69] = 0.0f;
-    frameConstantsData_[70] = 0.0f;
-    frameConstantsData_[71] = 1.0f;
-    frameConstantsData_[72] = 1.0f;
-    frameConstantsData_[77] = 1.0f;
-    frameConstantsData_[80] = 10.0f;
+    frameConstantsData_[70] = float(environment.WindZ());
+    frameConstantsData_[71] = float(environment.windSpeedMs);
+    frameConstantsData_[72] = cameraRight.x;
+    frameConstantsData_[73] = cameraRight.y;
+    frameConstantsData_[74] = cameraRight.z;
+    frameConstantsData_[75] = 0.0f;
+    frameConstantsData_[76] = cameraUp.x;
+    frameConstantsData_[77] = cameraUp.y;
+    frameConstantsData_[78] = cameraUp.z;
+    frameConstantsData_[79] = 0.0f;
+
+    const float targetSpacing = std::max(camera.Distance() / 12.0f, 1.0f);
+    const float exponent = std::floor(std::log10(targetSpacing));
+    const float spacing = std::clamp(std::pow(10.0f, exponent), 1.0f, 5000.0f);
+    frameConstantsData_[80] = spacing;
     frameConstantsData_[81] = 1.0f;
-    frameConstantsData_[82] = 0.3f;
-    frameConstantsData_[83] = 100.0f;
-    frameConstantsData_[84] = 0.1f;
-    frameConstantsData_[85] = 1000.0f;
-    frameConstantsData_[86] = 0.0f;
-    frameConstantsData_[87] = 1.0f;
+    frameConstantsData_[82] = settings_.showGrid ? 0.06f : 0.0f;
+    frameConstantsData_[83] = std::max(camera.Distance() * 8.0f, 500.0f);
+    frameConstantsData_[84] = camera.NearPlane();
+    frameConstantsData_[85] = camera.FarPlane();
+    frameConstantsData_[86] = settings_.enableVolume ? 1.0f : 0.0f;
+    frameConstantsData_[87] = settings_.particleScale;
+
+    const float fireballLight =
+        state.fireballVisible
+            ? std::clamp(float((state.fireballTemperatureK - 700.0) / 5000.0),
+                         0.0f, 1.4f)
+            : 0.0f;
     frameConstantsData_[88] = 0.0f;
-    frameConstantsData_[89] = 0.0f;
+    frameConstantsData_[89] = float(state.fireballCenterY);
     frameConstantsData_[90] = 0.0f;
-    frameConstantsData_[91] = 0.0f;
+    frameConstantsData_[91] = fireballLight;
+
+    const float voxelSize =
+        (volumeMax.x - volumeMin.x) / float(volumeResolution);
+    frameConstantsData_[92] = voxelSize;
+    frameConstantsData_[93] = 0.0f;
+    frameConstantsData_[94] = 1.0f;
+    frameConstantsData_[95] = 1.0f;
+    frameConstantsData_[96] = 1.0f;
+    frameConstantsData_[97] = 1.0f;
+    frameConstantsData_[98] = 1.0f;
+    frameConstantsData_[99] = 0.0f;
+    frameConstantsData_[100] = volumeMin.x;
+    frameConstantsData_[101] = volumeMin.y;
+    frameConstantsData_[102] = volumeMin.z;
+    frameConstantsData_[103] = 0.0f;
+    frameConstantsData_[104] = volumeMax.x;
+    frameConstantsData_[105] = volumeMax.y;
+    frameConstantsData_[106] = volumeMax.z;
+    frameConstantsData_[107] = 0.0f;
+    frameConstantsData_[108] = 0.0f;
+    frameConstantsData_[109] = float(blast.GetCharge().heightOfBurstM);
+    frameConstantsData_[110] = 0.0f;
+    frameConstantsData_[111] = float(state.shockMach);
 
     if (frameConstants_) {
         void* mapped = frameConstants_->Map();
@@ -1168,23 +1252,15 @@ void LinuxPreview::UpdateFrameConstants(int width, int height, float time) {
             frameConstants_->Unmap();
         }
     }
+
     bloomConstantsData_[0] = 1.0f / float(std::max(width, 1));
     bloomConstantsData_[1] = 1.0f / float(std::max(height, 1));
     bloomConstantsData_[2] = bloomConstantsData_[0];
     bloomConstantsData_[3] = bloomConstantsData_[1];
-    if (shockUniformBuffer_) {
-        void* mapped = shockUniformBuffer_->Map();
-        if (mapped) {
-            float* values = static_cast<float*>(mapped);
-            values[52] = float(width);
-            values[53] = float(height);
-            values[54] = 1.0f / float(std::max(width, 1));
-            values[55] = 1.0f / float(std::max(height, 1));
-            values[64] = time;
-            values[65] = 1.0f / 60.0f;
-            shockUniformBuffer_->Unmap();
-        }
-    }
+    bloomConstantsData_[4] = 0.5f;
+    bloomConstantsData_[5] = 1.0f;
+    bloomConstantsData_[6] = settings_.exposure;
+    bloomConstantsData_[7] = settings_.bloomStrength;
     if (bloomConstants_) {
         void* mapped = bloomConstants_->Map();
         if (mapped) {
@@ -1195,12 +1271,43 @@ void LinuxPreview::UpdateFrameConstants(int width, int height, float time) {
     }
 }
 
-void LinuxPreview::Render(ex::rhi::Device* device, int width, int height,
-                          float time, bool vsync) {
+void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulation,
+                          const ex::gfx::Camera& camera, int width, int height,
+                          bool vsync) {
     if (!device || !commandList_ || !hdrTarget_ || !depthTarget_) {
         return;
     }
-    UpdateFrameConstants(width, height, time);
+    uint64_t sceneKey = simulation.Scene().GenerationHash();
+    uint64_t collapsed = 0;
+    for (const ex::scene::SceneObject& object : simulation.Scene().Objects()) {
+        if (object.collapsed) {
+            ++collapsed;
+        }
+    }
+    sceneKey ^= collapsed * 0x9E3779B97F4A7C15ull;
+    if (sceneKey != sceneKey_) {
+        if (SetScene(simulation.Scene())) {
+            sceneKey_ = sceneKey;
+        }
+    }
+
+    if (simulation.Volume().HasData()) {
+        const ex::sim::VolumeFrame& volume = simulation.Volume().Current();
+        if (volume.version != volumeVersion_ && UploadVolume(volume)) {
+            volumeVersion_ = volume.version;
+            simulation.Volume().MarkUploaded(volume.version);
+        }
+    }
+    UploadParticleBatch(particleInstanceBuffer_, particleCapacity_,
+                        particleSet_.get(), particleCount_,
+                        simulation.Particles().AdditiveBatch());
+    UploadParticleBatch(particleFireBuffer_, particleFireCapacity_,
+                        particleFireSet_.get(), particleFireCount_,
+                        simulation.Particles().FireBatch());
+    UploadParticleBatch(particleAlphaBuffer_, particleAlphaCapacity_,
+                        particleAlphaSet_.get(), particleAlphaCount_,
+                        simulation.Particles().AlphaBatch());
+    UpdateFrameConstants(simulation, camera, width, height);
 
     const float clear[4] = {0.02f, 0.02f, 0.03f, 1.0f};
     commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(), true,
@@ -1210,7 +1317,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, int width, int height,
         commandList_->BindDescriptorSet(skySet_.get());
         commandList_->Draw(3);
     }
-    if (groundPipeline_ && groundSet_) {
+    if (settings_.enableGround && groundPipeline_ && groundSet_) {
         commandList_->BindPipeline(groundPipeline_.get());
         commandList_->BindDescriptorSet(groundSet_.get());
         commandList_->Draw(3);
@@ -1232,7 +1339,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, int width, int height,
     }
     commandList_->EndRenderPass();
 
-    if (volumePipeline_ && volumeSet_) {
+    if (settings_.enableVolume && volumePipeline_ && volumeSet_) {
         commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
                                       false, false, clear);
         commandList_->BindPipeline(volumePipeline_.get());
@@ -1240,12 +1347,31 @@ void LinuxPreview::Render(ex::rhi::Device* device, int width, int height,
         commandList_->Draw(3);
         commandList_->EndRenderPass();
     }
-    if (particlePipeline_ && particleSet_) {
+    if (settings_.enableParticles && particlePipeline_ && particleSet_ &&
+        particleCount_ > 0) {
         commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
                                       false, false, clear);
         commandList_->BindPipeline(particlePipeline_.get());
         commandList_->BindDescriptorSet(particleSet_.get());
-        commandList_->DrawInstanced(6, 1);
+        commandList_->DrawInstanced(6, particleCount_);
+        commandList_->EndRenderPass();
+    }
+    if (settings_.enableParticles && particleFirePipeline_ &&
+        particleFireSet_ && particleFireCount_ > 0) {
+        commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
+                                      false, false, clear);
+        commandList_->BindPipeline(particleFirePipeline_.get());
+        commandList_->BindDescriptorSet(particleFireSet_.get());
+        commandList_->DrawInstanced(6, particleFireCount_);
+        commandList_->EndRenderPass();
+    }
+    if (settings_.enableParticles && particleAlphaPipeline_ &&
+        particleAlphaSet_ && particleAlphaCount_ > 0) {
+        commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
+                                      false, false, clear);
+        commandList_->BindPipeline(particleAlphaPipeline_.get());
+        commandList_->BindDescriptorSet(particleAlphaSet_.get());
+        commandList_->DrawInstanced(6, particleAlphaCount_);
         commandList_->EndRenderPass();
     }
     if (shockPipeline_ && shockSet_) {
@@ -1257,7 +1383,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, int width, int height,
         commandList_->EndRenderPass();
     }
 
-    if (bloomDownPipeline_ && bloomDownSet_) {
+    if (settings_.enableBloom && bloomDownPipeline_ && bloomDownSet_) {
         commandList_->BeginRenderPass(bloomDownTarget_.get(),
                                       depthTarget_.get(), true, false, clear);
         commandList_->BindPipeline(bloomDownPipeline_.get());
@@ -1265,7 +1391,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, int width, int height,
         commandList_->Draw(3);
         commandList_->EndRenderPass();
     }
-    if (bloomUpPipeline_ && bloomUpSet_) {
+    if (settings_.enableBloom && bloomUpPipeline_ && bloomUpSet_) {
         commandList_->BeginRenderPass(bloomUpTarget_.get(),
                                       depthTarget_.get(), true, false, clear);
         commandList_->BindPipeline(bloomUpPipeline_.get());

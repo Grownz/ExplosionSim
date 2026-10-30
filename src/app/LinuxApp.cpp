@@ -4,8 +4,11 @@
 #include "Version.h"
 #include "app/LinuxPreview.h"
 #include "core/Log.h"
+#include "core/ThreadPool.h"
+#include "gfx/Camera.h"
 #include "gfx/rhi/Rhi.h"
 #include "platform/Platform.h"
+#include "sim/Simulation.h"
 
 #include <algorithm>
 #include <chrono>
@@ -30,15 +33,59 @@ struct Options {
     bool debug = false;
     bool vsync = true;
     std::string screenshot;
+    double captureTime = 0.12;
+    double chargeMassKg = -1.0;
+    double heightOfBurstM = -1.0;
+    float azimuth = 128.0f;
+    float elevation = 14.0f;
+    float distanceScale = 1.0f;
+    uint32_t sceneSeed = 0;
+    bool sceneSeedSet = false;
+    float sceneDensity = 1.0f;
+    bool sceneDensitySet = false;
+    bool sceneEnabled = true;
+    bool sceneEnabledSet = false;
+    int volumeResolution = 0;
+    int raymarchSteps = 128;
+    float exposure = 0.8f;
+    float bloomStrength = 0.10f;
+    float particleScale = 1.0f;
+    float sunAzimuth = 302.0f;
+    float sunElevation = 13.0f;
+    bool bloomEnabled = true;
+    bool groundEnabled = true;
+    bool volumeEnabled = true;
+    bool particlesEnabled = true;
+    bool showGrid = true;
 };
 
 void PrintUsage() {
     std::printf("Explosion Simulator %s\n", EXPLOSION_VERSION_STRING);
     std::printf("Usage: explosion_linux [options]\n\n");
     std::printf("  --screenshot <path>  Render an offscreen image (.png or .ppm) and exit.\n");
+    std::printf("  --time <seconds>     Simulation time of the screenshot (default 0.12).\n");
     std::printf("  --width <pixels>     Output width (default 1600).\n");
     std::printf("  --height <pixels>    Output height (default 900).\n");
     std::printf("  --frames <count>     Number of frames to render.\n");
+    std::printf("  --charge <kg>        TNT equivalent mass in kilograms.\n");
+    std::printf("  --hob <metres>       Height of burst above ground.\n");
+    std::printf("  --azimuth <degrees>  Camera azimuth for captures.\n");
+    std::printf("  --elevation <deg>    Camera elevation for captures.\n");
+    std::printf("  --distance-scale <x> Multiplier for the framing distance.\n");
+    std::printf("  --scene-seed <n>     Seed for the procedural environment.\n");
+    std::printf("  --scene-density <x>  Environment density multiplier.\n");
+    std::printf("  --no-scene           Disable the procedural environment.\n");
+    std::printf("  --volume-resolution <n>  Volume grid resolution (default 128).\n");
+    std::printf("  --raymarch-steps <n>     Volume raymarch steps (default 128).\n");
+    std::printf("  --exposure <x>       Tonemap exposure (default 0.8).\n");
+    std::printf("  --bloom-strength <x> Bloom strength (default 0.10).\n");
+    std::printf("  --particle-scale <x> Particle size multiplier.\n");
+    std::printf("  --sun-azimuth <deg>  Sun azimuth (default 302).\n");
+    std::printf("  --sun-elevation <deg> Sun elevation (default 13).\n");
+    std::printf("  --no-bloom           Disable bloom.\n");
+    std::printf("  --no-ground          Disable the ground plane.\n");
+    std::printf("  --no-volume          Disable volumetric smoke.\n");
+    std::printf("  --no-particles       Disable particles.\n");
     std::printf("  --headless           Use an offscreen target without a window.\n");
     std::printf("  --no-vsync           Disable vertical synchronisation.\n");
     std::printf("  --debug              Enable Vulkan validation layers.\n");
@@ -53,6 +100,35 @@ bool ParseInt(const char* text, int& value) {
         return false;
     }
     value = int(parsed);
+    return true;
+}
+
+bool ParseDouble(const char* text, double& value) {
+    char* end = nullptr;
+    const double parsed = std::strtod(text, &end);
+    if (!end || *end != '\0') {
+        return false;
+    }
+    value = parsed;
+    return true;
+}
+
+bool ParseFloat(const char* text, float& value) {
+    double parsed = double(value);
+    if (!ParseDouble(text, parsed)) {
+        return false;
+    }
+    value = float(parsed);
+    return true;
+}
+
+bool ParseSeed(const char* text, uint32_t& value) {
+    char* end = nullptr;
+    const long parsed = std::strtol(text, &end, 10);
+    if (!end || *end != '\0' || parsed < 0 || parsed > 1000000) {
+        return false;
+    }
+    value = uint32_t(parsed);
     return true;
 }
 
@@ -105,6 +181,134 @@ bool ParseOptions(int argc, char** argv, Options& options) {
             }
             continue;
         }
+        if (std::strcmp(arg, "--time") == 0 && i + 1 < argc) {
+            if (!ParseDouble(argv[++i], options.captureTime)) {
+                std::fprintf(stderr, "Invalid capture time.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--charge") == 0 && i + 1 < argc) {
+            if (!ParseDouble(argv[++i], options.chargeMassKg)) {
+                std::fprintf(stderr, "Invalid charge mass.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--hob") == 0 && i + 1 < argc) {
+            if (!ParseDouble(argv[++i], options.heightOfBurstM)) {
+                std::fprintf(stderr, "Invalid burst height.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--azimuth") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.azimuth)) {
+                std::fprintf(stderr, "Invalid azimuth.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--elevation") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.elevation)) {
+                std::fprintf(stderr, "Invalid elevation.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--distance-scale") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.distanceScale)) {
+                std::fprintf(stderr, "Invalid distance scale.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--scene-seed") == 0 && i + 1 < argc) {
+            if (!ParseSeed(argv[++i], options.sceneSeed)) {
+                std::fprintf(stderr, "Invalid scene seed.\n");
+                return false;
+            }
+            options.sceneSeedSet = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--scene-density") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.sceneDensity)) {
+                std::fprintf(stderr, "Invalid scene density.\n");
+                return false;
+            }
+            options.sceneDensitySet = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--no-scene") == 0) {
+            options.sceneEnabled = false;
+            options.sceneEnabledSet = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--volume-resolution") == 0 && i + 1 < argc) {
+            if (!ParseInt(argv[++i], options.volumeResolution)) {
+                std::fprintf(stderr, "Invalid volume resolution.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--raymarch-steps") == 0 && i + 1 < argc) {
+            if (!ParseInt(argv[++i], options.raymarchSteps)) {
+                std::fprintf(stderr, "Invalid raymarch step count.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--exposure") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.exposure)) {
+                std::fprintf(stderr, "Invalid exposure.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--bloom-strength") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.bloomStrength)) {
+                std::fprintf(stderr, "Invalid bloom strength.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--particle-scale") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.particleScale)) {
+                std::fprintf(stderr, "Invalid particle scale.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--sun-azimuth") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.sunAzimuth)) {
+                std::fprintf(stderr, "Invalid sun azimuth.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--sun-elevation") == 0 && i + 1 < argc) {
+            if (!ParseFloat(argv[++i], options.sunElevation)) {
+                std::fprintf(stderr, "Invalid sun elevation.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--no-bloom") == 0) {
+            options.bloomEnabled = false;
+            continue;
+        }
+        if (std::strcmp(arg, "--no-ground") == 0) {
+            options.groundEnabled = false;
+            continue;
+        }
+        if (std::strcmp(arg, "--no-volume") == 0) {
+            options.volumeEnabled = false;
+            continue;
+        }
+        if (std::strcmp(arg, "--no-particles") == 0) {
+            options.particlesEnabled = false;
+            continue;
+        }
         std::fprintf(stderr, "Unknown option: %s\n", arg);
         return false;
     }
@@ -120,6 +324,26 @@ double NowSeconds() {
 bool CreateVulkanSurface(void* user, void* instance, uint64_t* surface) {
     auto* window = static_cast<ex::platform::Window*>(user);
     return window && window->CreateVulkanSurface(instance, surface);
+}
+
+void FrameCamera(const ex::sim::Simulation& simulation, ex::gfx::Camera& camera,
+                 const Options& options) {
+    const ex::sim::BlastModel& blast = simulation.Blast();
+    const ex::sim::BlastState& state = blast.State();
+    const float fireball = float(blast.FireballMaxRadiusM());
+    const float cloud = float(state.cloudRadius);
+    const float burstHeight = float(blast.GetCharge().heightOfBurstM);
+    const float sceneExtent = simulation.Scene().Extent();
+    const float radius =
+        std::max({fireball * 3.2f, cloud * 2.4f, burstHeight * 1.6f,
+                  sceneExtent * 0.8f, 1.2f});
+    const float centerY = burstHeight + fireball * 0.6f;
+    camera.SetViewport(options.width, options.height);
+    camera.SetClipPlanes(0.5f, 20000.0f);
+    camera.SetTarget(DirectX::XMFLOAT3(0.0f, centerY, 0.0f),
+                     radius * 1.9f * std::max(0.1f, options.distanceScale));
+    camera.SetOrientation(options.azimuth, options.elevation);
+    camera.Snap();
 }
 
 uint32_t Crc32Update(uint32_t crc, const uint8_t* data, size_t size) {
@@ -293,7 +517,55 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    ex::core::ThreadPool pool;
+    ex::sim::SimulationSettings simulationSettings{};
+    simulationSettings.chargeMassKg =
+        options.chargeMassKg > 0.0 ? options.chargeMassKg : 0.2;
+    simulationSettings.heightOfBurstM =
+        options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 0.4;
+    simulationSettings.mode = ex::sim::SimulationMode::ReducedOrder;
+    simulationSettings.gpuParticles = false;
+    simulationSettings.gpuVolumeBake = false;
+    simulationSettings.fuseSeconds = options.headless ? 0.0 : 2.0;
+    simulationSettings.volumeResolution =
+        options.volumeResolution > 0
+            ? std::clamp(options.volumeResolution, 32, 512)
+            : 128;
+    if (options.sceneSeedSet) {
+        simulationSettings.scene.seed = options.sceneSeed;
+    }
+    if (options.sceneDensitySet) {
+        simulationSettings.scene.density =
+            std::clamp(options.sceneDensity, 0.0f, 4.0f);
+    }
+    if (options.sceneEnabledSet) {
+        simulationSettings.scene.enabled = options.sceneEnabled;
+    }
+
+    ex::sim::Simulation simulation;
+    if (!simulation.Initialize(simulationSettings, pool, false)) {
+        ex::LogError("Could not initialize the simulation.");
+        return 1;
+    }
+
+    ex::gfx::Camera camera;
+    camera.SetViewport(options.width, options.height);
+    camera.SetClipPlanes(0.5f, 20000.0f);
+
     ex::app::LinuxPreview preview;
+    ex::app::LinuxPreview::Settings previewSettings{};
+    previewSettings.raymarchSteps = options.raymarchSteps;
+    previewSettings.exposure = options.exposure;
+    previewSettings.bloomStrength = options.bloomStrength;
+    previewSettings.enableVolume = options.volumeEnabled;
+    previewSettings.enableParticles = options.particlesEnabled;
+    previewSettings.enableGround = options.groundEnabled;
+    previewSettings.enableBloom = options.bloomEnabled;
+    previewSettings.showGrid = options.showGrid;
+    previewSettings.sunAzimuthDeg = options.sunAzimuth;
+    previewSettings.sunElevationDeg = options.sunElevation;
+    previewSettings.particleScale = options.particleScale;
+    preview.SetSettings(previewSettings);
     if (!preview.Initialize(device.get(), device->Width(), device->Height())) {
         ex::LogError("Could not initialize the reduced-order preview.");
         return 1;
@@ -301,10 +573,25 @@ int main(int argc, char** argv) {
     ex::LogInfo("Linux app ready: %dx%d, %s", device->Width(),
                 device->Height(), options.headless ? "offscreen" : "windowed");
 
+    if (options.headless) {
+        const double targetTime = std::max(0.0, options.captureTime);
+        const double step = 1.0 / 120.0;
+        int guard = 0;
+        while (simulation.Time() + 1e-9 < targetTime && guard++ < 200000) {
+            simulation.StepFixed(
+                std::min(step, targetTime - simulation.Time()));
+        }
+        simulation.Volume().WaitForIdle();
+        simulation.Volume().Poll();
+        simulation.Volume().BakeNow(simulation.Blast());
+        simulation.Volume().Poll();
+    }
+    FrameCamera(simulation, camera, options);
+
     const int frameLimit =
         options.headless ? std::max(1, options.frames) : options.frames;
     int rendered = 0;
-    const double start = NowSeconds();
+    double lastTime = NowSeconds();
     bool running = true;
     while (running) {
         if (window) {
@@ -318,13 +605,22 @@ int main(int argc, char** argv) {
                 (width != device->Width() || height != device->Height())) {
                 if (!device->Resize(width, height)) {
                     ex::LogWarn("Swapchain resize failed.");
+                } else {
+                    camera.SetViewport(width, height);
                 }
             }
         }
 
-        const double time = NowSeconds() - start;
-        preview.Render(device.get(), device->Width(), device->Height(),
-                       float(time), options.vsync);
+        if (!options.headless) {
+            const double now = NowSeconds();
+            const float dt = float(std::clamp(now - lastTime, 0.0, 0.05));
+            lastTime = now;
+            simulation.Update(dt);
+            simulation.Volume().Poll();
+        }
+
+        preview.Render(device.get(), simulation, camera, device->Width(),
+                       device->Height(), options.vsync);
         ++rendered;
         if (frameLimit > 0 && rendered >= frameLimit) {
             running = false;
