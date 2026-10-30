@@ -629,6 +629,9 @@ bool Device::Initialize(const DeviceDesc& desc) {
     if (!CreateTextureRenderPass()) {
         return false;
     }
+    if (!CreateTextureLoadRenderPass()) {
+        return false;
+    }
 
     initialized_ = true;
     LogInfo("Vulkan device: %s (%s, %dx%d)", adapterName_.c_str(),
@@ -647,6 +650,10 @@ void Device::Shutdown() {
         if (textureRenderPass_) {
             vkDestroyRenderPass(device_, textureRenderPass_, nullptr);
             textureRenderPass_ = VK_NULL_HANDLE;
+        }
+        if (textureLoadRenderPass_) {
+            vkDestroyRenderPass(device_, textureLoadRenderPass_, nullptr);
+            textureLoadRenderPass_ = VK_NULL_HANDLE;
         }
         if (renderPass_) {
             vkDestroyRenderPass(device_, renderPass_, nullptr);
@@ -1100,6 +1107,63 @@ bool Device::CreateTextureRenderPass() {
     return true;
 }
 
+bool Device::CreateTextureLoadRenderPass() {
+    VkAttachmentDescription attachments[2]{};
+    attachments[0].format = VK_FORMAT_B8G8R8A8_UNORM;
+    attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[0].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    attachments[0].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    attachments[1].format = VK_FORMAT_D32_SFLOAT;
+    attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+    attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentReference colorRef{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+    VkAttachmentReference depthRef{1,
+                                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &colorRef;
+    subpass.pDepthStencilAttachment = &depthRef;
+
+    VkSubpassDependency dependency{};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                              VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                              VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                               VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+    VkRenderPassCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    info.attachmentCount = 2;
+    info.pAttachments = attachments;
+    info.subpassCount = 1;
+    info.pSubpasses = &subpass;
+    info.dependencyCount = 1;
+    info.pDependencies = &dependency;
+
+    if (vkCreateRenderPass(device_, &info, nullptr, &textureLoadRenderPass_) !=
+        VK_SUCCESS) {
+        LogError("Vulkan texture load render pass creation failed.");
+        return false;
+    }
+    return true;
+}
+
 bool Device::CreateFramebuffers() {
     if (!depthImage_) {
         if (!CreateImage(physicalDevice_, device_, uint32_t(width_),
@@ -1384,6 +1448,73 @@ void Device::BeginFrameTexture(Texture* color, float r, float g, float b,
     VkRenderPassBeginInfo info{};
     info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     info.renderPass = textureRenderPass_;
+    info.framebuffer = targetFramebuffer_;
+    info.renderArea.extent = {targetWidth_, targetHeight_};
+    info.clearValueCount = 2;
+    info.pClearValues = clears;
+    vkCmdBeginRenderPass(commandBuffer_, &info, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport viewport{0.0f, float(targetHeight_), float(targetWidth_),
+                        -float(targetHeight_), 0.0f, 1.0f};
+    vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
+    VkRect2D scissor{{0, 0}, {targetWidth_, targetHeight_}};
+    vkCmdSetScissor(commandBuffer_, 0, 1, &scissor);
+
+    boundPipeline_ = VK_NULL_HANDLE;
+    boundPipelineLayout_ = VK_NULL_HANDLE;
+    boundDescriptorSet_ = VK_NULL_HANDLE;
+    boundVertexBuffer_ = VK_NULL_HANDLE;
+    boundIndexBuffer_ = VK_NULL_HANDLE;
+    renderingToTexture_ = true;
+    frameActive_ = true;
+}
+
+void Device::BeginFrameTexture(Texture* color, Texture* depth, bool clear,
+                               float r, float g, float b, float a) {
+    if (!initialized_ || frameActive_ || !textureRenderPass_ ||
+        !textureLoadRenderPass_) {
+        return;
+    }
+    auto* colorTexture = dynamic_cast<TextureImpl*>(color);
+    auto* depthTexture = dynamic_cast<TextureImpl*>(depth);
+    if (!colorTexture || !colorTexture->View() || !depthTexture ||
+        !depthTexture->View()) {
+        return;
+    }
+    if (!WaitForFence()) {
+        return;
+    }
+
+    targetWidth_ = colorTexture->Width();
+    targetHeight_ = colorTexture->Height();
+
+    VkImageView views[2] = {colorTexture->View(), depthTexture->View()};
+    VkFramebufferCreateInfo framebufferInfo{};
+    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    framebufferInfo.renderPass =
+        clear ? textureRenderPass_ : textureLoadRenderPass_;
+    framebufferInfo.attachmentCount = 2;
+    framebufferInfo.pAttachments = views;
+    framebufferInfo.width = targetWidth_;
+    framebufferInfo.height = targetHeight_;
+    framebufferInfo.layers = 1;
+    if (vkCreateFramebuffer(device_, &framebufferInfo, nullptr,
+                            &targetFramebuffer_) != VK_SUCCESS) {
+        return;
+    }
+
+    if (!BeginCommandBuffer()) {
+        DestroyTargetResources();
+        return;
+    }
+
+    VkClearValue clears[2]{};
+    clears[0].color = {{r, g, b, a}};
+    clears[1].depthStencil = {1.0f, 0};
+
+    VkRenderPassBeginInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    info.renderPass = clear ? textureRenderPass_ : textureLoadRenderPass_;
     info.framebuffer = targetFramebuffer_;
     info.renderArea.extent = {targetWidth_, targetHeight_};
     info.clearValueCount = 2;

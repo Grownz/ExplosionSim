@@ -45,6 +45,7 @@ struct Options {
     bool volume = false;
     bool particles = false;
     bool frame = false;
+    bool sceneFrame = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -115,6 +116,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--frame") == 0) {
             options.frame = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--scene-frame") == 0) {
+            options.sceneFrame = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -213,9 +218,10 @@ int main(int argc, char** argv) {
     auto* device = static_cast<ex::rhi::vulkan::Device*>(base.get());
 
     std::unique_ptr<ex::rhi::Texture> frameHdrTarget;
+    std::unique_ptr<ex::rhi::Texture> frameDepthTarget;
     std::unique_ptr<ex::rhi::DescriptorSet> frameBloomDownSet;
     std::unique_ptr<ex::rhi::DescriptorSet> frameCompositeSet;
-    if (options.frame) {
+    if (options.frame || options.sceneFrame) {
         ex::rhi::TextureDesc hdrDesc{};
         hdrDesc.format = ex::rhi::Format::B8G8R8A8_UNORM;
         hdrDesc.width = uint32_t(options.width);
@@ -226,6 +232,19 @@ int main(int argc, char** argv) {
         if (!frameHdrTarget) {
             std::fprintf(stderr, "Vulkan frame target failed.\n");
             return 1;
+        }
+        if (options.sceneFrame) {
+            ex::rhi::TextureDesc depthDesc{};
+            depthDesc.format = ex::rhi::Format::D32_FLOAT;
+            depthDesc.width = uint32_t(options.width);
+            depthDesc.height = uint32_t(options.height);
+            depthDesc.usage = ex::rhi::TextureUsage::DepthStencil |
+                              ex::rhi::TextureUsage::Sampled;
+            frameDepthTarget = device->CreateTexture(depthDesc);
+            if (!frameDepthTarget) {
+                std::fprintf(stderr, "Vulkan frame depth target failed.\n");
+                return 1;
+            }
         }
     }
 
@@ -398,7 +417,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> skyPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> skySet;
 
-    if (options.sky || options.frame) {
+    if (options.sky || options.frame || options.sceneFrame) {
         // Layout must match FrameConstants in src/gfx/Renderer.h.
         float constants[112] = {};
         constants[0] = 1.0f;
@@ -488,7 +507,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> compositePipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> compositeSet;
 
-    if (options.composite || options.target || options.bloom || options.frame) {
+    if (options.composite || options.target || options.bloom || options.frame || options.sceneFrame) {
         const uint8_t scenePixels[16] = {
             128, 64, 32, 255, 128, 64, 32, 255,
             128, 64, 32, 255, 128, 64, 32, 255,
@@ -595,7 +614,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> groundPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> groundSet;
 
-    if (options.ground || options.scene || options.particles) {
+    if (options.ground || options.scene || options.particles || options.sceneFrame) {
         using namespace DirectX;
         float constants[112] = {};
         const XMMATRIX view = XMMatrixLookAtLH(
@@ -860,7 +879,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::DescriptorSet> bloomUpSet;
     std::unique_ptr<ex::rhi::DescriptorSet> bloomCompositeSet;
 
-    if (options.bloom || options.frame) {
+    if (options.bloom || options.frame || options.sceneFrame) {
         uint8_t sourcePixels[4 * 4 * 4] = {};
         for (int y = 1; y <= 2; ++y) {
             for (int x = 1; x <= 2; ++x) {
@@ -899,9 +918,9 @@ int main(int argc, char** argv) {
         samplerDesc.clamp = true;
         bloomSampler = device->CreateSampler(samplerDesc);
 
-        const float bloomSourceWidth = options.frame ? float(options.width) : 4.0f;
+        const float bloomSourceWidth = (options.frame || options.sceneFrame) ? float(options.width) : 4.0f;
         const float bloomSourceHeight =
-            options.frame ? float(options.height) : 4.0f;
+            (options.frame || options.sceneFrame) ? float(options.height) : 4.0f;
         float bloomConstants[8] = {
             1.0f / bloomSourceWidth, 1.0f / bloomSourceHeight,
             1.0f / bloomSourceWidth, 1.0f / bloomSourceHeight,
@@ -998,7 +1017,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> scenePipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> sceneSet;
 
-    if (options.scene) {
+    if (options.scene || options.sceneFrame) {
         struct SceneVertex {
             float position[3];
             float normal[3];
@@ -1207,7 +1226,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (options.frame) {
+    if (options.frame || options.sceneFrame) {
         if (bloomDownPipeline) {
             frameBloomDownSet =
                 device->CreateDescriptorSet(bloomDownPipeline.get());
@@ -1742,7 +1761,45 @@ int main(int argc, char** argv) {
             break;
         }
         const float t = float(frame % 120) / 120.0f;
-        if (options.frame) {
+        if (options.sceneFrame) {
+            device->BeginFrameTexture(frameHdrTarget.get(),
+                                      frameDepthTarget.get(), true, 0.02f,
+                                      0.02f, 0.03f, 1.0f);
+            device->BindPipeline(skyPipeline.get());
+            device->BindDescriptorSet(skySet.get());
+            device->Draw(3);
+
+            device->BindPipeline(groundPipeline.get());
+            device->BindDescriptorSet(groundSet.get());
+            device->Draw(3);
+
+            device->BindPipeline(scenePipeline.get());
+            device->BindDescriptorSet(sceneSet.get());
+            device->BindVertexBuffer(sceneVertexBuffer.get());
+            device->BindIndexBuffer(sceneIndexBuffer.get());
+            device->DrawIndexedInstanced(36, 1);
+            device->EndFrame(false);
+
+            device->BeginFrameTexture(bloomDownTarget.get(), 0.0f, 0.0f, 0.0f,
+                                      1.0f);
+            device->BindPipeline(bloomDownPipeline.get());
+            device->BindDescriptorSet(frameBloomDownSet.get());
+            device->Draw(3);
+            device->EndFrame(false);
+
+            device->BeginFrameTexture(bloomUpTarget.get(), 0.0f, 0.0f, 0.0f,
+                                      1.0f);
+            device->BindPipeline(bloomUpPipeline.get());
+            device->BindDescriptorSet(bloomUpSet.get());
+            device->Draw(3);
+            device->EndFrame(false);
+
+            device->BeginFrame(0.02f, 0.02f, 0.03f, 1.0f);
+            device->BindPipeline(compositePipeline.get());
+            device->BindDescriptorSet(frameCompositeSet.get());
+            device->Draw(3);
+            device->EndFrame(true);
+        } else if (options.frame) {
             device->BeginFrameTexture(frameHdrTarget.get(), 0.02f, 0.02f,
                                       0.03f, 1.0f);
             device->BindPipeline(skyPipeline.get());
@@ -1874,6 +1931,7 @@ int main(int argc, char** argv) {
     device->WaitIdle();
     frameCompositeSet.reset();
     frameBloomDownSet.reset();
+    frameDepthTarget.reset();
     frameHdrTarget.reset();
     particlesSet.reset();
     particlesPipeline.reset();

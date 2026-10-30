@@ -26,7 +26,8 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   the volumetric raymarch with the 3D volume/noise/light textures; `--particles`
   draws additive billboards through the particle shader with a structured
   instance buffer; `--frame` composes sky → bloom → composite across render
-  targets in one frame.
+  targets in one frame; `--scene-frame` renders sky, ground and the instanced
+  scene into one shared HDR/depth target before bloom and composite.
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.
@@ -125,6 +126,10 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 # Full frame: sky -> bloom -> composite across render targets:
 ./build/vulkan_smoke --headless --frame --frames 2 \
   --output /tmp/vulkan_frame.ppm
+
+# Combined scene frame: sky + ground + scene in one HDR/depth target:
+./build/vulkan_smoke --headless --scene-frame --frames 2 \
+  --output /tmp/vulkan_scene_frame.ppm
 ```
 
 The smoke shaders are compiled from `tools/vulkan_smoke/*.hlsl` and

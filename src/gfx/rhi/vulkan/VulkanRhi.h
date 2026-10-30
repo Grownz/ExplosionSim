@@ -46,6 +46,10 @@ public:
     // Renders into a Texture created with TextureUsage::RenderTarget. The
     // texture is left in SHADER_READ_ONLY_OPTIMAL for the next pass.
     void BeginFrameTexture(Texture* color, float r, float g, float b, float a);
+    // Multi-pass variant: shares a depth texture and can preserve the existing
+    // color/depth contents (clear=false) for subsequent passes.
+    void BeginFrameTexture(Texture* color, Texture* depth, bool clear, float r,
+                           float g, float b, float a);
 
     // Temporary immediate-mode draw path used by the M3 bring-up tests. The
     // command-list abstraction replaces these calls later.
@@ -76,6 +80,7 @@ private:
     bool CreateSwapchain();
     bool CreateRenderPass();
     bool CreateTextureRenderPass();
+    bool CreateTextureLoadRenderPass();
     bool CreateFramebuffers();
     bool CreateOffscreenTarget();
     void DestroySwapchain();
@@ -113,6 +118,7 @@ private:
 
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     VkRenderPass textureRenderPass_ = VK_NULL_HANDLE;
+    VkRenderPass textureLoadRenderPass_ = VK_NULL_HANDLE;
     VkImage colorImage_ = VK_NULL_HANDLE;
     VkDeviceMemory colorMemory_ = VK_NULL_HANDLE;
     VkImageView colorView_ = VK_NULL_HANDLE;
