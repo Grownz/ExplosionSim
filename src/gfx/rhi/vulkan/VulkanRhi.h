@@ -65,7 +65,6 @@ private:
 
     bool BeginCommandBuffer();
     bool WaitForFence();
-    bool SubmitAndWait();
 
     VkFormat ChooseSurfaceFormat() const;
     VkExtent2D ChooseExtent(const VkSurfaceCapabilitiesKHR& caps) const;
