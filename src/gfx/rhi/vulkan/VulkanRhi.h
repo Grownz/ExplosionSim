@@ -50,7 +50,11 @@ public:
     // Temporary immediate-mode draw path used by the M3 bring-up tests. The
     // command-list abstraction replaces these calls later.
     void BindVertexBuffer(Buffer* buffer, uint64_t offset = 0);
+    void BindIndexBuffer(Buffer* buffer, uint64_t offset = 0);
     void Draw(uint32_t vertexCount, uint32_t firstVertex = 0);
+    void DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,
+                              uint32_t firstIndex = 0, int32_t baseVertex = 0,
+                              uint32_t firstInstance = 0);
 
     // Offscreen only: copies the last rendered BGRA8 image into `bgra`.
     bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight);
@@ -128,6 +132,8 @@ private:
     VkDescriptorSet boundDescriptorSet_ = VK_NULL_HANDLE;
     VkBuffer boundVertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceSize boundVertexOffset_ = 0;
+    VkBuffer boundIndexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceSize boundIndexOffset_ = 0;
 
     DeviceDesc desc_{};
     std::string adapterName_ = "unknown";

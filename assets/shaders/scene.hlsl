@@ -10,11 +10,11 @@ struct SceneInstance
     float4 TextureScale;
 };
 
-StructuredBuffer<SceneInstance> Instances : register(t0);
+EX_VK_BINDING(8) StructuredBuffer<SceneInstance> Instances : register(t0);
 // Per-chunk data for the Voronoi rubble; indexed by the vertex chunk id.
-StructuredBuffer<SceneInstance> ChunkInstances : register(t1);
+EX_VK_BINDING(9) StructuredBuffer<SceneInstance> ChunkInstances : register(t1);
 
-cbuffer ShadowConstants : register(b2)
+EX_VK_BINDING(2) cbuffer ShadowConstants : register(b2)
 {
     float4x4 LightViewProj[3];
     float4x4 StaticLightViewProj;
@@ -24,24 +24,24 @@ cbuffer ShadowConstants : register(b2)
     float4 StaticTexel;        // x = 1/size, y = world texel, z = depth bias
 };
 
-cbuffer ShadowCascade : register(b3)
+EX_VK_BINDING(3) cbuffer ShadowCascade : register(b3)
 {
     float4x4 ShadowViewProj;
 };
 
-Texture2D<float> ShadowMap0 : register(t2);
-Texture2D<float> ShadowMap1 : register(t3);
-Texture2D<float> ShadowMap2 : register(t4);
-Texture2D<float> StaticShadowMap : register(t5);
-Texture3D<float4> VolumeTexture : register(t7);
-SamplerComparisonState ShadowSampler : register(s2);
-SamplerState VolumeSampler : register(s4);
+EX_VK_BINDING(10) Texture2D<float> ShadowMap0 : register(t2);
+EX_VK_BINDING(11) Texture2D<float> ShadowMap1 : register(t3);
+EX_VK_BINDING(12) Texture2D<float> ShadowMap2 : register(t4);
+EX_VK_BINDING(13) Texture2D<float> StaticShadowMap : register(t5);
+EX_VK_BINDING(15) Texture3D<float4> VolumeTexture : register(t7);
+EX_VK_BINDING(18) SamplerComparisonState ShadowSampler : register(s2);
+EX_VK_BINDING(20) SamplerState VolumeSampler : register(s4);
 
 // Tiling high-frequency grain for the procedural materials. It is sampled with
 // the anisotropic sampler selected in the rendering settings, so the surface
 // detail stays sharp at grazing angles.
-Texture2D<float4> SurfaceDetail : register(t6);
-SamplerState SurfaceSampler : register(s3);
+EX_VK_BINDING(14) Texture2D<float4> SurfaceDetail : register(t6);
+EX_VK_BINDING(19) SamplerState SurfaceSampler : register(s3);
 
 struct VSInput
 {

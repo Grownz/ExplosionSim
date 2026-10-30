@@ -267,6 +267,23 @@ VkShaderStageFlags ToVkStage(ShaderStage stage) {
     return VK_SHADER_STAGE_FRAGMENT_BIT;
 }
 
+VkShaderStageFlags ToVkStage(const DescriptorBinding& binding) {
+    if (binding.stageMask == 0) {
+        return ToVkStage(binding.stage);
+    }
+    VkShaderStageFlags flags = 0;
+    if (binding.stageMask & 1u) {
+        flags |= VK_SHADER_STAGE_VERTEX_BIT;
+    }
+    if (binding.stageMask & 2u) {
+        flags |= VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    if (binding.stageMask & 4u) {
+        flags |= VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    return flags;
+}
+
 class BufferImpl final : public rhi::Buffer {
 public:
     BufferImpl(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
@@ -1307,6 +1324,7 @@ void Device::BeginFrame(float r, float g, float b, float a) {
     boundPipelineLayout_ = VK_NULL_HANDLE;
     boundDescriptorSet_ = VK_NULL_HANDLE;
     boundVertexBuffer_ = VK_NULL_HANDLE;
+    boundIndexBuffer_ = VK_NULL_HANDLE;
     frameActive_ = true;
 }
 
@@ -1382,6 +1400,7 @@ void Device::BeginFrameTexture(Texture* color, float r, float g, float b,
     boundPipelineLayout_ = VK_NULL_HANDLE;
     boundDescriptorSet_ = VK_NULL_HANDLE;
     boundVertexBuffer_ = VK_NULL_HANDLE;
+    boundIndexBuffer_ = VK_NULL_HANDLE;
     renderingToTexture_ = true;
     frameActive_ = true;
 }
@@ -2029,7 +2048,7 @@ std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
         converted.descriptorType = ToVkDescriptorType(descriptorBinding.type);
         converted.descriptorCount =
             descriptorBinding.count == 0 ? 1 : descriptorBinding.count;
-        converted.stageFlags = ToVkStage(descriptorBinding.stage);
+        converted.stageFlags = ToVkStage(descriptorBinding);
         layoutBindings.push_back(converted);
     }
 
@@ -2139,6 +2158,12 @@ void Device::BindVertexBuffer(Buffer* buffer, uint64_t offset) {
     boundVertexOffset_ = offset;
 }
 
+void Device::BindIndexBuffer(Buffer* buffer, uint64_t offset) {
+    auto* impl = dynamic_cast<BufferImpl*>(buffer);
+    boundIndexBuffer_ = impl ? impl->Handle() : VK_NULL_HANDLE;
+    boundIndexOffset_ = offset;
+}
+
 void Device::Draw(uint32_t vertexCount, uint32_t firstVertex) {
     if (!frameActive_ || !boundPipeline_) {
         return;
@@ -2155,6 +2180,31 @@ void Device::Draw(uint32_t vertexCount, uint32_t firstVertex) {
                                &boundVertexOffset_);
     }
     vkCmdDraw(commandBuffer_, vertexCount, 1, firstVertex, 0);
+}
+
+void Device::DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,
+                                  uint32_t firstIndex, int32_t baseVertex,
+                                  uint32_t firstInstance) {
+    if (!frameActive_ || !boundPipeline_) {
+        return;
+    }
+    vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      boundPipeline_);
+    if (boundDescriptorSet_) {
+        vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                boundPipelineLayout_, 0, 1, &boundDescriptorSet_,
+                                0, nullptr);
+    }
+    if (boundVertexBuffer_) {
+        vkCmdBindVertexBuffers(commandBuffer_, 0, 1, &boundVertexBuffer_,
+                               &boundVertexOffset_);
+    }
+    if (boundIndexBuffer_) {
+        vkCmdBindIndexBuffer(commandBuffer_, boundIndexBuffer_,
+                             boundIndexOffset_, VK_INDEX_TYPE_UINT32);
+    }
+    vkCmdDrawIndexed(commandBuffer_, indexCount, instanceCount, firstIndex,
+                     baseVertex, firstInstance);
 }
 
 } // namespace ex::rhi::vulkan

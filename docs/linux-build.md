@@ -19,7 +19,9 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   the real tonemap/bloom composite with two sampled textures; `--ground` runs
   the ground plane with cascaded/static shadow maps and a 3D volume texture;
   `--target` renders a pass into an offscreen texture and samples it afterwards;
-  `--bloom` runs the real downsample/upsample bloom chain into render targets.
+  `--bloom` runs the real downsample/upsample bloom chain into render targets;
+  `--scene` draws an instanced cube through the real scene shader with
+  structured instance buffers, shadow maps and surface detail.
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.
@@ -95,12 +97,17 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 # Bloom: real downsample/upsample chain into render targets:
 ./build/vulkan_smoke --headless --bloom --frames 2 \
   --output /tmp/vulkan_bloom.ppm
+
+# Scene shader: instanced cube with structured buffers and shadow maps:
+./build/vulkan_smoke --headless --scene --frames 2 \
+  --output /tmp/vulkan_scene.ppm
 ```
 
 The smoke shaders are compiled from `tools/vulkan_smoke/*.hlsl` and
-`assets/shaders/sky.hlsl`/`composite.hlsl`/`ground.hlsl`/`bloom.hlsl` with DXC
-and embedded as SPIR-V in `TriangleShaders.h`, `QuadShaders.h`, `SkyShaders.h`,
-`CompositeShaders.h`, `GroundShaders.h` and `BloomShaders.h`.
+`assets/shaders/sky.hlsl`/`composite.hlsl`/`ground.hlsl`/`bloom.hlsl`/
+`scene.hlsl` with DXC and embedded as SPIR-V in `TriangleShaders.h`,
+`QuadShaders.h`, `SkyShaders.h`, `CompositeShaders.h`, `GroundShaders.h`,
+`BloomShaders.h` and `SceneShaders.h`.
 
 Shared shaders use the `EX_VK_BINDING(n)` macro from `common.hlsli`. It expands
 to `[[vk::binding(n, 0)]]` under DXC and to nothing under D3DCompile. The binding

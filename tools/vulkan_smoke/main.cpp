@@ -9,6 +9,7 @@
 #include "CompositeShaders.h"
 #include "GroundShaders.h"
 #include "BloomShaders.h"
+#include "SceneShaders.h"
 
 #include <DirectXMath.h>
 
@@ -36,6 +37,7 @@ struct Options {
     bool ground = false;
     bool target = false;
     bool bloom = false;
+    bool scene = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -86,6 +88,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--bloom") == 0) {
             options.bloom = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--scene") == 0) {
+            options.scene = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -549,7 +555,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> groundPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> groundSet;
 
-    if (options.ground) {
+    if (options.ground || options.scene) {
         using namespace DirectX;
         float constants[112] = {};
         const XMMATRIX view = XMMatrixLookAtLH(
@@ -936,6 +942,225 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Buffer> sceneVertexBuffer;
+    std::unique_ptr<ex::rhi::Buffer> sceneIndexBuffer;
+    std::unique_ptr<ex::rhi::Buffer> sceneInstanceBuffer;
+    std::unique_ptr<ex::rhi::Buffer> sceneShadowCascadeBuffer;
+    std::unique_ptr<ex::rhi::Texture> sceneSurfaceTexture;
+    std::unique_ptr<ex::rhi::Shader> sceneVertexShader;
+    std::unique_ptr<ex::rhi::Shader> scenePixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> scenePipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> sceneSet;
+
+    if (options.scene) {
+        struct SceneVertex {
+            float position[3];
+            float normal[3];
+            float color[3];
+        };
+        const SceneVertex vertices[] = {
+            {{-0.5f, -0.5f, -0.5f}, {0, 0, -1}, {0.80f, 0.45f, 0.35f}},
+            {{0.5f, -0.5f, -0.5f}, {0, 0, -1}, {0.80f, 0.45f, 0.35f}},
+            {{0.5f, 0.5f, -0.5f}, {0, 0, -1}, {0.80f, 0.45f, 0.35f}},
+            {{-0.5f, 0.5f, -0.5f}, {0, 0, -1}, {0.80f, 0.45f, 0.35f}},
+            {{0.5f, -0.5f, 0.5f}, {0, 0, 1}, {0.35f, 0.55f, 0.80f}},
+            {{-0.5f, -0.5f, 0.5f}, {0, 0, 1}, {0.35f, 0.55f, 0.80f}},
+            {{-0.5f, 0.5f, 0.5f}, {0, 0, 1}, {0.35f, 0.55f, 0.80f}},
+            {{0.5f, 0.5f, 0.5f}, {0, 0, 1}, {0.35f, 0.55f, 0.80f}},
+            {{-0.5f, -0.5f, 0.5f}, {-1, 0, 0}, {0.45f, 0.75f, 0.45f}},
+            {{-0.5f, -0.5f, -0.5f}, {-1, 0, 0}, {0.45f, 0.75f, 0.45f}},
+            {{-0.5f, 0.5f, -0.5f}, {-1, 0, 0}, {0.45f, 0.75f, 0.45f}},
+            {{-0.5f, 0.5f, 0.5f}, {-1, 0, 0}, {0.45f, 0.75f, 0.45f}},
+            {{0.5f, -0.5f, -0.5f}, {1, 0, 0}, {0.75f, 0.65f, 0.35f}},
+            {{0.5f, -0.5f, 0.5f}, {1, 0, 0}, {0.75f, 0.65f, 0.35f}},
+            {{0.5f, 0.5f, 0.5f}, {1, 0, 0}, {0.75f, 0.65f, 0.35f}},
+            {{0.5f, 0.5f, -0.5f}, {1, 0, 0}, {0.75f, 0.65f, 0.35f}},
+            {{-0.5f, 0.5f, -0.5f}, {0, 1, 0}, {0.85f, 0.85f, 0.80f}},
+            {{0.5f, 0.5f, -0.5f}, {0, 1, 0}, {0.85f, 0.85f, 0.80f}},
+            {{0.5f, 0.5f, 0.5f}, {0, 1, 0}, {0.85f, 0.85f, 0.80f}},
+            {{-0.5f, 0.5f, 0.5f}, {0, 1, 0}, {0.85f, 0.85f, 0.80f}},
+            {{-0.5f, -0.5f, 0.5f}, {0, -1, 0}, {0.30f, 0.30f, 0.30f}},
+            {{0.5f, -0.5f, 0.5f}, {0, -1, 0}, {0.30f, 0.30f, 0.30f}},
+            {{0.5f, -0.5f, -0.5f}, {0, -1, 0}, {0.30f, 0.30f, 0.30f}},
+            {{-0.5f, -0.5f, -0.5f}, {0, -1, 0}, {0.30f, 0.30f, 0.30f}},
+        };
+        uint32_t indices[36] = {};
+        for (int face = 0; face < 6; ++face) {
+            const uint32_t faceBase = uint32_t(face) * 4;
+            const uint32_t offset = uint32_t(face) * 6;
+            indices[offset + 0] = faceBase + 0;
+            indices[offset + 1] = faceBase + 1;
+            indices[offset + 2] = faceBase + 2;
+            indices[offset + 3] = faceBase + 0;
+            indices[offset + 4] = faceBase + 2;
+            indices[offset + 5] = faceBase + 3;
+        }
+
+        ex::rhi::BufferDesc vertexDesc{};
+        vertexDesc.size = sizeof(vertices);
+        vertexDesc.usage = ex::rhi::BufferUsage::Vertex;
+        vertexDesc.initialData = vertices;
+        sceneVertexBuffer = device->CreateBuffer(vertexDesc);
+
+        ex::rhi::BufferDesc indexDesc{};
+        indexDesc.size = sizeof(indices);
+        indexDesc.usage = ex::rhi::BufferUsage::Index;
+        indexDesc.initialData = indices;
+        sceneIndexBuffer = device->CreateBuffer(indexDesc);
+
+        struct SceneInstance {
+            float transform[16];
+            float color[4];
+            float params[4];
+            float state[4];
+            float textureOrigin[4];
+            float textureScale[4];
+        };
+        SceneInstance instance{};
+        instance.transform[0] = 1.0f;
+        instance.transform[5] = 1.0f;
+        instance.transform[10] = 1.0f;
+        instance.transform[15] = 1.0f;
+        instance.color[0] = 1.0f;
+        instance.color[1] = 1.0f;
+        instance.color[2] = 1.0f;
+        instance.color[3] = 1.0f;
+        instance.textureScale[0] = 1.0f;
+        instance.textureScale[1] = 1.0f;
+        instance.textureScale[2] = 1.0f;
+        instance.textureScale[3] = 0.0f;
+
+        ex::rhi::BufferDesc instanceDesc{};
+        instanceDesc.size = sizeof(instance);
+        instanceDesc.usage = ex::rhi::BufferUsage::Storage |
+                             ex::rhi::BufferUsage::ShaderRead;
+        instanceDesc.structureStride = sizeof(SceneInstance);
+        instanceDesc.initialData = &instance;
+        sceneInstanceBuffer = device->CreateBuffer(instanceDesc);
+
+        float cascade[16] = {};
+        cascade[0] = 1.0f;
+        cascade[5] = 1.0f;
+        cascade[10] = 1.0f;
+        cascade[15] = 1.0f;
+        ex::rhi::BufferDesc cascadeDesc{};
+        cascadeDesc.size = sizeof(cascade);
+        cascadeDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        cascadeDesc.initialData = cascade;
+        sceneShadowCascadeBuffer = device->CreateBuffer(cascadeDesc);
+
+        const uint8_t surfacePixels[16] = {
+            128, 128, 128, 255, 128, 128, 128, 255,
+            128, 128, 128, 255, 128, 128, 128, 255,
+        };
+        ex::rhi::TextureSubresource surfaceSubresource{};
+        surfaceSubresource.data = surfacePixels;
+        surfaceSubresource.width = 2;
+        surfaceSubresource.height = 2;
+        surfaceSubresource.rowPitch = 8;
+        ex::rhi::TextureDesc surfaceDesc{};
+        surfaceDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+        surfaceDesc.width = 2;
+        surfaceDesc.height = 2;
+        surfaceDesc.usage = ex::rhi::TextureUsage::Sampled;
+        surfaceDesc.subresources = &surfaceSubresource;
+        surfaceDesc.subresourceCount = 1;
+        sceneSurfaceTexture = device->CreateTexture(surfaceDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kSceneVS;
+        shaderDesc.size = kSceneVSSize;
+        shaderDesc.name = "VSScene";
+        sceneVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kScenePS;
+        shaderDesc.size = kScenePSSize;
+        shaderDesc.name = "PSScene";
+        scenePixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {0, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel, 3},
+            {2, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {3, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {8, ex::rhi::DescriptorType::StorageBuffer, 1,
+             ex::rhi::ShaderStage::Vertex},
+            {9, ex::rhi::DescriptorType::StorageBuffer, 1,
+             ex::rhi::ShaderStage::Vertex},
+            {10, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {11, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {12, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {13, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {14, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {15, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {18, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {19, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {20, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::VertexAttribute attributes[] = {
+            {"POSITION", 0, ex::rhi::VertexFormat::Float3, 0, 0},
+            {"NORMAL", 0, ex::rhi::VertexFormat::Float3, 12, 0},
+            {"COLOR", 0, ex::rhi::VertexFormat::Float3, 24, 0},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = sceneVertexShader.get();
+        pipelineDesc.pixelShader = scenePixelShader.get();
+        pipelineDesc.vertexAttributes = attributes;
+        pipelineDesc.vertexAttributeCount = 3;
+        pipelineDesc.vertexStride = sizeof(SceneVertex);
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 14;
+        pipelineDesc.depthTest = true;
+        pipelineDesc.depthWrite = true;
+        pipelineDesc.depthCompare = ex::rhi::CompareOp::LessEqual;
+        pipelineDesc.cullMode = ex::rhi::CullMode::None;
+        scenePipeline = device->CreatePipeline(pipelineDesc);
+        if (scenePipeline) {
+            sceneSet = device->CreateDescriptorSet(scenePipeline.get());
+        }
+        if (sceneSet) {
+            sceneSet->SetBuffer(0, groundUniformBuffer.get(), 0,
+                                groundUniformBuffer->Size());
+            sceneSet->SetBuffer(2, groundShadowBuffer.get(), 0,
+                                groundShadowBuffer->Size());
+            sceneSet->SetBuffer(3, sceneShadowCascadeBuffer.get(), 0,
+                                sizeof(cascade));
+            sceneSet->SetBuffer(8, sceneInstanceBuffer.get(), 0,
+                                sceneInstanceBuffer->Size());
+            sceneSet->SetBuffer(9, sceneInstanceBuffer.get(), 0,
+                                sceneInstanceBuffer->Size());
+            for (int i = 0; i < 4; ++i) {
+                sceneSet->SetImage(uint32_t(10 + i),
+                                   groundShadowTextures[i].get());
+            }
+            sceneSet->SetImage(14, sceneSurfaceTexture.get());
+            sceneSet->SetImage(15, groundVolumeTexture.get());
+            sceneSet->SetSampler(18, groundShadowSampler.get());
+            sceneSet->SetSampler(19, groundVolumeSampler.get());
+            sceneSet->SetSampler(20, groundVolumeSampler.get());
+        }
+        if (!sceneVertexBuffer || !sceneIndexBuffer || !sceneInstanceBuffer ||
+            !sceneShadowCascadeBuffer || !sceneSurfaceTexture ||
+            !sceneVertexShader || !scenePixelShader || !scenePipeline ||
+            !sceneSet) {
+            std::fprintf(stderr, "Vulkan scene resources failed.\n");
+            return 1;
+        }
+    }
+
     std::unique_ptr<ex::rhi::Texture> targetTexture;
     std::unique_ptr<ex::rhi::DescriptorSet> targetCompositeSet;
     if (options.target) {
@@ -1025,6 +1250,12 @@ int main(int argc, char** argv) {
                 device->BindPipeline(compositePipeline.get());
                 device->BindDescriptorSet(compositeSet.get());
                 device->Draw(3);
+            } else if (scenePipeline) {
+                device->BindPipeline(scenePipeline.get());
+                device->BindDescriptorSet(sceneSet.get());
+                device->BindVertexBuffer(sceneVertexBuffer.get());
+                device->BindIndexBuffer(sceneIndexBuffer.get());
+                device->DrawIndexedInstanced(36, 1);
             } else if (groundPipeline) {
                 device->BindPipeline(groundPipeline.get());
                 device->BindDescriptorSet(groundSet.get());
@@ -1057,6 +1288,15 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    sceneSet.reset();
+    scenePipeline.reset();
+    scenePixelShader.reset();
+    sceneVertexShader.reset();
+    sceneSurfaceTexture.reset();
+    sceneShadowCascadeBuffer.reset();
+    sceneInstanceBuffer.reset();
+    sceneIndexBuffer.reset();
+    sceneVertexBuffer.reset();
     bloomCompositeSet.reset();
     bloomUpSet.reset();
     bloomDownSet.reset();

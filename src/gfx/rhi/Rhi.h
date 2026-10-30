@@ -226,6 +226,9 @@ struct DescriptorBinding {
     DescriptorType type = DescriptorType::UniformBuffer;
     uint32_t count = 1;
     ShaderStage stage = ShaderStage::Pixel;
+    // Optional stage bitmask overriding `stage`: 1 = vertex, 2 = pixel,
+    // 4 = compute. Use this when a resource is visible to multiple stages.
+    uint32_t stageMask = 0;
 };
 
 struct VertexAttribute {
