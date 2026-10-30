@@ -184,6 +184,9 @@ set(FLOATING_POINT_EXCEPTIONS_ENABLED OFF CACHE BOOL "" FORCE)
 set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
 set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
 set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+# The simulation only uses Jolt's CPU rigid bodies; skip its Vulkan compute
+# shaders so a plain Vulkan loader install does not require glslc.
+set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(jolt
     URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.6.0.zip
     URL_HASH SHA256=0AF9BEEA51637EF805E624FE838EA2870F7B68CD48CBE1615C853BD9BCF4F1D7
