@@ -111,6 +111,17 @@ folder is copied next to it. `physics` covers the blast model, atmosphere,
 volume baker, scene and settings; `gpu` exercises the Euler solver and is
 skipped when no Direct3D 11 device is available.
 
+The portable simulation core and its tests also build natively on Linux:
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+The graphical application is still Windows-only; see
+[docs/linux-build.md](docs/linux-build.md) for dependencies and the WSL flow.
+
 ## Run
 
 ```powershell
