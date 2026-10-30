@@ -43,6 +43,10 @@ public:
     void BeginFrame(float r, float g, float b, float a);
     void EndFrame(bool vsync);
 
+    // Renders into a Texture created with TextureUsage::RenderTarget. The
+    // texture is left in SHADER_READ_ONLY_OPTIMAL for the next pass.
+    void BeginFrameTexture(Texture* color, float r, float g, float b, float a);
+
     // Temporary immediate-mode draw path used by the M3 bring-up tests. The
     // command-list abstraction replaces these calls later.
     void BindVertexBuffer(Buffer* buffer, uint64_t offset = 0);
@@ -65,10 +69,12 @@ private:
     bool CreateCommandResources();
     bool CreateSwapchain();
     bool CreateRenderPass();
+    bool CreateTextureRenderPass();
     bool CreateFramebuffers();
     bool CreateOffscreenTarget();
     void DestroySwapchain();
     void DestroyOffscreenTarget();
+    void DestroyTargetResources();
     bool RecreateSwapchain();
 
     bool BeginCommandBuffer();
@@ -100,6 +106,7 @@ private:
     uint32_t imageIndex_ = 0;
 
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
+    VkRenderPass textureRenderPass_ = VK_NULL_HANDLE;
     VkImage colorImage_ = VK_NULL_HANDLE;
     VkDeviceMemory colorMemory_ = VK_NULL_HANDLE;
     VkImageView colorView_ = VK_NULL_HANDLE;
@@ -107,6 +114,14 @@ private:
     VkDeviceMemory depthMemory_ = VK_NULL_HANDLE;
     VkImageView depthView_ = VK_NULL_HANDLE;
     VkFramebuffer offscreenFramebuffer_ = VK_NULL_HANDLE;
+
+    VkFramebuffer targetFramebuffer_ = VK_NULL_HANDLE;
+    VkImage targetDepthImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory targetDepthMemory_ = VK_NULL_HANDLE;
+    VkImageView targetDepthView_ = VK_NULL_HANDLE;
+    uint32_t targetWidth_ = 0;
+    uint32_t targetHeight_ = 0;
+    bool renderingToTexture_ = false;
 
     VkPipeline boundPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout boundPipelineLayout_ = VK_NULL_HANDLE;

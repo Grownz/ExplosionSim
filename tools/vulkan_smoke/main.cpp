@@ -33,6 +33,7 @@ struct Options {
     bool sky = false;
     bool composite = false;
     bool ground = false;
+    bool target = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -75,6 +76,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--ground") == 0) {
             options.ground = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--target") == 0) {
+            options.target = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -233,7 +238,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> quadPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> quadSet;
 
-    if (options.quad) {
+    if (options.quad || options.target) {
         struct QuadVertex {
             float position[3];
             float uv[2];
@@ -431,7 +436,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> compositePipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> compositeSet;
 
-    if (options.composite) {
+    if (options.composite || options.target) {
         const uint8_t scenePixels[16] = {
             128, 64, 32, 255, 128, 64, 32, 255,
             128, 64, 32, 255, 128, 64, 32, 255,
@@ -787,6 +792,34 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Texture> targetTexture;
+    std::unique_ptr<ex::rhi::DescriptorSet> targetCompositeSet;
+    if (options.target) {
+        ex::rhi::TextureDesc targetDesc{};
+        targetDesc.format = ex::rhi::Format::B8G8R8A8_UNORM;
+        targetDesc.width = uint32_t(options.width);
+        targetDesc.height = uint32_t(options.height);
+        targetDesc.usage = ex::rhi::TextureUsage::RenderTarget |
+                           ex::rhi::TextureUsage::Sampled;
+        targetTexture = device->CreateTexture(targetDesc);
+
+        if (compositePipeline) {
+            targetCompositeSet =
+                device->CreateDescriptorSet(compositePipeline.get());
+        }
+        if (targetCompositeSet) {
+            targetCompositeSet->SetImage(8, targetTexture.get());
+            targetCompositeSet->SetImage(9, compositeBloomTexture.get());
+            targetCompositeSet->SetSampler(16, compositeSampler.get());
+            targetCompositeSet->SetBuffer(1, compositeUniformBuffer.get(), 0,
+                                          compositeUniformBuffer->Size());
+        }
+        if (!targetTexture || !targetCompositeSet) {
+            std::fprintf(stderr, "Vulkan render-target resources failed.\n");
+            return 1;
+        }
+    }
+
     const int frames =
         options.frames >= 0 ? options.frames : (options.headless ? 3 : 0);
     int rendered = 0;
@@ -795,30 +828,46 @@ int main(int argc, char** argv) {
             break;
         }
         const float t = float(frame % 120) / 120.0f;
-        device->BeginFrame(0.1f + 0.2f * t, 0.2f, 0.4f - 0.2f * t, 1.0f);
-        if (pipeline) {
-            device->BindPipeline(pipeline.get());
-            device->BindVertexBuffer(vertexBuffer.get());
-            device->Draw(3);
-        } else if (quadPipeline) {
+        if (options.target) {
+            device->BeginFrameTexture(targetTexture.get(), 0.05f, 0.05f, 0.1f,
+                                      1.0f);
             device->BindPipeline(quadPipeline.get());
             device->BindDescriptorSet(quadSet.get());
             device->BindVertexBuffer(quadVertexBuffer.get());
             device->Draw(6);
-        } else if (skyPipeline) {
-            device->BindPipeline(skyPipeline.get());
-            device->BindDescriptorSet(skySet.get());
-            device->Draw(3);
-        } else if (compositePipeline) {
+            device->EndFrame(false);
+
+            device->BeginFrame(0.02f, 0.02f, 0.03f, 1.0f);
             device->BindPipeline(compositePipeline.get());
-            device->BindDescriptorSet(compositeSet.get());
+            device->BindDescriptorSet(targetCompositeSet.get());
             device->Draw(3);
-        } else if (groundPipeline) {
-            device->BindPipeline(groundPipeline.get());
-            device->BindDescriptorSet(groundSet.get());
-            device->Draw(3);
+            device->EndFrame(true);
+        } else {
+            device->BeginFrame(0.1f + 0.2f * t, 0.2f, 0.4f - 0.2f * t, 1.0f);
+            if (pipeline) {
+                device->BindPipeline(pipeline.get());
+                device->BindVertexBuffer(vertexBuffer.get());
+                device->Draw(3);
+            } else if (quadPipeline) {
+                device->BindPipeline(quadPipeline.get());
+                device->BindDescriptorSet(quadSet.get());
+                device->BindVertexBuffer(quadVertexBuffer.get());
+                device->Draw(6);
+            } else if (skyPipeline) {
+                device->BindPipeline(skyPipeline.get());
+                device->BindDescriptorSet(skySet.get());
+                device->Draw(3);
+            } else if (compositePipeline) {
+                device->BindPipeline(compositePipeline.get());
+                device->BindDescriptorSet(compositeSet.get());
+                device->Draw(3);
+            } else if (groundPipeline) {
+                device->BindPipeline(groundPipeline.get());
+                device->BindDescriptorSet(groundSet.get());
+                device->Draw(3);
+            }
+            device->EndFrame(true);
         }
-        device->EndFrame(true);
         ++rendered;
     }
 
@@ -844,6 +893,8 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    targetCompositeSet.reset();
+    targetTexture.reset();
     groundSet.reset();
     groundPipeline.reset();
     groundPixelShader.reset();

@@ -17,7 +17,8 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   a texture, sampler, uniform buffer and descriptor set; `--sky` runs the real
   `assets/shaders/sky.hlsl` with the shared frame constants; `--composite` runs
   the real tonemap/bloom composite with two sampled textures; `--ground` runs
-  the ground plane with cascaded/static shadow maps and a 3D volume texture.
+  the ground plane with cascaded/static shadow maps and a 3D volume texture;
+  `--target` renders a pass into an offscreen texture and samples it afterwards.
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.
@@ -85,6 +86,10 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 # Ground plane with shadow maps and a 3D volume texture:
 ./build/vulkan_smoke --headless --ground --frames 2 \
   --output /tmp/vulkan_ground.ppm
+
+# Render-to-texture: a quad into an offscreen target, then composite it:
+./build/vulkan_smoke --headless --target --frames 2 \
+  --output /tmp/vulkan_target.ppm
 ```
 
 The smoke shaders are compiled from `tools/vulkan_smoke/*.hlsl` and
