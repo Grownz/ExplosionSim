@@ -228,9 +228,10 @@ still uses the Win32/D3D11 path.
 Status: **started.** Vulkan buffer, texture, sampler, shader-module, graphics
 pipeline and descriptor-set creation exist; `vulkan_smoke --triangle` renders an
 embedded SPIR-V triangle, `--quad` samples a texture with a uniform tint through
-a descriptor set, and `--sky` runs the real `sky.hlsl` with the shared frame
-constants, offscreen and windowed. The remaining passes and the general
-HLSL→SPIR-V build integration are next.
+a descriptor set, `--sky` runs the real `sky.hlsl` with the shared frame
+constants, and `--composite` runs the real bloom/tonemap composite. The shader
+binding convention (`EX_VK_BINDING`) is in place. The remaining passes and the
+general HLSL→SPIR-V build integration are next.
 
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,
   particles and the shadow maps.

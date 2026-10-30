@@ -1,11 +1,20 @@
 #ifndef EXPLOSION_COMMON_HLSLI
 #define EXPLOSION_COMMON_HLSLI
 
+// Vulkan uses explicit descriptor bindings because D3D register spaces do not
+// map one-to-one onto Vulkan descriptor sets. D3D11 compiles the macro away.
+// Binding map: b0..b3 -> 0..3, t0..t7 -> 8..15, s0..s3 -> 16..19.
+#if defined(EXPLOSION_VULKAN)
+#define EX_VK_BINDING(n) [[vk::binding(n, 0)]]
+#else
+#define EX_VK_BINDING(n)
+#endif
+
 static const float PI = 3.14159265359;
 
 // Shared frame constants. The layout must match FrameConstants in
 // src/gfx/Renderer.cpp exactly.
-cbuffer FrameConstants : register(b0)
+EX_VK_BINDING(0) cbuffer FrameConstants : register(b0)
 {
     float4x4 ViewProj;
     float4x4 InvViewProj;
@@ -31,7 +40,7 @@ cbuffer FrameConstants : register(b0)
     float4 Blast;            // xyz = burst centre, w = shock Mach number
 };
 
-cbuffer BloomConstants : register(b1)
+EX_VK_BINDING(1) cbuffer BloomConstants : register(b1)
 {
     float4 TexelSize;        // xy = source texel, zw = target texel
     float4 BloomParams;      // x = threshold, y = intensity, z = exposure, w = bloom strength

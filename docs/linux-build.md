@@ -15,7 +15,8 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   (with a desktop) an SDL3 window with a swapchain. `--triangle` exercises
   vertex buffers, SPIR-V shader modules and a graphics pipeline; `--quad` adds
   a texture, sampler, uniform buffer and descriptor set; `--sky` runs the real
-  `assets/shaders/sky.hlsl` with the shared frame constants.
+  `assets/shaders/sky.hlsl` with the shared frame constants; `--composite` runs
+  the real tonemap/bloom composite with two sampled textures.
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.
@@ -75,11 +76,20 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 # Real sky shader with the shared FrameConstants uniform buffer:
 ./build/vulkan_smoke --headless --sky --frames 2 \
   --output /tmp/vulkan_sky.ppm
+
+# Real HDR composite (bloom + tonemap + vignette):
+./build/vulkan_smoke --headless --composite --frames 2 \
+  --output /tmp/vulkan_composite.ppm
 ```
 
 The smoke shaders are compiled from `tools/vulkan_smoke/*.hlsl` and
-`assets/shaders/sky.hlsl` with DXC and embedded as SPIR-V in
-`TriangleShaders.h`, `QuadShaders.h` and `SkyShaders.h`.
+`assets/shaders/sky.hlsl`/`composite.hlsl` with DXC and embedded as SPIR-V in
+`TriangleShaders.h`, `QuadShaders.h`, `SkyShaders.h` and `CompositeShaders.h`.
+
+Shared shaders use the `EX_VK_BINDING(n)` macro from `common.hlsli`. It expands
+to `[[vk::binding(n, 0)]]` under DXC and to nothing under D3DCompile. The binding
+map is `b0..b3 -> 0..3`, `t0..t7 -> 8..15`, `s0..s3 -> 16..19`; this avoids the
+register-namespace collisions that DXC's default register mapping would create.
 
 The smoke test prints the selected adapter and exits. `--debug` enables the
 Vulkan validation layer when it is installed.

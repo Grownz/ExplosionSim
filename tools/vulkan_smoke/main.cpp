@@ -6,6 +6,7 @@
 #include "TriangleShaders.h"
 #include "QuadShaders.h"
 #include "SkyShaders.h"
+#include "CompositeShaders.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -27,6 +28,7 @@ struct Options {
     bool triangle = false;
     bool quad = false;
     bool sky = false;
+    bool composite = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -61,6 +63,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--sky") == 0) {
             options.sky = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--composite") == 0) {
+            options.composite = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -408,6 +414,110 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Texture> compositeSceneTexture;
+    std::unique_ptr<ex::rhi::Texture> compositeBloomTexture;
+    std::unique_ptr<ex::rhi::Sampler> compositeSampler;
+    std::unique_ptr<ex::rhi::Buffer> compositeUniformBuffer;
+    std::unique_ptr<ex::rhi::Shader> compositeVertexShader;
+    std::unique_ptr<ex::rhi::Shader> compositePixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> compositePipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> compositeSet;
+
+    if (options.composite) {
+        const uint8_t scenePixels[16] = {
+            128, 64, 32, 255, 128, 64, 32, 255,
+            128, 64, 32, 255, 128, 64, 32, 255,
+        };
+        const uint8_t bloomPixels[16] = {
+            16, 16, 16, 255, 16, 16, 16, 255,
+            16, 16, 16, 255, 16, 16, 16, 255,
+        };
+        ex::rhi::TextureSubresource sceneSubresource{};
+        sceneSubresource.data = scenePixels;
+        sceneSubresource.width = 2;
+        sceneSubresource.height = 2;
+        sceneSubresource.rowPitch = 8;
+        ex::rhi::TextureDesc sceneDesc{};
+        sceneDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+        sceneDesc.width = 2;
+        sceneDesc.height = 2;
+        sceneDesc.usage = ex::rhi::TextureUsage::Sampled;
+        sceneDesc.subresources = &sceneSubresource;
+        sceneDesc.subresourceCount = 1;
+        compositeSceneTexture = device->CreateTexture(sceneDesc);
+
+        ex::rhi::TextureSubresource bloomSubresource = sceneSubresource;
+        bloomSubresource.data = bloomPixels;
+        ex::rhi::TextureDesc bloomDesc = sceneDesc;
+        bloomDesc.subresources = &bloomSubresource;
+        compositeBloomTexture = device->CreateTexture(bloomDesc);
+
+        ex::rhi::SamplerDesc samplerDesc{};
+        samplerDesc.linear = true;
+        samplerDesc.clamp = true;
+        compositeSampler = device->CreateSampler(samplerDesc);
+
+        float bloomConstants[8] = {
+            1.0f / float(options.width), 1.0f / float(options.height),
+            1.0f / float(options.width), 1.0f / float(options.height),
+            1.0f, 1.0f, 1.0f, 1.0f,
+        };
+        ex::rhi::BufferDesc uniformDesc{};
+        uniformDesc.size = sizeof(bloomConstants);
+        uniformDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        uniformDesc.initialData = bloomConstants;
+        compositeUniformBuffer = device->CreateBuffer(uniformDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kCompositeVS;
+        shaderDesc.size = kCompositeVSSize;
+        shaderDesc.name = "FullscreenVS";
+        compositeVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kCompositePS;
+        shaderDesc.size = kCompositePSSize;
+        shaderDesc.name = "PSComposite";
+        compositePixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {8, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {9, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {16, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {1, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = compositeVertexShader.get();
+        pipelineDesc.pixelShader = compositePixelShader.get();
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 4;
+        pipelineDesc.depthTest = false;
+        pipelineDesc.depthWrite = false;
+        compositePipeline = device->CreatePipeline(pipelineDesc);
+        if (compositePipeline) {
+            compositeSet = device->CreateDescriptorSet(compositePipeline.get());
+        }
+        if (compositeSet) {
+            compositeSet->SetImage(8, compositeSceneTexture.get());
+            compositeSet->SetImage(9, compositeBloomTexture.get());
+            compositeSet->SetSampler(16, compositeSampler.get());
+            compositeSet->SetBuffer(1, compositeUniformBuffer.get(), 0,
+                                    sizeof(bloomConstants));
+        }
+        if (!compositeSceneTexture || !compositeBloomTexture ||
+            !compositeSampler || !compositeUniformBuffer ||
+            !compositeVertexShader || !compositePixelShader ||
+            !compositePipeline || !compositeSet) {
+            std::fprintf(stderr, "Vulkan composite resources failed.\n");
+            return 1;
+        }
+    }
+
     const int frames =
         options.frames >= 0 ? options.frames : (options.headless ? 3 : 0);
     int rendered = 0;
@@ -429,6 +539,10 @@ int main(int argc, char** argv) {
         } else if (skyPipeline) {
             device->BindPipeline(skyPipeline.get());
             device->BindDescriptorSet(skySet.get());
+            device->Draw(3);
+        } else if (compositePipeline) {
+            device->BindPipeline(compositePipeline.get());
+            device->BindDescriptorSet(compositeSet.get());
             device->Draw(3);
         }
         device->EndFrame(true);
@@ -457,6 +571,14 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    compositeSet.reset();
+    compositePipeline.reset();
+    compositePixelShader.reset();
+    compositeVertexShader.reset();
+    compositeUniformBuffer.reset();
+    compositeSampler.reset();
+    compositeBloomTexture.reset();
+    compositeSceneTexture.reset();
     skySet.reset();
     skyPipeline.reset();
     skyPixelShader.reset();

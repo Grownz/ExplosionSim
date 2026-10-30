@@ -1,8 +1,8 @@
 #include "common.hlsli"
 
-Texture2D<float4> SceneTexture : register(t0);
-Texture2D<float4> BloomTexture : register(t1);
-SamplerState LinearSampler : register(s0);
+EX_VK_BINDING(8) Texture2D<float4> SceneTexture : register(t0);
+EX_VK_BINDING(9) Texture2D<float4> BloomTexture : register(t1);
+EX_VK_BINDING(16) SamplerState LinearSampler : register(s0);
 
 float3 ACESFilm(float3 x)
 {
@@ -18,7 +18,7 @@ float3 LinearToSrgb(float3 color)
 {
     float3 low = color * 12.92;
     float3 high = 1.055 * pow(max(color, 0.0), 1.0 / 2.4) - 0.055;
-    return color <= 0.0031308 ? low : high;
+    return lerp(low, high, step(0.0031308, color));
 }
 
 // Final HDR composite: bloom, exposure, filmic tonemap, vignette and dithering.
