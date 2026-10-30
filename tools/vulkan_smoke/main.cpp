@@ -10,6 +10,7 @@
 #include "GroundShaders.h"
 #include "BloomShaders.h"
 #include "SceneShaders.h"
+#include "ShockShaders.h"
 
 #include <DirectXMath.h>
 
@@ -38,6 +39,7 @@ struct Options {
     bool target = false;
     bool bloom = false;
     bool scene = false;
+    bool shock = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -92,6 +94,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--scene") == 0) {
             options.scene = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--shock") == 0) {
+            options.shock = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -1161,6 +1167,153 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Texture> shockSceneColor;
+    std::unique_ptr<ex::rhi::Texture> shockSceneDepth;
+    std::unique_ptr<ex::rhi::Sampler> shockSampler;
+    std::unique_ptr<ex::rhi::Buffer> shockUniformBuffer;
+    std::unique_ptr<ex::rhi::Shader> shockVertexShader;
+    std::unique_ptr<ex::rhi::Shader> shockPixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> shockPipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> shockSet;
+
+    if (options.shock) {
+        uint8_t colorPixels[4 * 4 * 4] = {};
+        for (int y = 0; y < 4; ++y) {
+            for (int x = 0; x < 4; ++x) {
+                const size_t index = (size_t(y) * 4 + size_t(x)) * 4;
+                colorPixels[index + 0] = uint8_t(40 + x * 50);
+                colorPixels[index + 1] = uint8_t(30 + y * 50);
+                colorPixels[index + 2] = uint8_t(120 + (x + y) * 20);
+                colorPixels[index + 3] = 255;
+            }
+        }
+        ex::rhi::TextureSubresource colorSubresource{};
+        colorSubresource.data = colorPixels;
+        colorSubresource.width = 4;
+        colorSubresource.height = 4;
+        colorSubresource.rowPitch = 16;
+        ex::rhi::TextureDesc colorDesc{};
+        colorDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+        colorDesc.width = 4;
+        colorDesc.height = 4;
+        colorDesc.usage = ex::rhi::TextureUsage::Sampled;
+        colorDesc.subresources = &colorSubresource;
+        colorDesc.subresourceCount = 1;
+        shockSceneColor = device->CreateTexture(colorDesc);
+
+        float depthPixels[16];
+        for (float& value : depthPixels) {
+            value = 0.5f;
+        }
+        ex::rhi::TextureSubresource depthSubresource{};
+        depthSubresource.data = depthPixels;
+        depthSubresource.width = 4;
+        depthSubresource.height = 4;
+        depthSubresource.rowPitch = 16;
+        ex::rhi::TextureDesc depthDesc{};
+        depthDesc.format = ex::rhi::Format::D32_FLOAT;
+        depthDesc.width = 4;
+        depthDesc.height = 4;
+        depthDesc.usage = ex::rhi::TextureUsage::Sampled |
+                          ex::rhi::TextureUsage::DepthStencil;
+        depthDesc.subresources = &depthSubresource;
+        depthDesc.subresourceCount = 1;
+        shockSceneDepth = device->CreateTexture(depthDesc);
+
+        ex::rhi::SamplerDesc samplerDesc{};
+        samplerDesc.linear = true;
+        samplerDesc.clamp = true;
+        shockSampler = device->CreateSampler(samplerDesc);
+
+        float constants[112] = {};
+        constants[0] = 1.0f;
+        constants[5] = 1.0f;
+        constants[10] = 1.0f;
+        constants[15] = 1.0f;
+        constants[16] = 1.0f;
+        constants[21] = 1.0f;
+        constants[26] = 1.0f;
+        constants[31] = 1.0f;
+        constants[32] = 0.0f;
+        constants[33] = 0.0f;
+        constants[34] = -5.0f;
+        constants[35] = 0.0f;
+        constants[36] = 0.3f;
+        constants[37] = 0.8f;
+        constants[38] = 0.5f;
+        constants[39] = 1.0f;
+        constants[40] = 1.0f;
+        constants[41] = 0.7f;
+        constants[42] = 0.44f;
+        constants[43] = 1.0f;
+        constants[52] = float(options.width);
+        constants[53] = float(options.height);
+        constants[54] = 1.0f / float(options.width);
+        constants[55] = 1.0f / float(options.height);
+        constants[64] = 0.0f;
+        constants[65] = 1.0f / 60.0f;
+        constants[66] = 0.0f;
+        constants[67] = 2.0f;
+        constants[108] = 0.0f;
+        constants[109] = 0.0f;
+        constants[110] = 0.0f;
+        constants[111] = 2.0f;
+
+        ex::rhi::BufferDesc uniformDesc{};
+        uniformDesc.size = sizeof(constants);
+        uniformDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        uniformDesc.initialData = constants;
+        shockUniformBuffer = device->CreateBuffer(uniformDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kShockVS;
+        shaderDesc.size = kShockVSSize;
+        shaderDesc.name = "FullscreenVS";
+        shockVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kShockPS;
+        shaderDesc.size = kShockPSSize;
+        shaderDesc.name = "PSShock";
+        shockPixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {0, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {8, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {9, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {16, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = shockVertexShader.get();
+        pipelineDesc.pixelShader = shockPixelShader.get();
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 4;
+        pipelineDesc.depthTest = false;
+        pipelineDesc.depthWrite = false;
+        shockPipeline = device->CreatePipeline(pipelineDesc);
+        if (shockPipeline) {
+            shockSet = device->CreateDescriptorSet(shockPipeline.get());
+        }
+        if (shockSet) {
+            shockSet->SetBuffer(0, shockUniformBuffer.get(), 0,
+                                sizeof(constants));
+            shockSet->SetImage(8, shockSceneColor.get());
+            shockSet->SetImage(9, shockSceneDepth.get());
+            shockSet->SetSampler(16, shockSampler.get());
+        }
+        if (!shockSceneColor || !shockSceneDepth || !shockSampler ||
+            !shockUniformBuffer || !shockVertexShader || !shockPixelShader ||
+            !shockPipeline || !shockSet) {
+            std::fprintf(stderr, "Vulkan shock resources failed.\n");
+            return 1;
+        }
+    }
+
     std::unique_ptr<ex::rhi::Texture> targetTexture;
     std::unique_ptr<ex::rhi::DescriptorSet> targetCompositeSet;
     if (options.target) {
@@ -1250,6 +1403,10 @@ int main(int argc, char** argv) {
                 device->BindPipeline(compositePipeline.get());
                 device->BindDescriptorSet(compositeSet.get());
                 device->Draw(3);
+            } else if (shockPipeline) {
+                device->BindPipeline(shockPipeline.get());
+                device->BindDescriptorSet(shockSet.get());
+                device->Draw(3);
             } else if (scenePipeline) {
                 device->BindPipeline(scenePipeline.get());
                 device->BindDescriptorSet(sceneSet.get());
@@ -1288,6 +1445,14 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    shockSet.reset();
+    shockPipeline.reset();
+    shockPixelShader.reset();
+    shockVertexShader.reset();
+    shockUniformBuffer.reset();
+    shockSampler.reset();
+    shockSceneDepth.reset();
+    shockSceneColor.reset();
     sceneSet.reset();
     scenePipeline.reset();
     scenePixelShader.reset();
