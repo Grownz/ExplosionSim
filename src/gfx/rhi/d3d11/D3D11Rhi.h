@@ -35,6 +35,11 @@ public:
     std::unique_ptr<Shader> CreateShader(const ShaderDesc& desc) override;
     std::unique_ptr<Sampler> CreateSampler(const SamplerDesc& desc) override;
     std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) override;
+    std::unique_ptr<DescriptorSet> CreateDescriptorSet(Pipeline*) override {
+        // D3D11 binds resources directly; descriptor sets are Vulkan-only.
+        return nullptr;
+    }
+    void BindDescriptorSet(DescriptorSet*, uint32_t) override {}
     void BindPipeline(Pipeline* pipeline) override;
     bool Resize(int width, int height) override;
     void WaitIdle() override;

@@ -211,6 +211,21 @@ enum class VertexFormat {
     UInt4,
 };
 
+enum class DescriptorType {
+    UniformBuffer,
+    StorageBuffer,
+    SampledImage,
+    Sampler,
+    StorageImage,
+};
+
+struct DescriptorBinding {
+    uint32_t binding = 0;
+    DescriptorType type = DescriptorType::UniformBuffer;
+    uint32_t count = 1;
+    ShaderStage stage = ShaderStage::Pixel;
+};
+
 struct VertexAttribute {
     const char* semantic = nullptr;
     uint32_t semanticIndex = 0;
@@ -225,6 +240,8 @@ struct PipelineDesc {
     const VertexAttribute* vertexAttributes = nullptr;
     uint32_t vertexAttributeCount = 0;
     uint32_t vertexStride = 0; // Vulkan vertex binding stride; 0 = derive
+    const DescriptorBinding* descriptorBindings = nullptr;
+    uint32_t descriptorBindingCount = 0;
     // DXBC signature used to build the D3D11 input layout. Vulkan uses the
     // vertex attributes instead and ignores this.
     const void* vertexShaderBytecode = nullptr;
@@ -244,6 +261,18 @@ public:
     virtual void* NativeHandle() const = 0;
 };
 
+// A set of buffer/image/sampler bindings matching a pipeline's descriptor
+// layout. Bindings are written individually so the renderer can update a
+// uniform buffer or swap a texture without rebuilding the set.
+class DescriptorSet {
+public:
+    virtual ~DescriptorSet() = default;
+    virtual void SetBuffer(uint32_t binding, Buffer* buffer, uint64_t offset = 0,
+                           uint64_t range = 0) = 0;
+    virtual void SetImage(uint32_t binding, Texture* texture) = 0;
+    virtual void SetSampler(uint32_t binding, Sampler* sampler) = 0;
+};
+
 // Owns the GPU device, the swapchain or offscreen target and the shared depth
 // buffer. Backends implement the resource factories; the renderer only sees
 // this interface once the legacy D3D11 bridge is removed.
@@ -257,9 +286,11 @@ public:
     virtual std::unique_ptr<Shader> CreateShader(const ShaderDesc& desc) = 0;
     virtual std::unique_ptr<Sampler> CreateSampler(const SamplerDesc& desc) = 0;
     virtual std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) = 0;
+    virtual std::unique_ptr<DescriptorSet> CreateDescriptorSet(Pipeline* pipeline) = 0;
     // Temporary immediate-mode binding until the command list abstraction
     // lands; sets the pipeline's shaders and fixed-function state.
     virtual void BindPipeline(Pipeline* pipeline) = 0;
+    virtual void BindDescriptorSet(DescriptorSet* set, uint32_t index = 0) = 0;
 
     virtual bool Resize(int width, int height) = 0;
     virtual void WaitIdle() = 0;

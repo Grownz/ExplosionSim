@@ -4,6 +4,7 @@
 #include "gfx/rhi/vulkan/VulkanRhi.h"
 #include "platform/Platform.h"
 #include "TriangleShaders.h"
+#include "QuadShaders.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -23,6 +24,7 @@ struct Options {
     bool headless = false;
     bool debug = false;
     bool triangle = false;
+    bool quad = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -49,6 +51,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--triangle") == 0) {
             options.triangle = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--quad") == 0) {
+            options.quad = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -198,6 +204,117 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Buffer> quadVertexBuffer;
+    std::unique_ptr<ex::rhi::Texture> quadTexture;
+    std::unique_ptr<ex::rhi::Sampler> quadSampler;
+    std::unique_ptr<ex::rhi::Buffer> quadUniformBuffer;
+    std::unique_ptr<ex::rhi::Shader> quadVertexShader;
+    std::unique_ptr<ex::rhi::Shader> quadPixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> quadPipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> quadSet;
+
+    if (options.quad) {
+        struct QuadVertex {
+            float position[3];
+            float uv[2];
+        };
+        const QuadVertex vertices[] = {
+            {{-0.8f, -0.8f, 0.0f}, {0.0f, 1.0f}},
+            {{0.8f, -0.8f, 0.0f}, {1.0f, 1.0f}},
+            {{0.8f, 0.8f, 0.0f}, {1.0f, 0.0f}},
+            {{-0.8f, -0.8f, 0.0f}, {0.0f, 1.0f}},
+            {{0.8f, 0.8f, 0.0f}, {1.0f, 0.0f}},
+            {{-0.8f, 0.8f, 0.0f}, {0.0f, 0.0f}},
+        };
+        ex::rhi::BufferDesc bufferDesc{};
+        bufferDesc.size = sizeof(vertices);
+        bufferDesc.usage = ex::rhi::BufferUsage::Vertex;
+        bufferDesc.initialData = vertices;
+        quadVertexBuffer = device->CreateBuffer(bufferDesc);
+
+        const uint8_t pixels[16] = {
+            255, 0, 0, 255, 0, 255, 0, 255,
+            0, 0, 255, 255, 255, 255, 255, 255,
+        };
+        ex::rhi::TextureSubresource subresource{};
+        subresource.data = pixels;
+        subresource.width = 2;
+        subresource.height = 2;
+        subresource.rowPitch = 8;
+        ex::rhi::TextureDesc textureDesc{};
+        textureDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+        textureDesc.width = 2;
+        textureDesc.height = 2;
+        textureDesc.usage = ex::rhi::TextureUsage::Sampled;
+        textureDesc.subresources = &subresource;
+        textureDesc.subresourceCount = 1;
+        quadTexture = device->CreateTexture(textureDesc);
+
+        ex::rhi::SamplerDesc samplerDesc{};
+        samplerDesc.linear = false;
+        samplerDesc.clamp = true;
+        quadSampler = device->CreateSampler(samplerDesc);
+
+        const float tint[4] = {0.5f, 1.0f, 1.0f, 1.0f};
+        ex::rhi::BufferDesc uniformDesc{};
+        uniformDesc.size = sizeof(tint);
+        uniformDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        uniformDesc.initialData = tint;
+        quadUniformBuffer = device->CreateBuffer(uniformDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kQuadVS;
+        shaderDesc.size = kQuadVSSize;
+        shaderDesc.name = "VSMain";
+        quadVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kQuadPS;
+        shaderDesc.size = kQuadPSSize;
+        shaderDesc.name = "PSMain";
+        quadPixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::VertexAttribute attributes[] = {
+            {"POSITION", 0, ex::rhi::VertexFormat::Float3, 0, 0},
+            {"TEXCOORD", 0, ex::rhi::VertexFormat::Float2, 12, 0},
+        };
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {0, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {1, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {2, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = quadVertexShader.get();
+        pipelineDesc.pixelShader = quadPixelShader.get();
+        pipelineDesc.vertexAttributes = attributes;
+        pipelineDesc.vertexAttributeCount = 2;
+        pipelineDesc.vertexStride = sizeof(QuadVertex);
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 3;
+        pipelineDesc.depthTest = false;
+        pipelineDesc.depthWrite = false;
+        quadPipeline = device->CreatePipeline(pipelineDesc);
+
+        if (quadPipeline) {
+            quadSet = device->CreateDescriptorSet(quadPipeline.get());
+        }
+        if (quadSet) {
+            quadSet->SetImage(0, quadTexture.get());
+            quadSet->SetSampler(1, quadSampler.get());
+            quadSet->SetBuffer(2, quadUniformBuffer.get(), 0, sizeof(tint));
+        }
+        if (!quadVertexBuffer || !quadTexture || !quadSampler ||
+            !quadUniformBuffer || !quadVertexShader || !quadPixelShader ||
+            !quadPipeline || !quadSet) {
+            std::fprintf(stderr, "Vulkan quad resources failed.\n");
+            return 1;
+        }
+    }
+
     const int frames =
         options.frames >= 0 ? options.frames : (options.headless ? 3 : 0);
     int rendered = 0;
@@ -211,6 +328,11 @@ int main(int argc, char** argv) {
             device->BindPipeline(pipeline.get());
             device->BindVertexBuffer(vertexBuffer.get());
             device->Draw(3);
+        } else if (quadPipeline) {
+            device->BindPipeline(quadPipeline.get());
+            device->BindDescriptorSet(quadSet.get());
+            device->BindVertexBuffer(quadVertexBuffer.get());
+            device->Draw(6);
         }
         device->EndFrame(true);
         ++rendered;
@@ -238,6 +360,14 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    quadSet.reset();
+    quadPipeline.reset();
+    quadPixelShader.reset();
+    quadVertexShader.reset();
+    quadUniformBuffer.reset();
+    quadSampler.reset();
+    quadTexture.reset();
+    quadVertexBuffer.reset();
     pipeline.reset();
     pixelShader.reset();
     vertexShader.reset();

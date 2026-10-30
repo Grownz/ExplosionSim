@@ -225,9 +225,10 @@ still uses the Win32/D3D11 path.
 
 ### M3 — Reduced-order renderer on Vulkan (25–35 days)
 
-Status: **started.** Vulkan buffer, texture, sampler, shader-module and graphics
-pipeline creation exist; `vulkan_smoke --triangle` renders an embedded SPIR-V
-triangle offscreen and windowed. Descriptor sets, renderer passes and the
+Status: **started.** Vulkan buffer, texture, sampler, shader-module, graphics
+pipeline and descriptor-set creation exist; `vulkan_smoke --triangle` renders an
+embedded SPIR-V triangle and `--quad` samples a texture with a uniform tint
+through a descriptor set, offscreen and windowed. Renderer passes and the
 HLSL→SPIR-V build integration are next.
 
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,

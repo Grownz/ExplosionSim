@@ -31,7 +31,9 @@ public:
     std::unique_ptr<Shader> CreateShader(const ShaderDesc& desc) override;
     std::unique_ptr<Sampler> CreateSampler(const SamplerDesc& desc) override;
     std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) override;
+    std::unique_ptr<DescriptorSet> CreateDescriptorSet(Pipeline* pipeline) override;
     void BindPipeline(Pipeline* pipeline) override;
+    void BindDescriptorSet(DescriptorSet* set, uint32_t index = 0) override;
     bool Resize(int width, int height) override;
     void WaitIdle() override;
     void* NativeHandle() const override { return device_; }
@@ -108,6 +110,7 @@ private:
 
     VkPipeline boundPipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout boundPipelineLayout_ = VK_NULL_HANDLE;
+    VkDescriptorSet boundDescriptorSet_ = VK_NULL_HANDLE;
     VkBuffer boundVertexBuffer_ = VK_NULL_HANDLE;
     VkDeviceSize boundVertexOffset_ = 0;
 

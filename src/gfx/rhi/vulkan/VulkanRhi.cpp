@@ -239,6 +239,34 @@ VkPrimitiveTopology ToVkTopology(PrimitiveTopology topology) {
     return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 }
 
+VkDescriptorType ToVkDescriptorType(DescriptorType type) {
+    switch (type) {
+    case DescriptorType::UniformBuffer:
+        return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    case DescriptorType::StorageBuffer:
+        return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    case DescriptorType::SampledImage:
+        return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    case DescriptorType::Sampler:
+        return VK_DESCRIPTOR_TYPE_SAMPLER;
+    case DescriptorType::StorageImage:
+        return VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    }
+    return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+}
+
+VkShaderStageFlags ToVkStage(ShaderStage stage) {
+    switch (stage) {
+    case ShaderStage::Vertex:
+        return VK_SHADER_STAGE_VERTEX_BIT;
+    case ShaderStage::Pixel:
+        return VK_SHADER_STAGE_FRAGMENT_BIT;
+    case ShaderStage::Compute:
+        return VK_SHADER_STAGE_COMPUTE_BIT;
+    }
+    return VK_SHADER_STAGE_FRAGMENT_BIT;
+}
+
 class BufferImpl final : public rhi::Buffer {
 public:
     BufferImpl(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
@@ -353,6 +381,7 @@ public:
     void* NativeHandle() const override {
         return reinterpret_cast<void*>(uintptr_t(sampler_));
     }
+    VkSampler Handle() const { return sampler_; }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
@@ -386,14 +415,20 @@ private:
 
 class PipelineImpl final : public rhi::Pipeline {
 public:
-    PipelineImpl(VkDevice device, VkPipeline pipeline, VkPipelineLayout layout)
-        : device_(device), pipeline_(pipeline), layout_(layout) {}
+    PipelineImpl(VkDevice device, VkPipeline pipeline, VkPipelineLayout layout,
+                 VkDescriptorSetLayout descriptorLayout,
+                 std::vector<DescriptorBinding> bindings)
+        : device_(device), pipeline_(pipeline), layout_(layout),
+          descriptorLayout_(descriptorLayout), bindings_(std::move(bindings)) {}
     ~PipelineImpl() override {
         if (pipeline_) {
             vkDestroyPipeline(device_, pipeline_, nullptr);
         }
         if (layout_) {
             vkDestroyPipelineLayout(device_, layout_, nullptr);
+        }
+        if (descriptorLayout_) {
+            vkDestroyDescriptorSetLayout(device_, descriptorLayout_, nullptr);
         }
     }
     void* NativeHandle() const override {
@@ -402,11 +437,112 @@ public:
 
     VkPipeline Pipeline() const { return pipeline_; }
     VkPipelineLayout Layout() const { return layout_; }
+    VkDescriptorSetLayout DescriptorLayout() const { return descriptorLayout_; }
+    const std::vector<DescriptorBinding>& Bindings() const { return bindings_; }
 
 private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkPipeline pipeline_ = VK_NULL_HANDLE;
     VkPipelineLayout layout_ = VK_NULL_HANDLE;
+    VkDescriptorSetLayout descriptorLayout_ = VK_NULL_HANDLE;
+    std::vector<DescriptorBinding> bindings_;
+};
+
+class DescriptorSetImpl final : public rhi::DescriptorSet {
+public:
+    DescriptorSetImpl(VkDevice device, VkDescriptorPool pool,
+                      VkDescriptorSet set,
+                      std::vector<DescriptorBinding> bindings)
+        : device_(device), pool_(pool), set_(set),
+          bindings_(std::move(bindings)) {}
+    ~DescriptorSetImpl() override {
+        if (pool_) {
+            vkDestroyDescriptorPool(device_, pool_, nullptr);
+        }
+    }
+
+    void SetBuffer(uint32_t binding, rhi::Buffer* buffer, uint64_t offset,
+                   uint64_t range) override {
+        const DescriptorBinding* info = Find(binding);
+        auto* impl = dynamic_cast<BufferImpl*>(buffer);
+        if (!info || !impl) {
+            return;
+        }
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = impl->Handle();
+        bufferInfo.offset = offset;
+        bufferInfo.range = range ? range : VK_WHOLE_SIZE;
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = set_;
+        write.dstBinding = binding;
+        write.descriptorCount = 1;
+        write.descriptorType = info->type == rhi::DescriptorType::StorageBuffer
+                                   ? VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+                                   : VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        write.pBufferInfo = &bufferInfo;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    }
+
+    void SetImage(uint32_t binding, rhi::Texture* texture) override {
+        const DescriptorBinding* info = Find(binding);
+        auto* impl = dynamic_cast<TextureImpl*>(texture);
+        if (!info || !impl) {
+            return;
+        }
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageView = impl->View();
+        imageInfo.imageLayout = info->type == rhi::DescriptorType::StorageImage
+                                    ? VK_IMAGE_LAYOUT_GENERAL
+                                    : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = set_;
+        write.dstBinding = binding;
+        write.descriptorCount = 1;
+        write.descriptorType = info->type == rhi::DescriptorType::StorageImage
+                                   ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                   : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    }
+
+    void SetSampler(uint32_t binding, rhi::Sampler* sampler) override {
+        auto* impl = dynamic_cast<SamplerImpl*>(sampler);
+        if (!impl || !Find(binding)) {
+            return;
+        }
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.sampler = impl->Handle();
+
+        VkWriteDescriptorSet write{};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = set_;
+        write.dstBinding = binding;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        write.pImageInfo = &imageInfo;
+        vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+    }
+
+    VkDescriptorSet Handle() const { return set_; }
+
+private:
+    const DescriptorBinding* Find(uint32_t binding) const {
+        for (const DescriptorBinding& info : bindings_) {
+            if (info.binding == binding) {
+                return &info;
+            }
+        }
+        return nullptr;
+    }
+
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkDescriptorPool pool_ = VK_NULL_HANDLE;
+    VkDescriptorSet set_ = VK_NULL_HANDLE;
+    std::vector<DescriptorBinding> bindings_;
 };
 
 bool CreateHostVisibleBuffer(VkPhysicalDevice physical, VkDevice device,
@@ -1081,6 +1217,7 @@ void Device::BeginFrame(float r, float g, float b, float a) {
     vkCmdSetScissor(commandBuffer_, 0, 1, &scissor);
     boundPipeline_ = VK_NULL_HANDLE;
     boundPipelineLayout_ = VK_NULL_HANDLE;
+    boundDescriptorSet_ = VK_NULL_HANDLE;
     boundVertexBuffer_ = VK_NULL_HANDLE;
     frameActive_ = true;
 }
@@ -1378,6 +1515,9 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
     info.usage = ToVkTextureUsage(desc.usage);
     if (info.usage == 0) {
         info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    }
+    if (desc.subresources && desc.subresourceCount > 0) {
+        info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     }
     info.samples = VK_SAMPLE_COUNT_1_BIT;
     info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -1691,11 +1831,40 @@ std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
     dynamic.dynamicStateCount = 2;
     dynamic.pDynamicStates = dynamicStates;
 
+    std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
+    std::vector<DescriptorBinding> bindings;
+    layoutBindings.reserve(desc.descriptorBindingCount);
+    bindings.reserve(desc.descriptorBindingCount);
+    for (uint32_t i = 0; i < desc.descriptorBindingCount; ++i) {
+        const DescriptorBinding& descriptorBinding = desc.descriptorBindings[i];
+        bindings.push_back(descriptorBinding);
+        VkDescriptorSetLayoutBinding converted{};
+        converted.binding = descriptorBinding.binding;
+        converted.descriptorType = ToVkDescriptorType(descriptorBinding.type);
+        converted.descriptorCount =
+            descriptorBinding.count == 0 ? 1 : descriptorBinding.count;
+        converted.stageFlags = ToVkStage(descriptorBinding.stage);
+        layoutBindings.push_back(converted);
+    }
+
+    VkDescriptorSetLayoutCreateInfo descriptorInfo{};
+    descriptorInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    descriptorInfo.bindingCount = uint32_t(layoutBindings.size());
+    descriptorInfo.pBindings = layoutBindings.data();
+    VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
+    if (vkCreateDescriptorSetLayout(device_, &descriptorInfo, nullptr,
+                                    &descriptorLayout) != VK_SUCCESS) {
+        return nullptr;
+    }
+
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts = &descriptorLayout;
     VkPipelineLayout layout = VK_NULL_HANDLE;
     if (vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &layout) !=
         VK_SUCCESS) {
+        vkDestroyDescriptorSetLayout(device_, descriptorLayout, nullptr);
         return nullptr;
     }
 
@@ -1719,9 +1888,57 @@ std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
     if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineInfo,
                                   nullptr, &pipeline) != VK_SUCCESS) {
         vkDestroyPipelineLayout(device_, layout, nullptr);
+        vkDestroyDescriptorSetLayout(device_, descriptorLayout, nullptr);
         return nullptr;
     }
-    return std::make_unique<PipelineImpl>(device_, pipeline, layout);
+    return std::make_unique<PipelineImpl>(device_, pipeline, layout,
+                                          descriptorLayout, std::move(bindings));
+}
+
+std::unique_ptr<DescriptorSet> Device::CreateDescriptorSet(Pipeline* pipeline) {
+    auto* impl = dynamic_cast<PipelineImpl*>(pipeline);
+    if (!impl) {
+        return nullptr;
+    }
+
+    std::vector<VkDescriptorPoolSize> poolSizes;
+    poolSizes.reserve(impl->Bindings().size());
+    for (const DescriptorBinding& binding : impl->Bindings()) {
+        VkDescriptorPoolSize size{};
+        size.type = ToVkDescriptorType(binding.type);
+        size.descriptorCount = binding.count == 0 ? 1 : binding.count;
+        poolSizes.push_back(size);
+    }
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.maxSets = 1;
+    poolInfo.poolSizeCount = uint32_t(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    if (vkCreateDescriptorPool(device_, &poolInfo, nullptr, &pool) != VK_SUCCESS) {
+        return nullptr;
+    }
+
+    VkDescriptorSetAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocate.descriptorPool = pool;
+    allocate.descriptorSetCount = 1;
+    const VkDescriptorSetLayout layout = impl->DescriptorLayout();
+    allocate.pSetLayouts = &layout;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    if (vkAllocateDescriptorSets(device_, &allocate, &set) != VK_SUCCESS) {
+        vkDestroyDescriptorPool(device_, pool, nullptr);
+        return nullptr;
+    }
+    return std::make_unique<DescriptorSetImpl>(device_, pool, set,
+                                               impl->Bindings());
+}
+
+void Device::BindDescriptorSet(DescriptorSet* set, uint32_t index) {
+    (void)index;
+    auto* impl = dynamic_cast<DescriptorSetImpl*>(set);
+    boundDescriptorSet_ = impl ? impl->Handle() : VK_NULL_HANDLE;
 }
 
 void Device::BindPipeline(Pipeline* pipeline) {
@@ -1742,6 +1959,11 @@ void Device::Draw(uint32_t vertexCount, uint32_t firstVertex) {
     }
     vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       boundPipeline_);
+    if (boundDescriptorSet_) {
+        vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                boundPipelineLayout_, 0, 1, &boundDescriptorSet_,
+                                0, nullptr);
+    }
     vkCmdBindVertexBuffers(commandBuffer_, 0, 1, &boundVertexBuffer_,
                            &boundVertexOffset_);
     vkCmdDraw(commandBuffer_, vertexCount, 1, firstVertex, 0);
