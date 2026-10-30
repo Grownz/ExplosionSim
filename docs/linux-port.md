@@ -238,11 +238,11 @@ instance buffer; `--frame` composes sky → bloom → composite across render
 targets in one frame; `--scene-frame` renders sky, ground and the instanced
 scene into one shared HDR/depth target before bloom and composite; `--city`
 generates the procedural scene and renders its buildings, trees and vehicles
-from the shared mesh library, plus a volumetric smoke cloud and an additive
-particle burst, through the same frame. The Vulkan viewport flips Y so both
-backends share D3D's screen-space convention. The `vulkan_shaders` CMake target
-compiles all shader entry points to SPIR-V with DXC; the application/renderer
-wiring is next.
+from the shared mesh library, plus a volumetric smoke cloud, an additive
+particle burst and the shock-front refraction, through the same frame. The
+Vulkan viewport flips Y so both backends share D3D's screen-space convention.
+The `vulkan_shaders` CMake target compiles all shader entry points to SPIR-V
+with DXC; the application/renderer wiring is next.
 
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,
   particles and the shadow maps.

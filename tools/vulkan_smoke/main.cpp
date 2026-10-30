@@ -227,6 +227,7 @@ int main(int argc, char** argv) {
 
     std::unique_ptr<ex::rhi::Texture> frameHdrTarget;
     std::unique_ptr<ex::rhi::Texture> frameDepthTarget;
+    std::unique_ptr<ex::rhi::Texture> frameShockTarget;
     std::unique_ptr<ex::rhi::DescriptorSet> frameBloomDownSet;
     std::unique_ptr<ex::rhi::DescriptorSet> frameCompositeSet;
     if (options.frame || options.sceneFrame || options.city) {
@@ -251,6 +252,11 @@ int main(int argc, char** argv) {
             frameDepthTarget = device->CreateTexture(depthDesc);
             if (!frameDepthTarget) {
                 std::fprintf(stderr, "Vulkan frame depth target failed.\n");
+                return 1;
+            }
+            frameShockTarget = device->CreateTexture(hdrDesc);
+            if (!frameShockTarget) {
+                std::fprintf(stderr, "Vulkan shock target failed.\n");
                 return 1;
             }
         }
@@ -1357,14 +1363,18 @@ int main(int argc, char** argv) {
 
     std::unique_ptr<ex::rhi::Texture> shockSceneColor;
     std::unique_ptr<ex::rhi::Texture> shockSceneDepth;
+    std::unique_ptr<ex::rhi::Texture> cityShockDepthTexture;
     std::unique_ptr<ex::rhi::Sampler> shockSampler;
     std::unique_ptr<ex::rhi::Buffer> shockUniformBuffer;
     std::unique_ptr<ex::rhi::Shader> shockVertexShader;
     std::unique_ptr<ex::rhi::Shader> shockPixelShader;
     std::unique_ptr<ex::rhi::Pipeline> shockPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> shockSet;
+    std::unique_ptr<ex::rhi::DescriptorSet> cityShockSet;
+    std::unique_ptr<ex::rhi::DescriptorSet> shockBloomDownSet;
+    std::unique_ptr<ex::rhi::DescriptorSet> shockCompositeSet;
 
-    if (options.shock) {
+    if (options.shock || options.sceneFrame || options.city) {
         uint8_t colorPixels[4 * 4 * 4] = {};
         for (int y = 0; y < 4; ++y) {
             for (int x = 0; x < 4; ++x) {
@@ -1408,6 +1418,24 @@ int main(int argc, char** argv) {
         depthDesc.subresourceCount = 1;
         shockSceneDepth = device->CreateTexture(depthDesc);
 
+        if (options.sceneFrame || options.city) {
+            std::vector<uint8_t> shockDepthPixels(
+                size_t(options.width) * size_t(options.height) * 4, 230);
+            ex::rhi::TextureSubresource shockDepthSubresource{};
+            shockDepthSubresource.data = shockDepthPixels.data();
+            shockDepthSubresource.width = uint32_t(options.width);
+            shockDepthSubresource.height = uint32_t(options.height);
+            shockDepthSubresource.rowPitch = uint32_t(options.width) * 4;
+            ex::rhi::TextureDesc shockDepthDesc{};
+            shockDepthDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+            shockDepthDesc.width = uint32_t(options.width);
+            shockDepthDesc.height = uint32_t(options.height);
+            shockDepthDesc.usage = ex::rhi::TextureUsage::Sampled;
+            shockDepthDesc.subresources = &shockDepthSubresource;
+            shockDepthDesc.subresourceCount = 1;
+            cityShockDepthTexture = device->CreateTexture(shockDepthDesc);
+        }
+
         ex::rhi::SamplerDesc samplerDesc{};
         samplerDesc.linear = true;
         samplerDesc.clamp = true;
@@ -1446,6 +1474,17 @@ int main(int argc, char** argv) {
         constants[109] = 0.0f;
         constants[110] = 0.0f;
         constants[111] = 2.0f;
+
+        if (options.sceneFrame || options.city) {
+            constants[32] = 0.0f;
+            constants[33] = options.city ? 55.0f : 2.0f;
+            constants[34] = options.city ? -150.0f : -10.0f;
+            constants[67] = options.city ? 60.0f : 2.0f;
+            constants[108] = 0.0f;
+            constants[109] = options.city ? 10.0f : 0.0f;
+            constants[110] = 0.0f;
+            constants[111] = 2.0f;
+        }
 
         ex::rhi::BufferDesc uniformDesc{};
         uniformDesc.size = sizeof(constants);
@@ -1498,6 +1537,38 @@ int main(int argc, char** argv) {
             !shockUniformBuffer || !shockVertexShader || !shockPixelShader ||
             !shockPipeline || !shockSet) {
             std::fprintf(stderr, "Vulkan shock resources failed.\n");
+            return 1;
+        }
+    }
+
+    if ((options.sceneFrame || options.city) && shockPipeline) {
+        cityShockSet = device->CreateDescriptorSet(shockPipeline.get());
+        if (cityShockSet) {
+            cityShockSet->SetBuffer(0, shockUniformBuffer.get(), 0,
+                                    shockUniformBuffer->Size());
+            cityShockSet->SetImage(8, frameHdrTarget.get());
+            cityShockSet->SetImage(9, cityShockDepthTexture.get());
+            cityShockSet->SetSampler(16, shockSampler.get());
+        }
+        shockBloomDownSet =
+            device->CreateDescriptorSet(bloomDownPipeline.get());
+        if (shockBloomDownSet) {
+            shockBloomDownSet->SetImage(8, frameShockTarget.get());
+            shockBloomDownSet->SetSampler(16, bloomSampler.get());
+            shockBloomDownSet->SetBuffer(1, bloomUniformBuffer.get(), 0,
+                                         bloomUniformBuffer->Size());
+        }
+        shockCompositeSet =
+            device->CreateDescriptorSet(compositePipeline.get());
+        if (shockCompositeSet) {
+            shockCompositeSet->SetImage(8, frameShockTarget.get());
+            shockCompositeSet->SetImage(9, bloomUpTarget.get());
+            shockCompositeSet->SetSampler(16, compositeSampler.get());
+            shockCompositeSet->SetBuffer(1, compositeUniformBuffer.get(), 0,
+                                         compositeUniformBuffer->Size());
+        }
+        if (!cityShockSet || !shockBloomDownSet || !shockCompositeSet) {
+            std::fprintf(stderr, "Vulkan city shock resources failed.\n");
             return 1;
         }
     }
@@ -1931,10 +2002,17 @@ int main(int argc, char** argv) {
             }
             device->EndFrame(false);
 
+            device->BeginFrameTexture(frameShockTarget.get(), 0.0f, 0.0f, 0.0f,
+                                      1.0f);
+            device->BindPipeline(shockPipeline.get());
+            device->BindDescriptorSet(cityShockSet.get());
+            device->Draw(3);
+            device->EndFrame(false);
+
             device->BeginFrameTexture(bloomDownTarget.get(), 0.0f, 0.0f, 0.0f,
                                       1.0f);
             device->BindPipeline(bloomDownPipeline.get());
-            device->BindDescriptorSet(frameBloomDownSet.get());
+            device->BindDescriptorSet(shockBloomDownSet.get());
             device->Draw(3);
             device->EndFrame(false);
 
@@ -1947,7 +2025,7 @@ int main(int argc, char** argv) {
 
             device->BeginFrame(0.02f, 0.02f, 0.03f, 1.0f);
             device->BindPipeline(compositePipeline.get());
-            device->BindDescriptorSet(frameCompositeSet.get());
+            device->BindDescriptorSet(shockCompositeSet.get());
             device->Draw(3);
             device->EndFrame(true);
         } else if (options.frame) {
@@ -2084,6 +2162,11 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    shockCompositeSet.reset();
+    shockBloomDownSet.reset();
+    cityShockSet.reset();
+    cityShockDepthTexture.reset();
+    frameShockTarget.reset();
     frameCompositeSet.reset();
     frameBloomDownSet.reset();
     frameDepthTarget.reset();
