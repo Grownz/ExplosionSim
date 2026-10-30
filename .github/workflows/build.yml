@@ -87,6 +87,22 @@ jobs:
           name: ExplosionSim-linux-screenshot
           path: linux_capture.png
 
+      - name: Linux high-fidelity solver screenshot (lavapipe)
+        run: |
+          ./build/explosion_linux --settings tools/capture_settings.ini \
+            --high-fidelity --solver-resolution 32 --no-solver-auto-scale \
+            --headless --width 320 --height 180 --frames 1 --time 0.01 \
+            --charge 0.2 --distance-scale 0.55 \
+            --screenshot /tmp/explosion_linux_hf.png
+          test -s /tmp/explosion_linux_hf.png
+          cp /tmp/explosion_linux_hf.png linux_hf_capture.png
+
+      - name: Upload Linux high-fidelity screenshot
+        uses: actions/upload-artifact@v6
+        with:
+          name: ExplosionSim-linux-hf-screenshot
+          path: linux_hf_capture.png
+
   windows:
     runs-on: windows-2022
     steps:
@@ -135,3 +151,19 @@ jobs:
             tools/reference/win_capture.png \
             artifacts/linux/linux_capture.png \
             --tolerance 20 --max-fraction 0.20
+
+      - name: Download Linux high-fidelity screenshot
+        uses: actions/download-artifact@v6
+        with:
+          name: ExplosionSim-linux-hf-screenshot
+          path: artifacts/linux-hf
+
+      - name: Compare high-fidelity screenshots
+        run: |
+          # The Euler solver itself is deterministic (same step count, dt and
+          # maximum speed); the wider tolerance covers the remaining preview
+          # renderer gap, which the reduced-order capture already exposes.
+          python3 tools/compare_png.py \
+            tools/reference/win_hf_capture.png \
+            artifacts/linux-hf/linux_hf_capture.png \
+            --tolerance 22 --max-fraction 0.30

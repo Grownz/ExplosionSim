@@ -44,6 +44,10 @@ public:
     void SetGpuVolume(ex::rhi::Texture* texture,
                       const ex::sim::VolumeBounds& bounds, float extinction,
                       uint64_t version);
+    // Solver-frame sun transmittance volume used by the high-fidelity path.
+    void SetGpuLightVolume(ex::rhi::Texture* texture,
+                           const ex::sim::VolumeBounds& bounds);
+    void SetHighFidelity(bool enabled) { highFidelity_ = enabled; }
     void SetGpuParticles(ex::rhi::Buffer* additive, ex::rhi::Buffer* alpha,
                          ex::rhi::Buffer* fire, ex::rhi::Buffer* indirect);
     void Render(ex::rhi::Device* device, ex::sim::Simulation& simulation,
@@ -160,6 +164,10 @@ private:
     ex::sim::VolumeBounds gpuVolumeBounds_{};
     float gpuVolumeExtinction_ = 0.1f;
     bool gpuVolumeValid_ = false;
+    ex::rhi::Texture* gpuLightVolume_ = nullptr;
+    ex::sim::VolumeBounds gpuLightBounds_{};
+    bool gpuLightValid_ = false;
+    bool highFidelity_ = false;
 
     // Additive particles.
     std::unique_ptr<ex::rhi::Buffer> particleInstanceBuffer_;

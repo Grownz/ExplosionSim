@@ -21,6 +21,10 @@ DXGI_FORMAT ToDxgiFormat(Format format) {
         return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
     case Format::R16G16B16A16_FLOAT:
         return DXGI_FORMAT_R16G16B16A16_FLOAT;
+    case Format::R32G32B32A32_FLOAT:
+        return DXGI_FORMAT_R32G32B32A32_FLOAT;
+    case Format::R32G32_FLOAT:
+        return DXGI_FORMAT_R32G32_FLOAT;
     case Format::R32_FLOAT:
         return DXGI_FORMAT_R32_FLOAT;
     case Format::R32_TYPELESS:

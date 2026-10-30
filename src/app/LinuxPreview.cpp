@@ -393,8 +393,11 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
     lightDesc.subresources = &lightSubresource;
     volumeLightTexture_ = device->CreateTexture(lightDesc);
 
+    // The RHI has no depth-copy path yet, so the volume pass samples a far
+    // depth placeholder. A value of 255 keeps the raymarch from being clamped
+    // to the near range, which hid the solver volume behind the town.
     std::vector<uint8_t> volumeDepthPixels(
-        size_t(std::max(width, 1)) * size_t(std::max(height, 1)) * 4, 230);
+        size_t(std::max(width, 1)) * size_t(std::max(height, 1)) * 4, 255);
     ex::rhi::TextureSubresource volumeDepthSubresource{};
     volumeDepthSubresource.data = volumeDepthPixels.data();
     volumeDepthSubresource.width = uint32_t(std::max(width, 1));
@@ -1324,6 +1327,19 @@ void LinuxPreview::SetGpuVolume(ex::rhi::Texture* texture,
     }
 }
 
+void LinuxPreview::SetGpuLightVolume(ex::rhi::Texture* texture,
+                                     const ex::sim::VolumeBounds& bounds) {
+    if (!texture) {
+        return;
+    }
+    gpuLightVolume_ = texture;
+    gpuLightBounds_ = bounds;
+    gpuLightValid_ = true;
+    if (volumeSet_) {
+        volumeSet_->SetImage(12, texture);
+    }
+}
+
 void LinuxPreview::SetGpuParticles(ex::rhi::Buffer* additive,
                                    ex::rhi::Buffer* alpha,
                                    ex::rhi::Buffer* fire,
@@ -1587,17 +1603,34 @@ void LinuxPreview::UpdateFrameConstants(const ex::sim::Simulation& simulation,
     frameConstantsData_[93] = 0.0f;
     frameConstantsData_[94] = 1.0f;
     frameConstantsData_[95] = 1.0f;
-    frameConstantsData_[96] = 1.0f;
-    frameConstantsData_[97] = 1.0f;
-    frameConstantsData_[98] = 1.0f;
-    frameConstantsData_[99] = 0.0f;
-    frameConstantsData_[100] = volumeMin.x;
-    frameConstantsData_[101] = volumeMin.y;
-    frameConstantsData_[102] = volumeMin.z;
+    if (highFidelity_) {
+        // Match the Windows high-fidelity shading: a denser, dimmer medium with
+        // the solver's precomputed sun transmittance instead of the procedural
+        // light model.
+        frameConstantsData_[96] = 0.40f;
+        frameConstantsData_[97] = 0.16f;
+        frameConstantsData_[98] = 0.0f;
+        frameConstantsData_[99] = 1.0f;
+    } else {
+        frameConstantsData_[96] = 1.0f;
+        frameConstantsData_[97] = 1.0f;
+        frameConstantsData_[98] = 1.0f;
+        frameConstantsData_[99] = 0.0f;
+    }
+
+    XMFLOAT3 lightMin = volumeMin;
+    XMFLOAT3 lightMax = volumeMax;
+    if (gpuLightValid_) {
+        lightMin = gpuLightBounds_.min;
+        lightMax = gpuLightBounds_.max;
+    }
+    frameConstantsData_[100] = lightMin.x;
+    frameConstantsData_[101] = lightMin.y;
+    frameConstantsData_[102] = lightMin.z;
     frameConstantsData_[103] = 0.0f;
-    frameConstantsData_[104] = volumeMax.x;
-    frameConstantsData_[105] = volumeMax.y;
-    frameConstantsData_[106] = volumeMax.z;
+    frameConstantsData_[104] = lightMax.x;
+    frameConstantsData_[105] = lightMax.y;
+    frameConstantsData_[106] = lightMax.z;
     frameConstantsData_[107] = 0.0f;
     frameConstantsData_[108] = 0.0f;
     frameConstantsData_[109] = float(blast.GetCharge().heightOfBurstM);

@@ -3,8 +3,8 @@
 The portable simulation core, the Vulkan bring-up target and the native Linux
 application shell build and run on Linux. The shell owns the SDL3 window and the
 Vulkan RHI device, resizes the swapchain and writes offscreen PNG/PPM captures;
-the reduced-order renderer is ported into it next (milestones M2/M3 in
-[`linux-port.md`](linux-port.md)).
+the reduced-order renderer and the high-fidelity GPU Euler solver are ported
+into it (milestones M2-M4 in [`linux-port.md`](linux-port.md)).
 
 ## Current Linux targets
 
@@ -15,8 +15,9 @@ the reduced-order renderer is ported into it next (milestones M2/M3 in
 - `explosion_linux`: native SDL3 + Vulkan application shell. It drives
   `sim::Simulation`, frames the blast with `gfx::Camera` and renders the
   reduced-order chain (sky, ground, procedural scene, volume bake, particles,
-  shock, bloom and composite) through the RHI. It can write an offscreen
-  `--screenshot` as PNG or PPM.
+  shock, bloom and composite) through the RHI. `--high-fidelity` switches the
+  volume source to the GPU Euler solver (state sweeps, reduction, render and
+  light volumes). It can write an offscreen `--screenshot` as PNG or PPM.
 - `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and
   (with a desktop) an SDL3 window with a swapchain. `--triangle` exercises
   vertex buffers, SPIR-V shader modules and a graphics pipeline; `--quad` adds
@@ -110,6 +111,33 @@ geometry for collapsed buildings. `tools/capture_settings.ini` is the shared
 deterministic capture profile; pass `--settings <path>` to load any compatible
 file.
 
+### High-fidelity solver
+
+`--high-fidelity` replaces the analytic volume bake with the RHI port of the
+compressible Euler solver (`src/gfx/RhiEulerSolver.*`, SPIR-V in
+`src/app/Euler*Shader.h`). It runs the init, X/Y/Z sweeps (with the fused
+source), reduction, render-volume, light-volume and rescale passes, and feeds
+the render and light volumes into the volume raymarcher. The solver is
+deterministic in headless captures; `--solver-resolution`, `--solver-steps`,
+`--solver-time` and `--no-solver-auto-scale` mirror the Windows flags.
+
+```sh
+# Deterministic high-fidelity capture (32^3 grid, 0.01 s):
+./build/explosion_linux --settings tools/capture_settings.ini \
+  --high-fidelity --solver-resolution 32 --no-solver-auto-scale \
+  --headless --width 320 --height 180 --frames 1 --time 0.01 \
+  --charge 0.2 --distance-scale 0.55 \
+  --screenshot /tmp/explosion_linux_hf.png
+```
+
+The Windows counterpart uses the same settings and flags. At 32^3 and 0.01 s
+both report the same step count, time step and maximum speed (80 steps,
+~236 us, ~718 m/s). `tools/reference/win_hf_capture.png` is the checked-in
+Windows reference; the CI `capture-parity` job enforces a 22/255 mean and 30 %
+pixel limit. The wider window than the reduced-order capture covers the
+remaining preview-renderer gap (the solver volume itself matches in position
+and density).
+
 For a capture comparison, render the same settings on both platforms and run:
 
 ```sh
@@ -201,6 +229,10 @@ Shared shaders use the `EX_VK_BINDING(n)` macro from `common.hlsli`. It expands
 to `[[vk::binding(n, 0)]]` under DXC and to nothing under D3DCompile. The binding
 map is `b0..b3 -> 0..3`, `t0..t7 -> 8..15`, `s0..s3 -> 16..19`; this avoids the
 register-namespace collisions that DXC's default register mapping would create.
+The Euler solver uses its own layout (`b0 -> 0`, `t0/t1 -> 8/9`, `s0 -> 16`,
+`u0/u1 -> 21/22`, reduce output `-> 23`, render output `-> 24`, light input
+`-> 10`, light output `-> 25`) so the same image can be a sampled or storage
+descriptor without register aliasing.
 
 The smoke test prints the selected adapter and exits. `--debug` enables the
 Vulkan validation layer when it is installed.

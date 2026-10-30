@@ -1,12 +1,13 @@
 # Linux port and multi-platform RHI plan
 
-Status: **M0-M3 done, M4 started.** The portable simulation core builds and
-passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The backend-neutral
-RHI interfaces, D3D11 and Vulkan backends, `SceneRenderer`, command lists,
-compute pipelines and the native Linux app are in place. The app drives
-`sim::Simulation`, loads the Windows settings keys, uses the GPU volume bake
-and GPU particle integration (with CPU fallbacks), renders Voronoi chunks and
-runs the reduced-order chain through the RHI. The Euler solver is next.
+Status: **M0-M4 done.** The portable simulation core builds and passes
+`core_tests` natively on Linux (Ubuntu 24.04 CI job). The backend-neutral RHI
+interfaces, D3D11 and Vulkan backends, `SceneRenderer`, command lists, compute
+pipelines and the native Linux app are in place. The app drives
+`sim::Simulation`, loads the Windows settings keys, uses the GPU volume bake and
+GPU particle integration (with CPU fallbacks), renders Voronoi chunks, runs the
+reduced-order chain through the RHI, and runs the high-fidelity GPU Euler solver
+(`--high-fidelity`) with its render and light volumes.
 
 M2 now has an SDL3 window layer, a Vulkan 1.2 device with an offscreen target,
 swapchain, clear, present and readback (`vulkan_smoke`), and the native
@@ -265,16 +266,22 @@ Windows and Linux captures with a tolerance.
 
 ### M4 - High-fidelity solver and GPU particles on Vulkan (25-40 days)
 
-Status: **in progress.** The RHI now has compute pipelines, dispatches, storage
+Status: **done.** The RHI has compute pipelines, dispatches, storage
 buffers/images, indirect draws and compute barriers. The analytic volume bake
 and the GPU particle spawn/reset/integrate/finalize path run in
 `explosion_linux` (`--no-gpu-volume-bake` and `--no-gpu-particles` keep the CPU
-fallbacks). The Euler solver is next.
+fallbacks). `RhiEulerSolver` ports the D3D11 solver to the RHI: state ping-pong
+textures, init/sweep/reduce/render/light/rescale compute passes, the fused
+source terms and the deterministic reduction. The high-fidelity path feeds the
+solver render/light volumes into the preview raymarcher and matches the Windows
+step count, time step and maximum speed at the reference capture. GPU timestamp
+queries are the one remaining parity gap; the RHI does not expose query pools
+yet, so the solver benchmark is CPU-timed on Linux.
 
 - Port `GpuEulerSolver`: state textures, sweeps, reduce/rescale, light volume, render
-  volume, timestamp queries.
-- Port the GPU particle spawn/integrate/finalize passes and indirect draws.
-- Port the shock-front and volume shaders to SPIR-V.
+  volume (done; GPU timestamp queries deferred).
+- Port the GPU particle spawn/integrate/finalize passes and indirect draws (done).
+- Port the shock-front and volume shaders to SPIR-V (done).
 - Acceptance: HF mode and solver benchmark run on Linux; solver stats and images match
   Windows within tolerance; validation layers clean.
 

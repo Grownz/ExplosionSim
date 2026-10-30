@@ -3,8 +3,8 @@
 // Precomputes the sun transmittance for every voxel of a small 3D texture. The
 // volume raymarcher samples this view-independent volume instead of marching
 // towards the sun once per ray (which made the shading depend on the camera).
-Texture3D<float4> RenderVolume : register(t2);
-RWTexture3D<float> LightVolume : register(u2);
+EX_VK_BINDING(10) Texture3D<float4> RenderVolume : register(t2);
+EX_VK_BINDING(25) RWTexture3D<float> LightVolume : register(u2);
 
 float2 LightRayBoxRange(float3 origin, float3 direction, float3 boxMin, float3 boxMax)
 {

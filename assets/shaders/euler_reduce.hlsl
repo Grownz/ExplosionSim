@@ -6,7 +6,7 @@
 //   [2] = max product radius      (fixed point, 1/512 m)
 //   [3] = max normalized dome fill (fixed point, 1/512)
 //   [4] = max cap radius          (fixed point, 1/512 m, above CapParams.w)
-RWStructuredBuffer<uint> ReduceOutput : register(u2);
+EX_VK_BINDING(23) RWStructuredBuffer<uint> ReduceOutput : register(u2);
 
 groupshared uint gMaxSpeed;
 groupshared uint gMaxHeight;

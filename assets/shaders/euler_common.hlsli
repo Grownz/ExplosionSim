@@ -13,6 +13,15 @@
 
 static const float PI = 3.14159265359;
 
+// Vulkan uses explicit descriptor bindings. D3D11 register spaces do not map
+// one-to-one onto Vulkan descriptor sets, so each solver resource gets a fixed
+// binding: b0 -> 0, t0/t1 -> 8/9, s0 -> 16, u0/u1 -> 21/22.
+#if defined(EXPLOSION_VULKAN)
+#define EX_VK_BINDING(n) [[vk::binding(n, 0)]]
+#else
+#define EX_VK_BINDING(n)
+#endif
+
 // Thread-group size, overridable from the C++ side so the occupancy can be
 // tuned without editing every shader. The reduce pass derives its linear
 // thread index from these values.
@@ -26,7 +35,7 @@ static const float PI = 3.14159265359;
 #define EULER_GROUP_Z 8
 #endif
 
-cbuffer SolverConstants : register(b0)
+EX_VK_BINDING(0) cbuffer SolverConstants : register(b0)
 {
     int4 Grid;          // xyz = resolution, w = sweep direction
     float4 DomainMin;   // xyz = lower corner, w = cell size dx
@@ -43,13 +52,13 @@ cbuffer SolverConstants : register(b0)
     float4 EnvParams;    // x = stable layer height (0 = off), y = initial top, z = analytic rise speed
 };
 
-SamplerState LinearSampler : register(s0);
+EX_VK_BINDING(16) SamplerState LinearSampler : register(s0);
 
-Texture3D<float4> StateA : register(t0);
-Texture3D<float2> StateB : register(t1);
+EX_VK_BINDING(8) Texture3D<float4> StateA : register(t0);
+EX_VK_BINDING(9) Texture3D<float2> StateB : register(t1);
 
-RWTexture3D<float4> OutA : register(u0);
-RWTexture3D<float2> OutB : register(u1);
+EX_VK_BINDING(21) RWTexture3D<float4> OutA : register(u0);
+EX_VK_BINDING(22) RWTexture3D<float2> OutB : register(u1);
 
 struct Primitive
 {

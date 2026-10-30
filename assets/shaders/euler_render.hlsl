@@ -1,6 +1,6 @@
 #include "euler_common.hlsli"
 
-RWTexture3D<float4> RenderVolume : register(u0);
+EX_VK_BINDING(24) RWTexture3D<float4> RenderVolume : register(u0);
 
 // Converts the conservative state into the render field used by the raymarcher:
 //   R = extinction density, G = temperature / 12 000 K, B = dust, A = soot mass.

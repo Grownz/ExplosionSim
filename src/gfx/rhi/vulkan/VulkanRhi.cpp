@@ -113,6 +113,10 @@ VkFormat ToVkFormat(Format format) {
         return VK_FORMAT_R8G8B8A8_SRGB;
     case Format::R16G16B16A16_FLOAT:
         return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case Format::R32G32B32A32_FLOAT:
+        return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case Format::R32G32_FLOAT:
+        return VK_FORMAT_R32G32_SFLOAT;
     case Format::R32_FLOAT:
         return VK_FORMAT_R32_SFLOAT;
     case Format::R32_TYPELESS:
@@ -377,12 +381,20 @@ public:
     VkImage Handle() const { return image_; }
     VkImageView View() const { return view_; }
 
+    // Layout the image is expected to be in for the next descriptor write. The
+    // render pass helpers do not update it; textures used through
+    // TransitionTexture track their own layout here so sampled-image
+    // descriptors match the actual layout.
+    VkImageLayout Layout() const { return layout_; }
+    void SetLayout(VkImageLayout layout) { layout_ = layout; }
+
 private:
     VkDevice device_ = VK_NULL_HANDLE;
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
     VkImageView view_ = VK_NULL_HANDLE;
     VkFormat format_ = VK_FORMAT_UNDEFINED;
+    VkImageLayout layout_ = VK_IMAGE_LAYOUT_UNDEFINED;
     TextureDesc desc_{};
 };
 
@@ -510,9 +522,16 @@ public:
         }
         VkDescriptorImageInfo imageInfo{};
         imageInfo.imageView = impl->View();
-        imageInfo.imageLayout = info->type == rhi::DescriptorType::StorageImage
-                                    ? VK_IMAGE_LAYOUT_GENERAL
-                                    : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        // A sampled image must match the layout the texture is actually in.
+        // Textures managed through TransitionTexture report their tracked
+        // layout; everything else keeps the render-pass convention.
+        const bool storage =
+            info->type == rhi::DescriptorType::StorageImage;
+        imageInfo.imageLayout =
+            storage ? VK_IMAGE_LAYOUT_GENERAL
+                    : (impl->Layout() != VK_IMAGE_LAYOUT_UNDEFINED
+                           ? impl->Layout()
+                           : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
         VkWriteDescriptorSet write{};
         write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -777,14 +796,28 @@ public:
         if (!impl) {
             return;
         }
+        const VkImageLayout oldLayout = impl->Layout();
+        const VkImageLayout newLayout = state == rhi::TextureState::General
+                                            ? VK_IMAGE_LAYOUT_GENERAL
+                                            : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        if (oldLayout == newLayout) {
+            return;
+        }
+
+        VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        VkAccessFlags srcAccess = 0;
+        if (oldLayout == VK_IMAGE_LAYOUT_GENERAL) {
+            srcStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            srcAccess = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        } else if (oldLayout != VK_IMAGE_LAYOUT_UNDEFINED) {
+            srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            srcAccess = VK_ACCESS_SHADER_READ_BIT;
+        }
+
         VkImageMemoryBarrier barrier{};
         barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        barrier.oldLayout = state == rhi::TextureState::General
-                                ? VK_IMAGE_LAYOUT_UNDEFINED
-                                : VK_IMAGE_LAYOUT_GENERAL;
-        barrier.newLayout = state == rhi::TextureState::General
-                                ? VK_IMAGE_LAYOUT_GENERAL
-                                : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.oldLayout = oldLayout;
+        barrier.newLayout = newLayout;
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = impl->Handle();
@@ -793,19 +826,19 @@ public:
         barrier.subresourceRange.levelCount = 1;
         barrier.subresourceRange.baseArrayLayer = 0;
         barrier.subresourceRange.layerCount = 1;
-        barrier.srcAccessMask = state == rhi::TextureState::General
-                                    ? 0
-                                    : VK_ACCESS_SHADER_WRITE_BIT;
-        barrier.dstAccessMask = state == rhi::TextureState::General
-                                    ? VK_ACCESS_SHADER_WRITE_BIT
+        barrier.srcAccessMask = srcAccess;
+        barrier.dstAccessMask = newLayout == VK_IMAGE_LAYOUT_GENERAL
+                                    ? (VK_ACCESS_SHADER_WRITE_BIT |
+                                       VK_ACCESS_SHADER_READ_BIT)
                                     : VK_ACCESS_SHADER_READ_BIT;
         vkCmdPipelineBarrier(
-            device_->commandBuffer_,
-            state == rhi::TextureState::General ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
-                                                : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            state == rhi::TextureState::General ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-                                                : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            device_->commandBuffer_, srcStage,
+            newLayout == VK_IMAGE_LAYOUT_GENERAL
+                ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                : (VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
             0, 0, nullptr, 0, nullptr, 1, &barrier);
+        impl->SetLayout(newLayout);
     }
 
     void* NativeHandle() const override {
@@ -2233,7 +2266,11 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
     });
     vkDestroyBuffer(device_, staging, nullptr);
     vkFreeMemory(device_, stagingMemory, nullptr);
-    return copied ? std::move(result) : nullptr;
+    if (!copied) {
+        return nullptr;
+    }
+    result->SetLayout(finalLayout);
+    return result;
 }
 
 std::unique_ptr<Shader> Device::CreateShader(const ShaderDesc& desc) {

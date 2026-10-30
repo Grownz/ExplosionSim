@@ -300,6 +300,17 @@ if(EXPLOSION_BUILD_VULKAN_SMOKE AND TARGET explosion_vulkan)
             particles_gpu.hlsl:CSReset:cs_6_0
             particles_gpu.hlsl:CSIntegrate:cs_6_0
             particles_gpu.hlsl:CSFinalize:cs_6_0
+            euler_init.hlsl:CSInit:cs_6_0
+            euler_sweep.hlsl:CSSweepX:cs_6_0
+            euler_sweep.hlsl:CSSweepY:cs_6_0
+            euler_sweep.hlsl:CSSweepZ:cs_6_0
+            euler_sweep.hlsl:CSSweepXSource:cs_6_0
+            euler_sweep.hlsl:CSSweepYSource:cs_6_0
+            euler_sweep.hlsl:CSSweepZSource:cs_6_0
+            euler_reduce.hlsl:CSReduce:cs_6_0
+            euler_render.hlsl:CSRender:cs_6_0
+            euler_light.hlsl:CSLight:cs_6_0
+            euler_rescale.hlsl:CSRescale:cs_6_0
             volume_bake.hlsl:CSBake:cs_6_0)
         file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/spirv")
         set(EXPLOSION_SPIRV_OUTPUTS)
@@ -322,6 +333,7 @@ if(EXPLOSION_BUILD_VULKAN_SMOKE AND TARGET explosion_vulkan)
                 DEPENDS
                     "${CMAKE_SOURCE_DIR}/assets/shaders/${shader_file}"
                     "${CMAKE_SOURCE_DIR}/assets/shaders/common.hlsli"
+                    "${CMAKE_SOURCE_DIR}/assets/shaders/euler_common.hlsli"
                 COMMENT "Compiling ${shader_file}:${shader_entry} to SPIR-V"
                 VERBATIM)
             list(APPEND EXPLOSION_SPIRV_OUTPUTS "${shader_output}")
@@ -340,7 +352,8 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         src/app/LinuxApp.cpp
         src/app/LinuxPreview.cpp
         src/gfx/GpuVolumeBaker.cpp
-        src/gfx/GpuParticleSystem.cpp)
+        src/gfx/GpuParticleSystem.cpp
+        src/gfx/RhiEulerSolver.cpp)
     target_include_directories(explosion_linux PRIVATE
         src
         ${CMAKE_BINARY_DIR}/generated

@@ -8,9 +8,16 @@
 #include "gfx/Camera.h"
 #include "gfx/GpuVolumeBaker.h"
 #include "gfx/GpuParticleSystem.h"
+#include "gfx/RhiEulerSolver.h"
 #include "gfx/rhi/Rhi.h"
 #include "platform/Platform.h"
 #include "sim/Simulation.h"
+#include "EulerInitShader.h"
+#include "EulerLightShader.h"
+#include "EulerReduceShader.h"
+#include "EulerRenderShader.h"
+#include "EulerRescaleShader.h"
+#include "EulerSweepShader.h"
 #include "ParticlesGpuShaders.h"
 #include "VolumeBakeShader.h"
 
@@ -66,6 +73,15 @@ struct Options {
     int volumeResolution = 0;
     bool gpuVolumeBake = true;
     bool gpuParticles = true;
+    bool highFidelity = false;
+    int solverResolution = 0;
+    int solverSteps = 0;
+    double solverTime = -1.0;
+    bool solverAutoScale = true;
+    bool solverAutoScaleSet = false;
+    bool solverHemisphere = false;
+    bool solverBenchmark = false;
+    long long solverStepCount = 0;
     int raymarchSteps = 128;
     float exposure = 0.8f;
     float bloomStrength = 0.10f;
@@ -98,6 +114,13 @@ void PrintUsage() {
     std::printf("  --volume-resolution <n>  Volume grid resolution (default 128).\n");
     std::printf("  --no-gpu-volume-bake Disable the GPU volume bake.\n");
     std::printf("  --no-gpu-particles   Disable the GPU particle path.\n");
+    std::printf("  --high-fidelity      Use the GPU Euler solver.\n");
+    std::printf("  --solver-resolution <n>  Solver grid resolution (default 128).\n");
+    std::printf("  --solver-steps <n>   Max solver steps per frame (default 96).\n");
+    std::printf("  --solver-time <s>    Solver time for the high-fidelity capture.\n");
+    std::printf("  --solver-benchmark   Run the high-fidelity solver benchmark and exit.\n");
+    std::printf("  --solver-step-count <n>  Measured solver steps for the benchmark.\n");
+    std::printf("  --no-solver-auto-scale  Disable high-fidelity domain auto-scale.\n");
     std::printf("  --raymarch-steps <n>     Volume raymarch steps (default 128).\n");
     std::printf("  --exposure <x>       Tonemap exposure (default 0.8).\n");
     std::printf("  --bloom-strength <x> Bloom strength (default 0.10).\n");
@@ -220,6 +243,18 @@ void LoadSettingsFile(const std::string& path, Options& options) {
         integer("particleBudget", options.particleBudget);
     options.volumeResolution =
         integer("volumeResolution", options.volumeResolution);
+    options.highFidelity =
+        integer("simulationMode", options.highFidelity ? 1 : 0) == 1;
+    options.solverResolution =
+        std::clamp(integer("solverResolution", options.solverResolution), 32,
+                   512);
+    options.solverSteps =
+        std::clamp(integer("solverStepsPerFrame", options.solverSteps), 8, 256);
+    options.solverAutoScale =
+        boolean("solverAutoScale", options.solverAutoScale);
+    options.solverAutoScaleSet = true;
+    options.solverHemisphere =
+        boolean("solverHemisphere", options.solverHemisphere);
 
     options.sceneEnabled = boolean("sceneEnabled", options.sceneEnabled);
     options.sceneEnabledSet = true;
@@ -281,9 +316,57 @@ bool ParseOptions(int argc, char** argv, Options& options) {
             ++i;
             continue;
         }
-        if (std::strcmp(arg, "--reduced-order") == 0 ||
-            std::strcmp(arg, "--high-fidelity") == 0 ||
-            std::strcmp(arg, "--no-update-check") == 0) {
+        if (std::strcmp(arg, "--high-fidelity") == 0) {
+            options.highFidelity = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--reduced-order") == 0) {
+            options.highFidelity = false;
+            continue;
+        }
+        if (std::strcmp(arg, "--no-update-check") == 0) {
+            continue;
+        }
+        if (std::strcmp(arg, "--solver-resolution") == 0 && i + 1 < argc) {
+            if (!ParseInt(argv[++i], options.solverResolution)) {
+                std::fprintf(stderr, "Invalid solver resolution.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--solver-steps") == 0 && i + 1 < argc) {
+            if (!ParseInt(argv[++i], options.solverSteps)) {
+                std::fprintf(stderr, "Invalid solver step count.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--solver-time") == 0 && i + 1 < argc) {
+            if (!ParseDouble(argv[++i], options.solverTime)) {
+                std::fprintf(stderr, "Invalid solver time.\n");
+                return false;
+            }
+            continue;
+        }
+        if (std::strcmp(arg, "--no-solver-auto-scale") == 0) {
+            options.solverAutoScale = false;
+            options.solverAutoScaleSet = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--solver-benchmark") == 0) {
+            options.solverBenchmark = true;
+            options.highFidelity = true;
+            options.headless = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--solver-step-count") == 0 && i + 1 < argc) {
+            char* end = nullptr;
+            const long long parsed = std::strtoll(argv[++i], &end, 10);
+            if (!end || *end != '\0' || parsed <= 0) {
+                std::fprintf(stderr, "Invalid solver step count.\n");
+                return false;
+            }
+            options.solverStepCount = parsed;
             continue;
         }
         if (std::strcmp(arg, "--headless") == 0) {
@@ -478,9 +561,47 @@ bool CreateVulkanSurface(void* user, void* instance, uint64_t* surface) {
 }
 
 void FrameCamera(const ex::sim::Simulation& simulation, ex::gfx::Camera& camera,
-                 const Options& options) {
+                 const Options& options,
+                 const ex::gfx::SolverStats* solverStats) {
     const ex::sim::BlastModel& blast = simulation.Blast();
     const ex::sim::BlastState& state = blast.State();
+    camera.SetViewport(options.width, options.height);
+    camera.SetClipPlanes(0.5f, 20000.0f);
+
+    if (solverStats) {
+        // Match the Windows high-fidelity framing: follow the measured plume
+        // instead of the analytic cloud, which runs ahead of the resolved head.
+        const float sceneExtent = simulation.Scene().Extent();
+        float centerY = float(state.cloudCenterY);
+        float top = 0.0f;
+        float half = 0.0f;
+        if (solverStats->active && solverStats->fieldBoundsValid &&
+            solverStats->plumeTop > 1e-3f) {
+            top = solverStats->plumeTop;
+            half = std::max(solverStats->plumeRadius, 0.5f * top);
+            centerY = 0.5f * top;
+        } else {
+            const float fireball = float(blast.FireballMaxRadiusM());
+            const float cloudRadius =
+                std::max(float(state.cloudRadius), 3.0f * fireball);
+            top = float(state.cloudCenterY) + 2.4f * cloudRadius;
+            half = std::max(cloudRadius * 1.6f, 3.0f * fireball);
+            top = std::max(top, 2.0f * half);
+        }
+        const float distance =
+            std::max({top * 1.15f, half * 2.6f, sceneExtent * 0.9f, 8.0f}) *
+            std::max(0.1f, options.distanceScale);
+        const ex::sim::Environment& environment = blast.GetEnvironment();
+        const double drift = solverStats->active ? solverStats->time : 0.0;
+        camera.SetTarget(
+            DirectX::XMFLOAT3(float(environment.WindX() * drift), centerY,
+                              float(environment.WindZ() * drift)),
+            distance);
+        camera.SetOrientation(options.azimuth, options.elevation);
+        camera.Snap();
+        return;
+    }
+
     const float fireball = float(blast.FireballMaxRadiusM());
     const float cloud = float(state.cloudRadius);
     const float burstHeight = float(blast.GetCharge().heightOfBurstM);
@@ -489,13 +610,148 @@ void FrameCamera(const ex::sim::Simulation& simulation, ex::gfx::Camera& camera,
         std::max({fireball * 3.2f, cloud * 2.4f, burstHeight * 1.6f,
                   sceneExtent * 0.8f, 1.2f});
     const float centerY = burstHeight + fireball * 0.6f;
-    camera.SetViewport(options.width, options.height);
-    camera.SetClipPlanes(0.5f, 20000.0f);
     camera.SetTarget(DirectX::XMFLOAT3(0.0f, centerY, 0.0f),
                      radius * 1.9f * std::max(0.1f, options.distanceScale));
     camera.SetOrientation(options.azimuth, options.elevation);
     camera.Snap();
 }
+
+DirectX::XMFLOAT3 SunDirectionFor(const Options& options) {
+    const float azimuth = DirectX::XMConvertToRadians(options.sunAzimuth);
+    const float elevation = DirectX::XMConvertToRadians(options.sunElevation);
+    return DirectX::XMFLOAT3(std::cos(elevation) * std::sin(azimuth),
+                             std::sin(elevation),
+                             std::cos(elevation) * std::cos(azimuth));
+}
+
+ex::gfx::EulerConfig MakeEulerConfig(const ex::sim::Simulation& simulation) {
+    const ex::sim::BlastModel& blast = simulation.Blast();
+    const ex::sim::Charge& charge = blast.GetCharge();
+    const ex::sim::Environment& environment = blast.GetEnvironment();
+
+    ex::gfx::EulerConfig config;
+    config.resolution =
+        std::clamp(simulation.Settings().solverResolution, 32, 512);
+    const double fireball = std::max(blast.FireballMaxRadiusM(), 0.1);
+    config.domainHalfExtent = std::clamp(
+        ex::gfx::SolverHalfExtentForBurst(charge.heightOfBurstM, fireball), 1.0,
+        3000.0);
+    config.hemispherical = simulation.Settings().solverHemisphere;
+    config.chargeMassKg = std::max(charge.tntMassKg, 1e-6);
+    config.chargeEnergyJ = charge.EnergyJ();
+    config.heightOfBurstM =
+        std::clamp(charge.heightOfBurstM, 0.05, 2.0 * config.domainHalfExtent - 0.05);
+    config.ambientDensity = environment.AirDensity();
+    config.ambientPressure = environment.pressurePa;
+    config.ambientTemperature = environment.VirtualTemperatureK();
+    config.gamma = environment.gamma;
+    config.gasConstant = environment.gasConstant;
+    config.gravity = environment.gravity;
+    config.fireballRadiusM = fireball;
+    return config;
+}
+
+void UpdatePlumeModel(ex::gfx::RhiEulerSolver& solver,
+                      const ex::sim::Simulation& simulation) {
+    const ex::sim::BlastState& state = simulation.Blast().State();
+    const float cloudRadius = float(state.cloudRadius);
+    const float radius = 0.62f * cloudRadius;
+    const float centerY = float(state.cloudCenterY);
+    const float capTop = centerY + 0.52f * cloudRadius;
+    solver.SetPlumeModel(radius, centerY, capTop, cloudRadius,
+                         float(state.cloudRiseSpeed));
+}
+
+void MaybeExpandSolver(ex::gfx::RhiEulerSolver& solver,
+                       const ex::sim::Simulation& simulation,
+                       const Options& options, bool& capWarned) {
+    if (!options.solverAutoScale || !solver.HasVolume()) {
+        return;
+    }
+
+    constexpr double kTriggerFraction = 0.78;
+    constexpr double kFieldMargin = 1.12;
+    constexpr float kExpansion = 1.3f;
+    constexpr float kMaxAccuracy = 16.0f;
+
+    const ex::sim::BlastState& state = simulation.Blast().State();
+    const double analyticHalf = std::max(
+        {state.fireballRadius * 2.4, state.cloudRadius * 1.35, 0.5});
+    const double analyticTop = std::max(
+        {state.fireballCenterY + state.fireballRadius * 2.0,
+         state.cloudCenterY + state.cloudRadius * 1.6, 1.0});
+
+    double requiredHalf = analyticHalf;
+    double requiredTop = analyticTop;
+    double measuredDome = 0.0;
+    if (solver.HasFieldBounds()) {
+        const double measuredRadius = double(solver.FieldRadius());
+        const double measuredTop = double(solver.FieldTop());
+        if (measuredRadius > 0.0) {
+            requiredHalf = std::max(measuredRadius * kFieldMargin, 0.5);
+        }
+        if (measuredTop > 0.0) {
+            requiredTop = std::max(measuredTop * kFieldMargin, 1.0);
+        }
+        measuredDome = double(solver.FieldDomeFraction());
+    }
+    const bool hemisphere = simulation.Settings().solverHemisphere;
+
+    for (int attempt = 0; attempt < 4; ++attempt) {
+        const ex::sim::VolumeBounds& bounds = solver.Bounds();
+        const double half = 0.5 * (bounds.max.x - bounds.min.x);
+        const double top = bounds.max.y;
+        const bool tooWide = requiredHalf > half * kTriggerFraction;
+        const bool tooTall = requiredTop > top * kTriggerFraction;
+        const bool tooDome = hemisphere && measuredDome > kTriggerFraction;
+        if (!tooWide && !tooTall && !tooDome) {
+            break;
+        }
+        if (solver.Stats().accuracyFactor >= kMaxAccuracy) {
+            if (!capWarned) {
+                ex::LogWarn("High-fidelity auto-scale reached the accuracy budget "
+                            "(x%.1f); the plume may leave the domain.",
+                            solver.Stats().accuracyFactor);
+                capWarned = true;
+            }
+            break;
+        }
+        if (!solver.RescaleDomain(kExpansion)) {
+            break;
+        }
+    }
+}
+
+// Owns the RHI solver and the per-blast bookkeeping used by the Linux shell.
+struct HighFidelityRuntime {
+    ex::gfx::RhiEulerSolver solver;
+    uint64_t blastSerial = 0;
+    uint64_t version = 0;
+    bool capWarned = false;
+    bool published = false;
+
+    bool Ensure(const ex::sim::Simulation& simulation) {
+        if (!solver.HasVolume() || blastSerial != simulation.BlastSerial()) {
+            if (!solver.Reset(MakeEulerConfig(simulation))) {
+                ex::LogError("High-fidelity solver could not be initialised.");
+                return false;
+            }
+            blastSerial = simulation.BlastSerial();
+            capWarned = false;
+        }
+        return solver.HasVolume();
+    }
+
+    void Publish(ex::app::LinuxPreview& preview, const Options& options) {
+        solver.UpdateRenderVolume();
+        solver.UpdateLightVolume(SunDirectionFor(options));
+        solver.TransitionToShaderRead();
+        preview.SetGpuVolume(solver.RenderTexture(), solver.Bounds(),
+                             solver.ExtinctionScale(), ++version);
+        preview.SetGpuLightVolume(solver.LightTexture(), solver.Bounds());
+        published = true;
+    }
+};
 
 uint32_t Crc32Update(uint32_t crc, const uint8_t* data, size_t size) {
     for (size_t i = 0; i < size; ++i) {
@@ -700,6 +956,30 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    HighFidelityRuntime highFidelityRuntime;
+    bool highFidelity = false;
+    if (options.highFidelity) {
+        ex::gfx::RhiEulerSolver::Shaders eulerShaders{
+            {kEulerCSInit, kEulerCSInitSize},
+            {kEulerCSSweepX, kEulerCSSweepXSize},
+            {kEulerCSSweepY, kEulerCSSweepYSize},
+            {kEulerCSSweepZ, kEulerCSSweepZSize},
+            {kEulerCSSweepXSource, kEulerCSSweepXSourceSize},
+            {kEulerCSSweepYSource, kEulerCSSweepYSourceSize},
+            {kEulerCSSweepZSource, kEulerCSSweepZSourceSize},
+            {kEulerCSReduce, kEulerCSReduceSize},
+            {kEulerCSRender, kEulerCSRenderSize},
+            {kEulerCSLight, kEulerCSLightSize},
+            {kEulerCSRescale, kEulerCSRescaleSize},
+        };
+        highFidelity =
+            highFidelityRuntime.solver.Initialize(device.get(), eulerShaders);
+        if (!highFidelity) {
+            ex::LogWarn("High-fidelity solver unavailable; using the "
+                        "reduced-order path.");
+        }
+    }
+
     ex::gfx::GpuVolumeBaker gpuVolume;
     bool gpuVolumeReady =
         options.gpuVolumeBake &&
@@ -736,7 +1016,16 @@ int main(int argc, char** argv) {
         options.chargeMassKg > 0.0 ? options.chargeMassKg : 0.2;
     simulationSettings.heightOfBurstM =
         options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 0.4;
-    simulationSettings.mode = ex::sim::SimulationMode::ReducedOrder;
+    simulationSettings.mode = highFidelity
+                                  ? ex::sim::SimulationMode::HighFidelity
+                                  : ex::sim::SimulationMode::ReducedOrder;
+    simulationSettings.solverResolution =
+        std::clamp(options.solverResolution > 0 ? options.solverResolution : 128,
+                   32, 512);
+    simulationSettings.solverStepsPerFrame =
+        std::clamp(options.solverSteps > 0 ? options.solverSteps : 96, 8, 256);
+    simulationSettings.solverAutoScale = options.solverAutoScale;
+    simulationSettings.solverHemisphere = options.solverHemisphere;
     simulationSettings.gpuParticles = gpuParticlesReady;
     simulationSettings.gpuVolumeBake = gpuVolumeReady;
     simulationSettings.timeScale = options.timeScale;
@@ -787,6 +1076,7 @@ int main(int argc, char** argv) {
     previewSettings.sunElevationDeg = options.sunElevation;
     previewSettings.particleScale = options.particleScale;
     preview.SetSettings(previewSettings);
+    preview.SetHighFidelity(highFidelity);
     if (!preview.Initialize(device.get(), device->Width(), device->Height())) {
         ex::LogError("Could not initialize the reduced-order preview.");
         return 1;
@@ -800,38 +1090,137 @@ int main(int argc, char** argv) {
     ex::LogInfo("Linux app ready: %dx%d, %s", device->Width(),
                 device->Height(), options.headless ? "offscreen" : "windowed");
 
+    if (options.solverBenchmark) {
+        if (!highFidelity) {
+            ex::LogError("Solver benchmark requires the high-fidelity solver.");
+            return 1;
+        }
+        const long long steps =
+            options.solverStepCount > 0 ? options.solverStepCount : 256;
+        const int stepsPerFrame = std::clamp(
+            options.solverSteps > 0 ? options.solverSteps
+                                    : simulation.Settings().solverStepsPerFrame,
+            1, 256);
+        highFidelityRuntime.solver.SetDeterministic(false);
+        if (!highFidelityRuntime.Ensure(simulation)) {
+            ex::LogError("Solver benchmark: solver could not be initialised.");
+            return 1;
+        }
+        auto runSteps = [&](long long count) {
+            long long done = 0;
+            while (done < count) {
+                const int batch =
+                    int(std::min<long long>(stepsPerFrame, count - done));
+                UpdatePlumeModel(highFidelityRuntime.solver, simulation);
+                highFidelityRuntime.solver.Step(batch);
+                highFidelityRuntime.solver.UpdateRenderVolume();
+                highFidelityRuntime.solver.WaitForReduction();
+                const double advance =
+                    highFidelityRuntime.solver.ConsumeAdvance();
+                if (advance > 0.0) {
+                    simulation.AdvanceExternal(advance);
+                }
+                done += batch;
+            }
+        };
+        // Warm-up lets the driver/GPU settle before the measured window.
+        runSteps(std::min<long long>(steps, std::max(8, stepsPerFrame * 2)));
+        const auto start = std::chrono::steady_clock::now();
+        runSteps(steps);
+        const double elapsed = std::chrono::duration<double>(
+                                   std::chrono::steady_clock::now() - start)
+                                   .count();
+        ex::LogInfo("Solver benchmark: %d^3, %lld steps in %d-step frames, "
+                    "%.3f s wall (%.3f ms/step, %.1f steps/s), domain half "
+                    "%.2f m, voxel %.1f mm, maxSpeed %.0f m/s",
+                    highFidelityRuntime.solver.Stats().resolution, steps,
+                    stepsPerFrame, elapsed, elapsed * 1000.0 / double(steps),
+                    double(steps) / std::max(elapsed, 1e-9),
+                    highFidelityRuntime.solver.Stats().domainHalfExtent,
+                    highFidelityRuntime.solver.Stats().voxelSize * 1000.0f,
+                    highFidelityRuntime.solver.Stats().maxSpeed);
+        return 0;
+    }
+
     if (options.headless) {
         const double targetTime = std::max(0.0, options.captureTime);
-        const double step = 1.0 / 120.0;
-        int guard = 0;
-        while (simulation.Time() + 1e-9 < targetTime && guard++ < 200000) {
-            simulation.StepFixed(
-                std::min(step, targetTime - simulation.Time()));
-            if (gpuParticlesReady) {
-                gpuParticles.Update(simulation.Particles());
+        if (highFidelity) {
+            const double solverTarget =
+                options.solverTime >= 0.0 ? options.solverTime : targetTime;
+            highFidelityRuntime.solver.SetDeterministic(true);
+            if (!highFidelityRuntime.Ensure(simulation)) {
+                ex::LogError("High-fidelity solver reset failed.");
+                return 1;
             }
-        }
-        simulation.Volume().WaitForIdle();
-        simulation.Volume().Poll();
-        simulation.Volume().BakeNow(simulation.Blast());
-        simulation.Volume().Poll();
-        if (gpuVolumeReady) {
-            ex::sim::VolumeBakeRequest request;
-            if (simulation.Volume().TakeGpuRequest(request) &&
-                gpuVolume.Bake(request)) {
-                preview.SetGpuVolume(gpuVolume.Texture(), gpuVolume.Bounds(),
-                                     gpuVolume.Extinction(),
-                                     gpuVolume.Version());
-            } else {
-                ex::LogWarn("GPU volume bake failed; using the CPU baker.");
-                gpuVolumeReady = false;
-                simulation.Volume().SetGpuBake(false);
-                simulation.Volume().BakeNow(simulation.Blast());
-                simulation.Volume().Poll();
+            const auto start = std::chrono::steady_clock::now();
+            int guard = 0;
+            while (highFidelityRuntime.solver.Stats().time < solverTarget &&
+                   guard++ < 200000) {
+                MaybeExpandSolver(highFidelityRuntime.solver, simulation,
+                                  options, highFidelityRuntime.capWarned);
+                UpdatePlumeModel(highFidelityRuntime.solver, simulation);
+                highFidelityRuntime.solver.Step(16);
+                const double advance =
+                    highFidelityRuntime.solver.ConsumeAdvance();
+                if (advance > 0.0) {
+                    simulation.AdvanceExternal(advance);
+                }
+                if (gpuParticlesReady) {
+                    gpuParticles.Update(simulation.Particles());
+                }
+                const double elapsed = std::chrono::duration<double>(
+                                           std::chrono::steady_clock::now() -
+                                           start)
+                                           .count();
+                if (elapsed > 600.0) {
+                    ex::LogWarn("High-fidelity solver stopped at %.4f s "
+                                "(time budget reached).",
+                                highFidelityRuntime.solver.Stats().time);
+                    break;
+                }
+            }
+            highFidelityRuntime.Publish(preview, options);
+            ex::LogInfo("High-fidelity: t=%.4f s (analytic %.4f s), %lld steps, "
+                        "%d^3, dt=%.2f us, maxSpeed=%.0f m/s",
+                        highFidelityRuntime.solver.Stats().time,
+                        simulation.Blast().State().time,
+                        highFidelityRuntime.solver.Stats().steps,
+                        highFidelityRuntime.solver.Stats().resolution,
+                        highFidelityRuntime.solver.Stats().dt * 1e6f,
+                        highFidelityRuntime.solver.Stats().maxSpeed);
+        } else {
+            const double step = 1.0 / 120.0;
+            int guard = 0;
+            while (simulation.Time() + 1e-9 < targetTime && guard++ < 200000) {
+                simulation.StepFixed(
+                    std::min(step, targetTime - simulation.Time()));
+                if (gpuParticlesReady) {
+                    gpuParticles.Update(simulation.Particles());
+                }
+            }
+            simulation.Volume().WaitForIdle();
+            simulation.Volume().Poll();
+            simulation.Volume().BakeNow(simulation.Blast());
+            simulation.Volume().Poll();
+            if (gpuVolumeReady) {
+                ex::sim::VolumeBakeRequest request;
+                if (simulation.Volume().TakeGpuRequest(request) &&
+                    gpuVolume.Bake(request)) {
+                    preview.SetGpuVolume(gpuVolume.Texture(), gpuVolume.Bounds(),
+                                         gpuVolume.Extinction(),
+                                         gpuVolume.Version());
+                } else {
+                    ex::LogWarn("GPU volume bake failed; using the CPU baker.");
+                    gpuVolumeReady = false;
+                    simulation.Volume().SetGpuBake(false);
+                    simulation.Volume().BakeNow(simulation.Blast());
+                    simulation.Volume().Poll();
+                }
             }
         }
     }
-    FrameCamera(simulation, camera, options);
+    FrameCamera(simulation, camera, options,
+                highFidelity ? &highFidelityRuntime.solver.Stats() : nullptr);
 
     const int frameLimit =
         options.headless ? std::max(1, options.frames) : options.frames;
@@ -860,26 +1249,73 @@ int main(int argc, char** argv) {
             const double now = NowSeconds();
             const float dt = float(std::clamp(now - lastTime, 0.0, 0.05));
             lastTime = now;
-            simulation.Update(dt);
-            if (gpuParticlesReady) {
-                gpuParticles.Update(simulation.Particles());
-            }
-            if (gpuVolumeReady) {
-                ex::sim::VolumeBakeRequest request;
-                if (simulation.Volume().TakeGpuRequest(request)) {
-                    if (gpuVolume.Bake(request)) {
-                        preview.SetGpuVolume(
-                            gpuVolume.Texture(), gpuVolume.Bounds(),
-                            gpuVolume.Extinction(), gpuVolume.Version());
-                    } else {
-                        ex::LogWarn(
-                            "GPU volume bake failed; using the CPU baker.");
-                        gpuVolumeReady = false;
-                        simulation.Volume().SetGpuBake(false);
+            if (highFidelity) {
+                if (simulation.IsArmed()) {
+                    // Tick the fuse through the analytic model; the solver
+                    // resets itself once the blast serial changes.
+                    simulation.Update(dt);
+                } else if (highFidelityRuntime.Ensure(simulation)) {
+                    MaybeExpandSolver(highFidelityRuntime.solver, simulation,
+                                      options, highFidelityRuntime.capWarned);
+                    const double target =
+                        std::max(0.0, double(dt) *
+                                          simulation.Settings().timeScale);
+                    const int maxSteps = std::clamp(
+                        simulation.Settings().solverStepsPerFrame, 8, 256);
+                    const int batchMax = std::min(maxSteps, 64);
+                    double advanced = 0.0;
+                    int submitted = 0;
+                    while (advanced + 1e-9 < target && submitted < maxSteps) {
+                        const float solverDt =
+                            highFidelityRuntime.solver.Stats().dt;
+                        int steps = 1;
+                        if (solverDt > 0.0f) {
+                            steps = int(std::ceil((target - advanced) /
+                                                  double(solverDt)));
+                            steps = std::clamp(
+                                steps, 1,
+                                std::min(batchMax, maxSteps - submitted));
+                        }
+                        UpdatePlumeModel(highFidelityRuntime.solver,
+                                         simulation);
+                        highFidelityRuntime.solver.Step(steps);
+                        const double advance =
+                            highFidelityRuntime.solver.ConsumeAdvance();
+                        advanced += advance;
+                        submitted += steps;
+                        if (advance <= 0.0) {
+                            break;
+                        }
+                    }
+                    if (submitted > 0 || !highFidelityRuntime.published) {
+                        highFidelityRuntime.Publish(preview, options);
                     }
                 }
+                if (gpuParticlesReady) {
+                    gpuParticles.Update(simulation.Particles());
+                }
             } else {
-                simulation.Volume().Poll();
+                simulation.Update(dt);
+                if (gpuParticlesReady) {
+                    gpuParticles.Update(simulation.Particles());
+                }
+                if (gpuVolumeReady) {
+                    ex::sim::VolumeBakeRequest request;
+                    if (simulation.Volume().TakeGpuRequest(request)) {
+                        if (gpuVolume.Bake(request)) {
+                            preview.SetGpuVolume(
+                                gpuVolume.Texture(), gpuVolume.Bounds(),
+                                gpuVolume.Extinction(), gpuVolume.Version());
+                        } else {
+                            ex::LogWarn(
+                                "GPU volume bake failed; using the CPU baker.");
+                            gpuVolumeReady = false;
+                            simulation.Volume().SetGpuBake(false);
+                        }
+                    }
+                } else {
+                    simulation.Volume().Poll();
+                }
             }
         }
 
