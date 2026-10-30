@@ -30,8 +30,8 @@ set(EXPLOSION_RHI "d3d11" CACHE STRING "Graphics backend (d3d11; vulkan is plann
 set(EXPLOSION_PLATFORM "win32" CACHE STRING "Platform layer (win32; sdl3 is planned)")
 
 if(EXPLOSION_BUILD_APP AND NOT WIN32)
-    message(STATUS "The Linux application build is not implemented yet; "
-                   "building the portable core and tests only.")
+    message(STATUS "The Win32/D3D11 application target is Windows-only; "
+                   "building the native Linux shell as explosion_linux.")
     set(EXPLOSION_BUILD_APP OFF)
 endif()
 
@@ -148,6 +148,25 @@ if(EXPLOSION_BUILD_VULKAN_SMOKE)
     endif()
 endif()
 
+# Shared Vulkan RHI and SDL3 platform libraries. The smoke test and the Linux
+# application use the same objects so their device setup cannot drift apart.
+if(TARGET explosion_vulkan)
+    add_library(explosion_vulkan_rhi STATIC
+        src/gfx/rhi/vulkan/VulkanRhi.cpp)
+    target_include_directories(explosion_vulkan_rhi PUBLIC src)
+    target_link_libraries(explosion_vulkan_rhi PUBLIC explosion_vulkan)
+    target_link_libraries(explosion_vulkan_rhi PRIVATE explosion_core)
+    ex_target_warnings(explosion_vulkan_rhi)
+
+    add_library(explosion_platform_sdl3 STATIC
+        src/platform/sdl3/Sdl3Window.cpp)
+    target_include_directories(explosion_platform_sdl3 PUBLIC src)
+    target_link_libraries(explosion_platform_sdl3 PUBLIC
+        ${EXPLOSION_SDL3_TARGET}
+        explosion_vulkan)
+    ex_target_warnings(explosion_platform_sdl3)
+endif()
+
 if(EXPLOSION_BUILD_APP)
     # Dear ImGui ships without a CMakeLists.txt; SOURCE_SUBDIR points to a
     # non-existent folder so FetchContent only downloads it.
@@ -239,14 +258,12 @@ ex_target_warnings(explosion_core)
 # ---------------------------------------------------------------------------
 if(EXPLOSION_BUILD_VULKAN_SMOKE AND TARGET explosion_vulkan)
     add_executable(vulkan_smoke
-        tools/vulkan_smoke/main.cpp
-        src/platform/sdl3/Sdl3Window.cpp
-        src/gfx/rhi/vulkan/VulkanRhi.cpp)
+        tools/vulkan_smoke/main.cpp)
     target_include_directories(vulkan_smoke PRIVATE src)
     target_link_libraries(vulkan_smoke PRIVATE
-        explosion_vulkan
-        explosion_core
-        ${EXPLOSION_SDL3_TARGET})
+        explosion_vulkan_rhi
+        explosion_platform_sdl3
+        explosion_core)
     ex_target_warnings(vulkan_smoke)
 
     # Build-time HLSL -> SPIR-V validation. The smoke currently embeds the
@@ -307,6 +324,31 @@ if(EXPLOSION_BUILD_VULKAN_SMOKE AND TARGET explosion_vulkan)
     else()
         message(STATUS "DXC not found; the vulkan_shaders target is unavailable.")
     endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Native Linux application shell (M2)
+# ---------------------------------------------------------------------------
+if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
+    add_executable(explosion_linux
+        src/app/LinuxApp.cpp)
+    target_include_directories(explosion_linux PRIVATE
+        src
+        ${CMAKE_BINARY_DIR}/generated)
+    target_link_libraries(explosion_linux PRIVATE
+        explosion_vulkan_rhi
+        explosion_platform_sdl3
+        explosion_core)
+    ex_target_warnings(explosion_linux)
+
+    add_custom_command(TARGET explosion_linux POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/assets
+                $<TARGET_FILE_DIR:explosion_linux>/assets
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_SOURCE_DIR}/CHANGELOG.md
+                $<TARGET_FILE_DIR:explosion_linux>/CHANGELOG.md
+        COMMENT "Copying assets next to the Linux application")
 endif()
 
 # ---------------------------------------------------------------------------

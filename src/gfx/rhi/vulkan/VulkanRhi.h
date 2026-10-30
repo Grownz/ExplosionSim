@@ -44,8 +44,8 @@ public:
 
     // Clears the current frame target. EndFrame presents it (windowed) or
     // leaves it ready for ReadBack() (offscreen).
-    void BeginFrame(float r, float g, float b, float a);
-    void EndFrame(bool vsync);
+    void BeginFrame(float r, float g, float b, float a) override;
+    void EndFrame(bool vsync) override;
 
     // Renders into a Texture created with TextureUsage::RenderTarget. The
     // texture is left in SHADER_READ_ONLY_OPTIMAL for the next pass.
@@ -69,10 +69,11 @@ public:
                               uint32_t firstInstance = 0) override;
 
     // Offscreen only: copies the last rendered BGRA8 image into `bgra`.
-    bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight);
+    bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth,
+                  int& outHeight) override;
 
-    int Width() const { return width_; }
-    int Height() const { return height_; }
+    int Width() const override { return width_; }
+    int Height() const override { return height_; }
     bool Offscreen() const { return offscreen_; }
     const std::string& AdapterName() const { return adapterName_; }
     uint64_t DedicatedVideoMemory() const { return dedicatedVideoMemory_; }

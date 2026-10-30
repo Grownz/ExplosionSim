@@ -358,6 +358,17 @@ public:
     // backends that do not expose one yet.
     virtual Texture* DepthTarget() = 0;
 
+    virtual int Width() const = 0;
+    virtual int Height() const = 0;
+
+    // Frame lifecycle for the application shell. BeginFrame binds and clears
+    // the current target; EndFrame presents it (windowed) or leaves it ready
+    // for ReadBack (offscreen).
+    virtual void BeginFrame(float r, float g, float b, float a) = 0;
+    virtual void EndFrame(bool vsync) = 0;
+    virtual bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth,
+                          int& outHeight) = 0;
+
     // Temporary immediate-mode binding until the command list abstraction
     // lands; sets the pipeline's shaders and fixed-function state.
     virtual void BindPipeline(Pipeline* pipeline) = 0;

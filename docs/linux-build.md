@@ -1,8 +1,9 @@
 # Linux build
 
-The portable simulation core and the Vulkan bring-up target already build and
-run natively on Linux. The graphical application is still Windows-only until the
-SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
+The portable simulation core, the Vulkan bring-up target and the native Linux
+application shell build and run on Linux. The shell owns the SDL3 window and the
+Vulkan RHI device, resizes the swapchain and writes offscreen PNG/PPM captures;
+the reduced-order renderer is ported into it next (milestones M2/M3 in
 [`linux-port.md`](linux-port.md)).
 
 ## Current Linux targets
@@ -11,6 +12,9 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   generation, Voronoi fracture, Jolt physics, thread pool.
 - `core_tests`: portable smoke tests for the blast model, deterministic scene
   generation and the CPU volume bake.
+- `explosion_linux`: native SDL3 + Vulkan application shell. It opens a window,
+  handles resize, clears/presents through the RHI frame API and can render an
+  offscreen `--screenshot` as PNG or PPM. The renderer passes are wired in next.
 - `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and
   (with a desktop) an SDL3 window with a swapchain. `--triangle` exercises
   vertex buffers, SPIR-V shader modules and a graphics pipeline; `--quad` adds
@@ -33,8 +37,9 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   from the shared mesh library, plus a volumetric smoke cloud, an additive
   particle burst and the shock-front refraction, through the same Vulkan frame.
 
-All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
-core tests and the Vulkan smoke test on Mesa lavapipe.
+All four are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
+core tests, the Vulkan smoke test and the Linux application screenshot on Mesa
+lavapipe.
 
 The D3D11 application now records its scene shadow and main passes through
 `rhi::CommandList`; `Renderer` owns its HDR/bloom targets as RHI textures. The
@@ -75,8 +80,22 @@ ctest --test-dir build --output-on-failure
 ```
 
 `EXPLOSION_BUILD_APP` defaults to `OFF` on Linux, so the configure step does not
-try to build the Win32/D3D11 application. The option is accepted and reported
-as not implemented yet.
+try to build the Win32/D3D11 application. The native Linux shell is built as the
+separate `explosion_linux` target whenever Vulkan and SDL3 are available.
+
+## Linux application shell
+
+```sh
+# Offscreen PNG capture through the Vulkan RHI:
+./build/explosion_linux --headless --width 1600 --height 900 \
+  --frames 2 --screenshot /tmp/explosion_linux.png
+
+# Interactive window (needs a desktop session and SDL3 video drivers):
+./build/explosion_linux
+```
+
+The shell currently clears and presents; the reduced-order renderer passes are
+ported into it next. `--screenshot` accepts `.png` and `.ppm`.
 
 ## Vulkan smoke test
 

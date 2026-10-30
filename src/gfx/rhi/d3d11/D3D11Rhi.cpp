@@ -820,6 +820,22 @@ void Device::Present(bool vsync) {
     }
 }
 
+void Device::BeginFrame(float r, float g, float b, float a) {
+    if (!context_ || !finalRTV_) {
+        return;
+    }
+    BindFinalTarget();
+    const float clearColor[4] = {r, g, b, a};
+    context_->ClearRenderTargetView(finalRTV_.Get(), clearColor);
+    if (dsv_) {
+        context_->ClearDepthStencilView(dsv_.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    }
+}
+
+void Device::EndFrame(bool vsync) {
+    Present(vsync);
+}
+
 bool Device::ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight) {
     ID3D11Texture2D* source = offscreen_ ? finalTexture_.Get() : backbuffer_.Get();
     if (!staging_ || !source) {

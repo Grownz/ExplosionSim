@@ -1,17 +1,18 @@
 # Linux port and multi-platform RHI plan
 
-Status: **M0 done, M1 done, M2 nearly done, M3 in progress.** The portable
-simulation core builds and passes `core_tests` natively on Linux (Ubuntu 24.04 CI
-job). The backend-neutral RHI interfaces and the D3D11 backend exist; `GfxDevice`
-and the swapchain run through the RHI. `SceneRenderer` creates its meshes,
+Status: **M0 done, M1 done, M2 done, M3 in progress.** The portable simulation
+core builds and passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The
+backend-neutral RHI interfaces and the D3D11 backend exist; `GfxDevice` and the
+swapchain run through the RHI. `SceneRenderer` creates its meshes,
 instance/chunk/shadow buffers, shadow and surface-detail textures, shaders,
 input layouts, fixed-function states and samplers through the RHI, and its
 shadow/main passes now record through `rhi::CommandList` instead of the D3D11
 context. `Renderer` owns its HDR/bloom targets as RHI textures.
 
-M2 now has an SDL3 window layer and a Vulkan 1.2 device with an offscreen
-target, swapchain, clear, present and readback (`vulkan_smoke`). The Vulkan
-resource factories and the application integration are next; see
+M2 now has an SDL3 window layer, a Vulkan 1.2 device with an offscreen target,
+swapchain, clear, present and readback (`vulkan_smoke`), and the native
+`explosion_linux` application shell with resize and PNG/PPM captures. The
+reduced-order renderer is being moved into that shell; see
 [`linux-build.md`](linux-build.md) for the current Linux build instructions.
 
 ## 1. Goal
@@ -213,11 +214,11 @@ are confined to the not-yet-ported volume, particle, bloom and compute passes.
 
 ### M2 — SDL3 platform layer + Vulkan device/swapchain (10–15 days)
 
-Status: **nearly done.** The SDL3 window/event layer, Vulkan instance, physical
-and logical device, offscreen target, swapchain, clear, present and readback
-exist and are exercised by `vulkan_smoke` on Windows and Linux. `rhi::CommandList`
-has D3D11 and Vulkan implementations. The application still uses the
-Win32/D3D11 path.
+Status: **done.** The SDL3 window/event layer, Vulkan instance, physical and
+logical device, offscreen target, swapchain, clear, present and readback exist
+and are exercised by `vulkan_smoke` and the native `explosion_linux` shell. The
+shell resizes the swapchain and writes PNG/PPM captures; the reduced-order
+renderer is the next step.
 
 - Add `src/platform/Platform.h` and `platform/sdl3/*`.
 - Create window, input, DPI, timer, clipboard and file dialogs.

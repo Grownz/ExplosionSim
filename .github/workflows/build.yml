@@ -42,8 +42,7 @@ jobs:
         run: |
           ls -l /usr/share/vulkan/icd.d || true
           ./build/vulkan_smoke --headless --width 320 --height 180 \
-            --frames 2 --output /tmp/vulkan_smoke.ppm
-          ./build/vulkan_smoke --headless --triangle --width 320 --height 180 \
+            --frames 2 --output /tmp/vulkan_smoke.ppm          ./build/vulkan_smoke --headless --triangle --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_triangle.ppm
           ./build/vulkan_smoke --headless --quad --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_quad.ppm
@@ -71,6 +70,12 @@ jobs:
             --frames 2 --output /tmp/vulkan_scene_frame.ppm
           ./build/vulkan_smoke --headless --city --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_city.ppm
+
+      - name: Linux application screenshot (lavapipe)
+        run: |
+          ./build/explosion_linux --headless --width 320 --height 180 \
+            --frames 2 --screenshot /tmp/explosion_linux.png
+          test -s /tmp/explosion_linux.png
 
   windows:
     runs-on: windows-2022

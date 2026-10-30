@@ -41,6 +41,10 @@ public:
     }
     std::unique_ptr<CommandList> CreateCommandList() override;
     Texture* DepthTarget() override { return depthTarget_.get(); }
+    void BeginFrame(float r, float g, float b, float a) override;
+    void EndFrame(bool vsync) override;
+    bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth,
+                  int& outHeight) override;
     void BindDescriptorSet(DescriptorSet*, uint32_t) override {}
     void BindPipeline(Pipeline* pipeline) override;
     void BindVertexBuffer(Buffer* buffer, uint32_t stride,
@@ -67,10 +71,9 @@ public:
 
     void BindFinalTarget();
     void Present(bool vsync);
-    bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight);
 
-    int Width() const { return width_; }
-    int Height() const { return height_; }
+    int Width() const override { return width_; }
+    int Height() const override { return height_; }
     bool Offscreen() const { return offscreen_; }
     const std::string& AdapterName() const { return adapterName_; }
     uint64_t DedicatedVideoMemory() const { return dedicatedVideoMemory_; }
