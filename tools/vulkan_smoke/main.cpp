@@ -5,6 +5,7 @@
 #include "platform/Platform.h"
 #include "TriangleShaders.h"
 #include "QuadShaders.h"
+#include "SkyShaders.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -25,6 +26,7 @@ struct Options {
     bool debug = false;
     bool triangle = false;
     bool quad = false;
+    bool sky = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -55,6 +57,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--quad") == 0) {
             options.quad = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--sky") == 0) {
+            options.sky = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -315,6 +321,93 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Buffer> skyUniformBuffer;
+    std::unique_ptr<ex::rhi::Shader> skyVertexShader;
+    std::unique_ptr<ex::rhi::Shader> skyPixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> skyPipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> skySet;
+
+    if (options.sky) {
+        // Layout must match FrameConstants in src/gfx/Renderer.h.
+        float constants[112] = {};
+        constants[0] = 1.0f;
+        constants[5] = 1.0f;
+        constants[10] = 1.0f;
+        constants[15] = 1.0f;
+        constants[16] = 1.0f;
+        constants[21] = 1.0f;
+        constants[26] = 1.0f;
+        constants[31] = 1.0f;
+        constants[32] = 0.0f;
+        constants[33] = 0.0f;
+        constants[34] = -10.0f;
+        constants[35] = 0.0f;
+        constants[36] = 0.3f;
+        constants[37] = 0.8f;
+        constants[38] = 0.5f;
+        constants[39] = 1.0f;
+        constants[40] = 1.0f;
+        constants[41] = 0.7f;
+        constants[42] = 0.44f;
+        constants[43] = 1.0f;
+        constants[52] = float(options.width);
+        constants[53] = float(options.height);
+        constants[54] = 1.0f / float(options.width);
+        constants[55] = 1.0f / float(options.height);
+        constants[64] = 0.0f;
+        constants[65] = 1.0f / 60.0f;
+        constants[66] = 0.0f;
+        constants[67] = 0.0f;
+        constants[68] = 1.0f;
+        constants[69] = 0.0f;
+        constants[70] = 0.0f;
+        constants[71] = 1.0f;
+
+        ex::rhi::BufferDesc uniformDesc{};
+        uniformDesc.size = sizeof(constants);
+        uniformDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        uniformDesc.initialData = constants;
+        skyUniformBuffer = device->CreateBuffer(uniformDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kSkyVS;
+        shaderDesc.size = kSkyVSSize;
+        shaderDesc.name = "FullscreenVS";
+        skyVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kSkyPS;
+        shaderDesc.size = kSkyPSSize;
+        shaderDesc.name = "PSSky";
+        skyPixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {0, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = skyVertexShader.get();
+        pipelineDesc.pixelShader = skyPixelShader.get();
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 1;
+        pipelineDesc.depthTest = false;
+        pipelineDesc.depthWrite = false;
+        skyPipeline = device->CreatePipeline(pipelineDesc);
+        if (skyPipeline) {
+            skySet = device->CreateDescriptorSet(skyPipeline.get());
+        }
+        if (skySet) {
+            skySet->SetBuffer(0, skyUniformBuffer.get(), 0,
+                              sizeof(constants));
+        }
+        if (!skyUniformBuffer || !skyVertexShader || !skyPixelShader ||
+            !skyPipeline || !skySet) {
+            std::fprintf(stderr, "Vulkan sky resources failed.\n");
+            return 1;
+        }
+    }
+
     const int frames =
         options.frames >= 0 ? options.frames : (options.headless ? 3 : 0);
     int rendered = 0;
@@ -333,6 +426,10 @@ int main(int argc, char** argv) {
             device->BindDescriptorSet(quadSet.get());
             device->BindVertexBuffer(quadVertexBuffer.get());
             device->Draw(6);
+        } else if (skyPipeline) {
+            device->BindPipeline(skyPipeline.get());
+            device->BindDescriptorSet(skySet.get());
+            device->Draw(3);
         }
         device->EndFrame(true);
         ++rendered;
@@ -360,6 +457,11 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    skySet.reset();
+    skyPipeline.reset();
+    skyPixelShader.reset();
+    skyVertexShader.reset();
+    skyUniformBuffer.reset();
     quadSet.reset();
     quadPipeline.reset();
     quadPixelShader.reset();

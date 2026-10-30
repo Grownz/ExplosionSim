@@ -1954,7 +1954,7 @@ void Device::BindVertexBuffer(Buffer* buffer, uint64_t offset) {
 }
 
 void Device::Draw(uint32_t vertexCount, uint32_t firstVertex) {
-    if (!frameActive_ || !boundPipeline_ || !boundVertexBuffer_) {
+    if (!frameActive_ || !boundPipeline_) {
         return;
     }
     vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1964,8 +1964,10 @@ void Device::Draw(uint32_t vertexCount, uint32_t firstVertex) {
                                 boundPipelineLayout_, 0, 1, &boundDescriptorSet_,
                                 0, nullptr);
     }
-    vkCmdBindVertexBuffers(commandBuffer_, 0, 1, &boundVertexBuffer_,
-                           &boundVertexOffset_);
+    if (boundVertexBuffer_) {
+        vkCmdBindVertexBuffers(commandBuffer_, 0, 1, &boundVertexBuffer_,
+                               &boundVertexOffset_);
+    }
     vkCmdDraw(commandBuffer_, vertexCount, 1, firstVertex, 0);
 }
 

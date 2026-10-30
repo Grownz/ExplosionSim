@@ -36,6 +36,8 @@ jobs:
             --frames 2 --output /tmp/vulkan_triangle.ppm
           ./build/vulkan_smoke --headless --quad --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_quad.ppm
+          ./build/vulkan_smoke --headless --sky --width 320 --height 180 \
+            --frames 2 --output /tmp/vulkan_sky.ppm
 
   windows:
     runs-on: windows-2022

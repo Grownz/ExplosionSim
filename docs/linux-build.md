@@ -14,7 +14,8 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
 - `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and
   (with a desktop) an SDL3 window with a swapchain. `--triangle` exercises
   vertex buffers, SPIR-V shader modules and a graphics pipeline; `--quad` adds
-  a texture, sampler, uniform buffer and descriptor set.
+  a texture, sampler, uniform buffer and descriptor set; `--sky` runs the real
+  `assets/shaders/sky.hlsl` with the shared frame constants.
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.
@@ -70,10 +71,15 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 # Textured quad: texture, sampler, uniform buffer and descriptor set:
 ./build/vulkan_smoke --headless --quad --frames 2 \
   --output /tmp/vulkan_quad.ppm
+
+# Real sky shader with the shared FrameConstants uniform buffer:
+./build/vulkan_smoke --headless --sky --frames 2 \
+  --output /tmp/vulkan_sky.ppm
 ```
 
-The shaders are compiled from `tools/vulkan_smoke/*.hlsl` with DXC and embedded
-as SPIR-V in `TriangleShaders.h`/`QuadShaders.h`.
+The smoke shaders are compiled from `tools/vulkan_smoke/*.hlsl` and
+`assets/shaders/sky.hlsl` with DXC and embedded as SPIR-V in
+`TriangleShaders.h`, `QuadShaders.h` and `SkyShaders.h`.
 
 The smoke test prints the selected adapter and exits. `--debug` enables the
 Vulkan validation layer when it is installed.
