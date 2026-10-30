@@ -64,6 +64,7 @@ private:
     bool RecreateSwapchain();
 
     bool BeginCommandBuffer();
+    bool WaitForFence();
     bool SubmitAndWait();
 
     VkFormat ChooseSurfaceFormat() const;

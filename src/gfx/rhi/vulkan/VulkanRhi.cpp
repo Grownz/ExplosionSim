@@ -687,11 +687,15 @@ void Device::DestroyOffscreenTarget() {
     }
 }
 
-bool Device::BeginCommandBuffer() {
+bool Device::WaitForFence() {
     if (vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
         return false;
     }
     vkResetFences(device_, 1, &fence_);
+    return true;
+}
+
+bool Device::BeginCommandBuffer() {
     vkResetCommandBuffer(commandBuffer_, 0);
 
     VkCommandBufferBeginInfo begin{};
@@ -702,6 +706,12 @@ bool Device::BeginCommandBuffer() {
 
 void Device::BeginFrame(float r, float g, float b, float a) {
     if (!initialized_ || frameActive_) {
+        return;
+    }
+
+    // Wait for the previous submission before acquiring the next image: this
+    // guarantees the imageAvailable semaphore has been consumed.
+    if (!WaitForFence()) {
         return;
     }
 
@@ -751,9 +761,9 @@ void Device::EndFrame(bool vsync) {
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &commandBuffer_;
+    VkPipelineStageFlags waitStage =
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     if (!offscreen_) {
-        VkPipelineStageFlags waitStage =
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
         submit.waitSemaphoreCount = 1;
         submit.pWaitSemaphores = &imageAvailable_;
         submit.pWaitDstStageMask = &waitStage;
@@ -820,7 +830,7 @@ bool Device::ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight)
         return false;
     }
 
-    if (!BeginCommandBuffer()) {
+    if (!WaitForFence() || !BeginCommandBuffer()) {
         vkDestroyBuffer(device_, buffer, nullptr);
         vkFreeMemory(device_, memory, nullptr);
         return false;
