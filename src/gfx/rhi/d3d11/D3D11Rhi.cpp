@@ -467,6 +467,14 @@ public:
                                           baseVertex, firstInstance);
         }
     }
+    void DrawInstancedIndirect(rhi::Buffer* arguments,
+                               uint64_t offset) override {
+        if (context_ && arguments) {
+            context_->DrawInstancedIndirect(
+                static_cast<ID3D11Buffer*>(arguments->NativeHandle()),
+                UINT(offset));
+        }
+    }
 
     void BeginCompute() override {}
     void EndCompute() override {}
@@ -475,6 +483,7 @@ public:
             context_->Dispatch(x, y, z);
         }
     }
+    void ComputeBarrier() override {}
     void TransitionTexture(rhi::Texture*, rhi::TextureState) override {}
 
     void* NativeHandle() const override { return context_; }

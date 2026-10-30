@@ -44,6 +44,8 @@ public:
     void SetGpuVolume(ex::rhi::Texture* texture,
                       const ex::sim::VolumeBounds& bounds, float extinction,
                       uint64_t version);
+    void SetGpuParticles(ex::rhi::Buffer* additive, ex::rhi::Buffer* alpha,
+                         ex::rhi::Buffer* fire, ex::rhi::Buffer* indirect);
     void Render(ex::rhi::Device* device, ex::sim::Simulation& simulation,
                 const ex::gfx::Camera& camera, int width, int height,
                 bool vsync);
@@ -179,6 +181,13 @@ private:
     std::unique_ptr<ex::rhi::DescriptorSet> particleAlphaSet_;
     uint32_t particleAlphaCount_ = 0;
     size_t particleAlphaCapacity_ = 0;
+    ex::rhi::Buffer* gpuParticleAdditive_ = nullptr;
+    ex::rhi::Buffer* gpuParticleAlpha_ = nullptr;
+    ex::rhi::Buffer* gpuParticleFire_ = nullptr;
+    ex::rhi::Buffer* gpuParticleIndirect_ = nullptr;
+    std::unique_ptr<ex::rhi::DescriptorSet> particleGpuAdditiveSet_;
+    std::unique_ptr<ex::rhi::DescriptorSet> particleGpuAlphaSet_;
+    std::unique_ptr<ex::rhi::DescriptorSet> particleGpuFireSet_;
 
     // Shock-front refraction.
     std::unique_ptr<ex::rhi::Texture> shockTarget_;

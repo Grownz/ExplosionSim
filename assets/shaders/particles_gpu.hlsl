@@ -3,7 +3,15 @@
 // integration and colour code mirror ParticleSystem::IntegrateRange and
 // BuildBatches, so the visual result matches the CPU path.
 
-cbuffer ParticleUpdateConstants : register(b0)
+// Vulkan binding annotations. This shader has its own constant layout and does
+// not include common.hlsli.
+#if defined(EXPLOSION_VULKAN)
+#define EX_VK_BINDING(n) [[vk::binding(n, 0)]]
+#else
+#define EX_VK_BINDING(n)
+#endif
+
+EX_VK_BINDING(0) cbuffer ParticleUpdateConstants : register(b0)
 {
     float4 WindTime;   // xyz = wind, w = time
     float4 Params;     // x = ambient temperature, y = gravity, z = dt, w = capacity
@@ -47,13 +55,17 @@ struct Instance
     float pad1;
 };
 
-RWStructuredBuffer<ParticleState> StateBuffer : register(u0);
-StructuredBuffer<ParticleSpawn> Spawns : register(t0);
-RWStructuredBuffer<Instance> Additive : register(u1);
-RWStructuredBuffer<Instance> Alpha : register(u2);
-RWStructuredBuffer<Instance> Fire : register(u3);
-RWStructuredBuffer<uint> Counters : register(u4);
+EX_VK_BINDING(21) RWStructuredBuffer<ParticleState> StateBuffer : register(u0);
+EX_VK_BINDING(8) StructuredBuffer<ParticleSpawn> Spawns : register(t0);
+EX_VK_BINDING(22) RWStructuredBuffer<Instance> Additive : register(u1);
+EX_VK_BINDING(23) RWStructuredBuffer<Instance> Alpha : register(u2);
+EX_VK_BINDING(24) RWStructuredBuffer<Instance> Fire : register(u3);
+EX_VK_BINDING(25) RWStructuredBuffer<uint> Counters : register(u4);
+#if defined(EXPLOSION_VULKAN)
+EX_VK_BINDING(26) RWStructuredBuffer<uint> Indirect : register(u5);
+#else
 RWBuffer<uint> Indirect : register(u5);
+#endif
 
 static const uint kDebris = 0;
 static const uint kSpark = 1;

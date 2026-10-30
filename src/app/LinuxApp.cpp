@@ -7,9 +7,11 @@
 #include "core/ThreadPool.h"
 #include "gfx/Camera.h"
 #include "gfx/GpuVolumeBaker.h"
+#include "gfx/GpuParticleSystem.h"
 #include "gfx/rhi/Rhi.h"
 #include "platform/Platform.h"
 #include "sim/Simulation.h"
+#include "ParticlesGpuShaders.h"
 #include "VolumeBakeShader.h"
 
 #include <algorithm>
@@ -63,6 +65,7 @@ struct Options {
     bool sceneVegetation = true;
     int volumeResolution = 0;
     bool gpuVolumeBake = true;
+    bool gpuParticles = true;
     int raymarchSteps = 128;
     float exposure = 0.8f;
     float bloomStrength = 0.10f;
@@ -94,6 +97,7 @@ void PrintUsage() {
     std::printf("  --no-scene           Disable the procedural environment.\n");
     std::printf("  --volume-resolution <n>  Volume grid resolution (default 128).\n");
     std::printf("  --no-gpu-volume-bake Disable the GPU volume bake.\n");
+    std::printf("  --no-gpu-particles   Disable the GPU particle path.\n");
     std::printf("  --raymarch-steps <n>     Volume raymarch steps (default 128).\n");
     std::printf("  --exposure <x>       Tonemap exposure (default 0.8).\n");
     std::printf("  --bloom-strength <x> Bloom strength (default 0.10).\n");
@@ -452,6 +456,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
             options.gpuVolumeBake = false;
             continue;
         }
+        if (std::strcmp(arg, "--no-gpu-particles") == 0) {
+            options.gpuParticles = false;
+            continue;
+        }
         std::fprintf(stderr, "Unknown option: %s\n", arg);
         return false;
     }
@@ -701,6 +709,27 @@ int main(int argc, char** argv) {
         ex::LogWarn("GPU volume bake unavailable; using the CPU baker.");
     }
 
+    ex::gfx::GpuParticleSystem gpuParticles;
+    const int particleCapacity =
+        std::clamp(options.particleBudget, 1024, 200000);
+    ex::gfx::GpuParticleSystem::ShaderSource particleApply{
+        kParticlesCSApply, kParticlesCSApplySize};
+    ex::gfx::GpuParticleSystem::ShaderSource particleReset{
+        kParticlesCSReset, kParticlesCSResetSize};
+    ex::gfx::GpuParticleSystem::ShaderSource particleIntegrate{
+        kParticlesCSIntegrate, kParticlesCSIntegrateSize};
+    ex::gfx::GpuParticleSystem::ShaderSource particleFinalize{
+        kParticlesCSFinalize, kParticlesCSFinalizeSize};
+    bool gpuParticlesReady =
+        options.gpuParticles &&
+        device->GetBackend() == ex::rhi::Backend::Vulkan &&
+        gpuParticles.Initialize(device.get(), particleCapacity, particleApply,
+                                particleReset, particleIntegrate,
+                                particleFinalize);
+    if (!gpuParticlesReady) {
+        ex::LogWarn("GPU particles unavailable; using the CPU particle path.");
+    }
+
     ex::core::ThreadPool pool;
     ex::sim::SimulationSettings simulationSettings{};
     simulationSettings.chargeMassKg =
@@ -708,7 +737,7 @@ int main(int argc, char** argv) {
     simulationSettings.heightOfBurstM =
         options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 0.4;
     simulationSettings.mode = ex::sim::SimulationMode::ReducedOrder;
-    simulationSettings.gpuParticles = false;
+    simulationSettings.gpuParticles = gpuParticlesReady;
     simulationSettings.gpuVolumeBake = gpuVolumeReady;
     simulationSettings.timeScale = options.timeScale;
     simulationSettings.fuseSeconds =
@@ -762,6 +791,12 @@ int main(int argc, char** argv) {
         ex::LogError("Could not initialize the reduced-order preview.");
         return 1;
     }
+    if (gpuParticlesReady) {
+        preview.SetGpuParticles(gpuParticles.AdditiveBuffer(),
+                                gpuParticles.AlphaBuffer(),
+                                gpuParticles.FireBuffer(),
+                                gpuParticles.IndirectBuffer());
+    }
     ex::LogInfo("Linux app ready: %dx%d, %s", device->Width(),
                 device->Height(), options.headless ? "offscreen" : "windowed");
 
@@ -772,6 +807,9 @@ int main(int argc, char** argv) {
         while (simulation.Time() + 1e-9 < targetTime && guard++ < 200000) {
             simulation.StepFixed(
                 std::min(step, targetTime - simulation.Time()));
+            if (gpuParticlesReady) {
+                gpuParticles.Update(simulation.Particles());
+            }
         }
         simulation.Volume().WaitForIdle();
         simulation.Volume().Poll();
@@ -823,6 +861,9 @@ int main(int argc, char** argv) {
             const float dt = float(std::clamp(now - lastTime, 0.0, 0.05));
             lastTime = now;
             simulation.Update(dt);
+            if (gpuParticlesReady) {
+                gpuParticles.Update(simulation.Particles());
+            }
             if (gpuVolumeReady) {
                 ex::sim::VolumeBakeRequest request;
                 if (simulation.Volume().TakeGpuRequest(request)) {

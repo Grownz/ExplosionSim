@@ -682,6 +682,29 @@ public:
         }
     }
 
+    void DrawInstancedIndirect(rhi::Buffer* arguments,
+                               uint64_t offset) override {
+        if (!device_ || !device_->frameActive_ || !device_->boundPipeline_ ||
+            !arguments) {
+            return;
+        }
+        auto* impl = dynamic_cast<BufferImpl*>(arguments);
+        if (!impl) {
+            return;
+        }
+        vkCmdBindPipeline(device_->commandBuffer_,
+                          VK_PIPELINE_BIND_POINT_GRAPHICS,
+                          device_->boundPipeline_);
+        if (device_->boundDescriptorSet_) {
+            vkCmdBindDescriptorSets(device_->commandBuffer_,
+                                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                    device_->boundPipelineLayout_, 0, 1,
+                                    &device_->boundDescriptorSet_, 0, nullptr);
+        }
+        vkCmdDrawIndirect(device_->commandBuffer_, impl->Handle(), offset, 1,
+                          0);
+    }
+
     void BeginCompute() override {
         if (!device_ || device_->frameActive_ || computeActive_) {
             return;
@@ -728,6 +751,21 @@ public:
                                     &device_->boundDescriptorSet_, 0, nullptr);
         }
         vkCmdDispatch(device_->commandBuffer_, x, y, z);
+    }
+
+    void ComputeBarrier() override {
+        if (!device_ || !computeActive_) {
+            return;
+        }
+        VkMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+        barrier.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask =
+            VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        vkCmdPipelineBarrier(device_->commandBuffer_,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                             VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1,
+                             &barrier, 0, nullptr, 0, nullptr);
     }
 
     void TransitionTexture(rhi::Texture* texture,

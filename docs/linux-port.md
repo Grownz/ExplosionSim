@@ -4,10 +4,9 @@ Status: **M0-M3 done, M4 started.** The portable simulation core builds and
 passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The backend-neutral
 RHI interfaces, D3D11 and Vulkan backends, `SceneRenderer`, command lists,
 compute pipelines and the native Linux app are in place. The app drives
-`sim::Simulation`, loads the Windows settings keys, uploads the GPU volume bake
-and the additive/fire/alpha particle batches, renders Voronoi chunks and runs
-the reduced-order chain through the RHI. The Euler solver and GPU particle
-integration are next.
+`sim::Simulation`, loads the Windows settings keys, uses the GPU volume bake
+and GPU particle integration (with CPU fallbacks), renders Voronoi chunks and
+runs the reduced-order chain through the RHI. The Euler solver is next.
 
 M2 now has an SDL3 window layer, a Vulkan 1.2 device with an offscreen target,
 swapchain, clear, present and readback (`vulkan_smoke`), and the native
@@ -266,10 +265,11 @@ Windows and Linux captures with a tolerance.
 
 ### M4 - High-fidelity solver and GPU particles on Vulkan (25-40 days)
 
-Status: **started.** The RHI now has compute pipelines, dispatches and storage-image
-transitions, and the analytic volume bake runs on the GPU in `explosion_linux`
-(`--no-gpu-volume-bake` keeps the CPU fallback). The Euler solver, GPU particle
-integration and indirect draws are next.
+Status: **in progress.** The RHI now has compute pipelines, dispatches, storage
+buffers/images, indirect draws and compute barriers. The analytic volume bake
+and the GPU particle spawn/reset/integrate/finalize path run in
+`explosion_linux` (`--no-gpu-volume-bake` and `--no-gpu-particles` keep the CPU
+fallbacks). The Euler solver is next.
 
 - Port `GpuEulerSolver`: state textures, sweeps, reduce/rescale, light volume, render
   volume, timestamp queries.

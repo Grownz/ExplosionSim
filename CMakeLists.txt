@@ -296,6 +296,10 @@ if(EXPLOSION_BUILD_VULKAN_SMOKE AND TARGET explosion_vulkan)
             particles.hlsl:PSAdditive:ps_6_0
             particles.hlsl:PSFire:ps_6_0
             particles.hlsl:PSAlpha:ps_6_0
+            particles_gpu.hlsl:CSApplySpawns:cs_6_0
+            particles_gpu.hlsl:CSReset:cs_6_0
+            particles_gpu.hlsl:CSIntegrate:cs_6_0
+            particles_gpu.hlsl:CSFinalize:cs_6_0
             volume_bake.hlsl:CSBake:cs_6_0)
         file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/spirv")
         set(EXPLOSION_SPIRV_OUTPUTS)
@@ -335,7 +339,8 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
     add_executable(explosion_linux
         src/app/LinuxApp.cpp
         src/app/LinuxPreview.cpp
-        src/gfx/GpuVolumeBaker.cpp)
+        src/gfx/GpuVolumeBaker.cpp
+        src/gfx/GpuParticleSystem.cpp)
     target_include_directories(explosion_linux PRIVATE
         src
         ${CMAKE_BINARY_DIR}/generated

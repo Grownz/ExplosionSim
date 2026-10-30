@@ -340,12 +340,16 @@ public:
                                       uint32_t firstIndex = 0,
                                       int32_t baseVertex = 0,
                                       uint32_t firstInstance = 0) = 0;
+    virtual void DrawInstancedIndirect(Buffer* arguments,
+                                       uint64_t offset = 0) = 0;
 
     // Compute pass. BeginCompute/EndCompute bracket a dispatch sequence; on
     // D3D11 they are no-ops because the immediate context records directly.
     virtual void BeginCompute() = 0;
     virtual void EndCompute() = 0;
     virtual void Dispatch(uint32_t x, uint32_t y, uint32_t z) = 0;
+    // Global compute-to-compute memory dependency between dispatches.
+    virtual void ComputeBarrier() = 0;
     // Transitions a storage image between general and shader-read layouts.
     virtual void TransitionTexture(Texture* texture, TextureState state) = 0;
 

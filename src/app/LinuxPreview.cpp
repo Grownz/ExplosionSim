@@ -215,6 +215,13 @@ void LinuxPreview::Shutdown() {
     particleFirePipeline_.reset();
     particleFirePS_.reset();
     particleFireBuffer_.reset();
+    particleGpuFireSet_.reset();
+    particleGpuAlphaSet_.reset();
+    particleGpuAdditiveSet_.reset();
+    gpuParticleIndirect_ = nullptr;
+    gpuParticleFire_ = nullptr;
+    gpuParticleAlpha_ = nullptr;
+    gpuParticleAdditive_ = nullptr;
     volumeSet_.reset();
     volumePipeline_.reset();
     volumePS_.reset();
@@ -1317,6 +1324,36 @@ void LinuxPreview::SetGpuVolume(ex::rhi::Texture* texture,
     }
 }
 
+void LinuxPreview::SetGpuParticles(ex::rhi::Buffer* additive,
+                                   ex::rhi::Buffer* alpha,
+                                   ex::rhi::Buffer* fire,
+                                   ex::rhi::Buffer* indirect) {
+    if (!additive || !alpha || !fire || !indirect) {
+        return;
+    }
+    gpuParticleAdditive_ = additive;
+    gpuParticleAlpha_ = alpha;
+    gpuParticleFire_ = fire;
+    gpuParticleIndirect_ = indirect;
+    auto makeSet = [&](ex::rhi::Pipeline* pipeline, ex::rhi::Buffer* buffer) {
+        if (!pipeline) {
+            return std::unique_ptr<ex::rhi::DescriptorSet>();
+        }
+        auto set = device_->CreateDescriptorSet(pipeline);
+        if (set) {
+            set->SetBuffer(0, frameConstants_.get(), 0,
+                           frameConstants_->Size());
+            set->SetBuffer(8, buffer, 0, buffer->Size());
+            set->SetImage(9, depthTarget_.get());
+            set->SetSampler(16, volumeSampler_.get());
+        }
+        return set;
+    };
+    particleGpuAdditiveSet_ = makeSet(particlePipeline_.get(), additive);
+    particleGpuAlphaSet_ = makeSet(particleAlphaPipeline_.get(), alpha);
+    particleGpuFireSet_ = makeSet(particleFirePipeline_.get(), fire);
+}
+
 bool LinuxPreview::UploadVolume(const ex::sim::VolumeFrame& frame) {
     if (!device_ || frame.empty() || !frame.halfFloat ||
         frame.bytesPerVoxel != 8) {
@@ -1621,15 +1658,17 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
             simulation.Volume().MarkUploaded(volume.version);
         }
     }
-    UploadParticleBatch(particleInstanceBuffer_, particleCapacity_,
-                        particleSet_.get(), particleCount_,
-                        simulation.Particles().AdditiveBatch());
-    UploadParticleBatch(particleFireBuffer_, particleFireCapacity_,
-                        particleFireSet_.get(), particleFireCount_,
-                        simulation.Particles().FireBatch());
-    UploadParticleBatch(particleAlphaBuffer_, particleAlphaCapacity_,
-                        particleAlphaSet_.get(), particleAlphaCount_,
-                        simulation.Particles().AlphaBatch());
+    if (!gpuParticleIndirect_) {
+        UploadParticleBatch(particleInstanceBuffer_, particleCapacity_,
+                            particleSet_.get(), particleCount_,
+                            simulation.Particles().AdditiveBatch());
+        UploadParticleBatch(particleFireBuffer_, particleFireCapacity_,
+                            particleFireSet_.get(), particleFireCount_,
+                            simulation.Particles().FireBatch());
+        UploadParticleBatch(particleAlphaBuffer_, particleAlphaCapacity_,
+                            particleAlphaSet_.get(), particleAlphaCount_,
+                            simulation.Particles().AlphaBatch());
+    }
     UpdateFrameConstants(simulation, camera, width, height);
 
     const float clear[4] = {0.02f, 0.02f, 0.03f, 1.0f};
@@ -1688,32 +1727,57 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         commandList_->Draw(3);
         commandList_->EndRenderPass();
     }
-    if (settings_.enableParticles && particlePipeline_ && particleSet_ &&
-        particleCount_ > 0) {
-        commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
-                                      false, false, clear);
-        commandList_->BindPipeline(particlePipeline_.get());
-        commandList_->BindDescriptorSet(particleSet_.get());
-        commandList_->DrawInstanced(6, particleCount_);
-        commandList_->EndRenderPass();
-    }
-    if (settings_.enableParticles && particleFirePipeline_ &&
-        particleFireSet_ && particleFireCount_ > 0) {
-        commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
-                                      false, false, clear);
-        commandList_->BindPipeline(particleFirePipeline_.get());
-        commandList_->BindDescriptorSet(particleFireSet_.get());
-        commandList_->DrawInstanced(6, particleFireCount_);
-        commandList_->EndRenderPass();
-    }
-    if (settings_.enableParticles && particleAlphaPipeline_ &&
-        particleAlphaSet_ && particleAlphaCount_ > 0) {
-        commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
-                                      false, false, clear);
-        commandList_->BindPipeline(particleAlphaPipeline_.get());
-        commandList_->BindDescriptorSet(particleAlphaSet_.get());
-        commandList_->DrawInstanced(6, particleAlphaCount_);
-        commandList_->EndRenderPass();
+    if (settings_.enableParticles && gpuParticleIndirect_ &&
+        particleGpuAdditiveSet_ && particleGpuAlphaSet_ &&
+        particleGpuFireSet_) {
+        auto drawIndirect = [&](ex::rhi::Pipeline* pipeline,
+                                ex::rhi::DescriptorSet* set,
+                                uint64_t offset) {
+            if (!pipeline || !set) {
+                return;
+            }
+            commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
+                                          false, false, clear);
+            commandList_->BindPipeline(pipeline);
+            commandList_->BindDescriptorSet(set);
+            commandList_->DrawInstancedIndirect(gpuParticleIndirect_, offset);
+            commandList_->EndRenderPass();
+        };
+        drawIndirect(particlePipeline_.get(), particleGpuAdditiveSet_.get(), 0);
+        drawIndirect(particleFirePipeline_.get(), particleGpuFireSet_.get(), 32);
+        drawIndirect(particleAlphaPipeline_.get(), particleGpuAlphaSet_.get(),
+                     16);
+    } else {
+        if (settings_.enableParticles && particlePipeline_ && particleSet_ &&
+            particleCount_ > 0) {
+            commandList_->BeginRenderPass(hdrTarget_.get(),
+                                          depthTarget_.get(), false, false,
+                                          clear);
+            commandList_->BindPipeline(particlePipeline_.get());
+            commandList_->BindDescriptorSet(particleSet_.get());
+            commandList_->DrawInstanced(6, particleCount_);
+            commandList_->EndRenderPass();
+        }
+        if (settings_.enableParticles && particleFirePipeline_ &&
+            particleFireSet_ && particleFireCount_ > 0) {
+            commandList_->BeginRenderPass(hdrTarget_.get(),
+                                          depthTarget_.get(), false, false,
+                                          clear);
+            commandList_->BindPipeline(particleFirePipeline_.get());
+            commandList_->BindDescriptorSet(particleFireSet_.get());
+            commandList_->DrawInstanced(6, particleFireCount_);
+            commandList_->EndRenderPass();
+        }
+        if (settings_.enableParticles && particleAlphaPipeline_ &&
+            particleAlphaSet_ && particleAlphaCount_ > 0) {
+            commandList_->BeginRenderPass(hdrTarget_.get(),
+                                          depthTarget_.get(), false, false,
+                                          clear);
+            commandList_->BindPipeline(particleAlphaPipeline_.get());
+            commandList_->BindDescriptorSet(particleAlphaSet_.get());
+            commandList_->DrawInstanced(6, particleAlphaCount_);
+            commandList_->EndRenderPass();
+        }
     }
     if (shockPipeline_ && shockSet_) {
         commandList_->BeginRenderPass(shockTarget_.get(), depthTarget_.get(),
