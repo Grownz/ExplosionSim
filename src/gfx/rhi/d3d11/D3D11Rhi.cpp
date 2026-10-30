@@ -3,7 +3,9 @@
 #include "core/Log.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
+#include <thread>
 
 namespace ex::rhi::d3d11 {
 
@@ -315,6 +317,96 @@ private:
 
 // D3D11 has no deferred command lists; this wrapper drives the immediate
 // context and is the backend-neutral seam the renderer passes target.
+class QueryPoolImpl final : public rhi::QueryPool {
+public:
+    QueryPoolImpl(ID3D11DeviceContext* context, uint32_t count)
+        : context_(context) {
+        if (!context_) {
+            return;
+        }
+        context_->GetDevice(device_.GetAddressOf());
+        if (!device_) {
+            return;
+        }
+        D3D11_QUERY_DESC timestampDesc{};
+        timestampDesc.Query = D3D11_QUERY_TIMESTAMP;
+        timestamps_.resize(count);
+        for (auto& query : timestamps_) {
+            if (FAILED(device_->CreateQuery(&timestampDesc,
+                                            query.GetAddressOf()))) {
+                timestamps_.clear();
+                return;
+            }
+        }
+        D3D11_QUERY_DESC disjointDesc{};
+        disjointDesc.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+        device_->CreateQuery(&disjointDesc, disjoint_.GetAddressOf());
+    }
+    ~QueryPoolImpl() override = default;
+
+    uint32_t Count() const override { return uint32_t(timestamps_.size()); }
+
+    void Reset() override {
+        if (context_ && disjoint_) {
+            context_->Begin(disjoint_.Get());
+            disjointOpen_ = true;
+        }
+    }
+
+    void Write(uint32_t index) {
+        if (context_ && index < timestamps_.size()) {
+            context_->End(timestamps_[index].Get());
+        }
+    }
+
+    bool Resolve(uint64_t* values, uint32_t count) override {
+        if (!context_ || !disjoint_ || !disjointOpen_ || !values ||
+            count == 0 || count > timestamps_.size()) {
+            return false;
+        }
+        context_->End(disjoint_.Get());
+        disjointOpen_ = false;
+
+        D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjoint{};
+        if (!ReadBlocking(disjoint_.Get(), &disjoint, sizeof(disjoint)) ||
+            disjoint.Disjoint || disjoint.Frequency == 0) {
+            return false;
+        }
+        const double toNs = 1.0e9 / double(disjoint.Frequency);
+        for (uint32_t i = 0; i < count; ++i) {
+            UINT64 stamp = 0;
+            if (!ReadBlocking(timestamps_[i].Get(), &stamp, sizeof(stamp))) {
+                return false;
+            }
+            values[i] = uint64_t(double(stamp) * toNs);
+        }
+        return true;
+    }
+
+private:
+    template <typename T>
+    bool ReadBlocking(ID3D11Query* query, T* data, size_t size) {
+        for (int attempt = 0; attempt < 10000; ++attempt) {
+            const HRESULT result =
+                context_->GetData(query, data, UINT(size), 0);
+            if (result == S_OK) {
+                return true;
+            }
+            if (result != S_FALSE) {
+                return false;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return false;
+    }
+
+    ComPtr<ID3D11Device> device_;
+    ComPtr<ID3D11DeviceContext> context_;
+    std::vector<ComPtr<ID3D11Query>> timestamps_;
+    ComPtr<ID3D11Query> disjoint_;
+    bool disjointOpen_ = false;
+};
+
 class CommandListImpl final : public rhi::CommandList {
 public:
     CommandListImpl(rhi::Device* device, ID3D11DeviceContext* context)
@@ -489,6 +581,12 @@ public:
     }
     void ComputeBarrier() override {}
     void TransitionTexture(rhi::Texture*, rhi::TextureState) override {}
+    void WriteTimestamp(rhi::QueryPool* pool, uint32_t index) override {
+        auto* impl = dynamic_cast<QueryPoolImpl*>(pool);
+        if (impl) {
+            impl->Write(index);
+        }
+    }
 
     void* NativeHandle() const override { return context_; }
 
@@ -910,6 +1008,17 @@ std::unique_ptr<rhi::CommandList> Device::CreateCommandList() {
         return nullptr;
     }
     return std::make_unique<CommandListImpl>(this, context_.Get());
+}
+
+std::unique_ptr<rhi::QueryPool> Device::CreateQueryPool(uint32_t count) {
+    if (!context_ || count == 0) {
+        return nullptr;
+    }
+    auto pool = std::make_unique<QueryPoolImpl>(context_.Get(), count);
+    if (!pool->Count()) {
+        return nullptr;
+    }
+    return pool;
 }
 
 std::unique_ptr<rhi::Buffer> Device::CreateBuffer(const BufferDesc& desc) {

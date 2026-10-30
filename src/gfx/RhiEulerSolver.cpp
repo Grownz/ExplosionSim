@@ -169,6 +169,8 @@ bool RhiEulerSolver::CreatePipeline(
 
 void RhiEulerSolver::Shutdown() {
     ReleaseVolumeResources();
+    timingPool_.reset();
+    timingLabels_.clear();
     reduceBuffer_.reset();
     linearSampler_.reset();
     constantsBuffer_.reset();
@@ -411,7 +413,9 @@ void RhiEulerSolver::DispatchSweep(int direction, bool applySource) {
                     : sweepSets_[direction][stateIndex_].get();
     commandList_->BindPipeline(pipeline);
     commandList_->BindDescriptorSet(set);
+    BeginPass(SolverPass(int(SolverPass::SweepX) + direction));
     DispatchGrid();
+    EndPass();
     commandList_->ComputeBarrier();
     stateIndex_ = 1 - stateIndex_;
 }
@@ -419,7 +423,9 @@ void RhiEulerSolver::DispatchSweep(int direction, bool applySource) {
 void RhiEulerSolver::DispatchReduce() {
     commandList_->BindPipeline(reducePipeline_.get());
     commandList_->BindDescriptorSet(reduceSets_[stateIndex_].get());
+    BeginPass(SolverPass::Reduce);
     DispatchGrid();
+    EndPass();
     commandList_->ComputeBarrier();
     reducePending_ = true;
 }
@@ -428,8 +434,91 @@ void RhiEulerSolver::DispatchRender() {
     UpdateConstants(0, 0.0f);
     commandList_->BindPipeline(renderPipeline_.get());
     commandList_->BindDescriptorSet(renderSets_[stateIndex_].get());
+    BeginPass(SolverPass::Render);
     DispatchGrid();
+    EndPass();
     commandList_->ComputeBarrier();
+}
+
+void RhiEulerSolver::BeginPass(SolverPass pass) {
+    if (!timingActive_ || !timingPool_ ||
+        timingIndex_ + 1 >= timingQueryLimit_) {
+        return;
+    }
+    timingLabels_.push_back(uint8_t(pass));
+    commandList_->WriteTimestamp(timingPool_.get(), uint32_t(timingIndex_++));
+    timingOpenPass_ = int(timingLabels_.size()) - 1;
+}
+
+void RhiEulerSolver::EndPass() {
+    if (!timingActive_ || !timingPool_ || timingOpenPass_ < 0 ||
+        timingIndex_ >= timingQueryLimit_) {
+        return;
+    }
+    commandList_->WriteTimestamp(timingPool_.get(), uint32_t(timingIndex_++));
+    timingOpenPass_ = -1;
+}
+
+bool RhiEulerSolver::BeginTiming(int maxPasses) {
+    if (!initialized_ || maxPasses <= 0) {
+        return false;
+    }
+    EndTiming();
+
+    const int queryCount = maxPasses * 2;
+    if (!timingPool_ || timingPool_->Count() < uint32_t(queryCount)) {
+        timingPool_ = device_->CreateQueryPool(uint32_t(queryCount));
+        if (!timingPool_) {
+            LogWarn("Solver timing: GPU timestamp queries are unavailable.");
+            return false;
+        }
+    }
+    timingPool_->Reset();
+    timingLabels_.clear();
+    timingLabels_.reserve(size_t(maxPasses));
+    timingQueryLimit_ = queryCount;
+    timingIndex_ = 0;
+    timingOpenPass_ = -1;
+    timingActive_ = true;
+    return true;
+}
+
+void RhiEulerSolver::EndTiming() {
+    timingActive_ = false;
+    timingOpenPass_ = -1;
+}
+
+SolverTiming RhiEulerSolver::ResolveTiming() {
+    SolverTiming timing;
+    EndTiming();
+    if (!timingPool_ || timingIndex_ < 2 || timingLabels_.empty()) {
+        return timing;
+    }
+
+    // The only blocking readback in the benchmark; it happens once after all
+    // steps have been submitted.
+    std::vector<uint64_t> stamps;
+    stamps.resize(size_t(timingIndex_));
+    if (!timingPool_->Resolve(stamps.data(), uint32_t(stamps.size()))) {
+        LogWarn("Solver timing: timestamp readback failed.");
+        return timing;
+    }
+
+    constexpr double kNsToMs = 1.0e-6;
+    timing.valid = true;
+    timing.totalMs =
+        double(stamps[size_t(timingIndex_) - 1] - stamps[0]) * kNsToMs;
+    for (size_t pass = 0; pass < timingLabels_.size(); ++pass) {
+        const size_t index = pass * 2;
+        if (index + 1 >= stamps.size()) {
+            break;
+        }
+        const int label = timingLabels_[pass];
+        timing.passMs[label] +=
+            double(stamps[index + 1] - stamps[index]) * kNsToMs;
+        ++timing.passCount[label];
+    }
+    return timing;
 }
 
 bool RhiEulerSolver::Reset(const EulerConfig& config) {

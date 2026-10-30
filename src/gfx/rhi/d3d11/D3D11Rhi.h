@@ -40,6 +40,7 @@ public:
         return nullptr;
     }
     std::unique_ptr<CommandList> CreateCommandList() override;
+    std::unique_ptr<QueryPool> CreateQueryPool(uint32_t count) override;
     Texture* DepthTarget() override { return depthTarget_.get(); }
     void BeginFrame(float r, float g, float b, float a) override;
     void EndFrame(bool vsync) override;

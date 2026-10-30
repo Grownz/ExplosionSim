@@ -295,6 +295,20 @@ public:
     virtual void SetSampler(uint32_t binding, Sampler* sampler) = 0;
 };
 
+// A set of GPU timestamp queries. Values returned by Resolve are nanoseconds
+// elapsed at each recorded index, so callers can subtract pairs for pass
+// timings. Reset starts a new timing window; it must not be called while a
+// previous window is still in flight.
+class QueryPool {
+public:
+    virtual ~QueryPool() = default;
+    virtual uint32_t Count() const = 0;
+    virtual void Reset() = 0;
+    // Blocks until every recorded timestamp is available. Returns false when
+    // the backend has no timestamp support or the window was disjoint.
+    virtual bool Resolve(uint64_t* values, uint32_t count) = 0;
+};
+
 // Records rendering commands. On D3D11 this wraps the immediate device
 // context; on Vulkan it records into the device's active command buffer. The
 // render pass API is the backend-neutral replacement for OMSetRenderTargets /
@@ -354,6 +368,9 @@ public:
     virtual void ComputeBarrier() = 0;
     // Transitions a storage image between general and shader-read layouts.
     virtual void TransitionTexture(Texture* texture, TextureState state) = 0;
+    // Records a GPU timestamp into `pool` at `index`. Must be called while a
+    // compute pass or render pass is active.
+    virtual void WriteTimestamp(QueryPool* pool, uint32_t index) = 0;
 
     virtual void* NativeHandle() const = 0;
 };
@@ -373,6 +390,9 @@ public:
     virtual std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) = 0;
     virtual std::unique_ptr<DescriptorSet> CreateDescriptorSet(Pipeline* pipeline) = 0;
     virtual std::unique_ptr<CommandList> CreateCommandList() = 0;
+    // Creates a GPU timestamp query pool. Returns null when the backend or
+    // device does not support timestamps.
+    virtual std::unique_ptr<QueryPool> CreateQueryPool(uint32_t count) = 0;
 
     // Shared depth target for the current swapchain/offscreen extent. Null on
     // backends that do not expose one yet.

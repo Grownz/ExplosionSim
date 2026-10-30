@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace ex::gfx {
 
@@ -59,11 +60,12 @@ public:
     // both modes share the same code path.
     void SetDeterministic(bool deterministic) { deterministic_ = deterministic; }
 
-    // GPU timestamp timing is not exposed by the RHI yet; the solver benchmark
-    // measures the submitted work with the CPU clock instead.
-    bool BeginTiming(int) { return false; }
-    void EndTiming() {}
-    SolverTiming ResolveTiming() { return SolverTiming{}; }
+    // GPU timestamp timing for the solver-only benchmark. BeginTiming
+    // allocates queries for at most `maxPasses` passes, ResolveTiming blocks
+    // once to read the results. Outside the benchmark no queries are created.
+    bool BeginTiming(int maxPasses);
+    void EndTiming();
+    SolverTiming ResolveTiming();
 
     bool PollReduction();
     bool WaitForReduction();
@@ -125,6 +127,8 @@ private:
     void DispatchReduce();
     void DispatchRender();
     void ConsumeStaging();
+    void BeginPass(SolverPass pass);
+    void EndPass();
 
     static constexpr float kBoundScale = 512.0f; // must match euler_reduce.hlsl
     static constexpr int kMaxBatchSteps = 8;
@@ -175,6 +179,14 @@ private:
 
     bool reducePending_ = false;
     bool deterministic_ = false;
+
+    // GPU timestamp pool, allocated lazily by BeginTiming.
+    std::unique_ptr<ex::rhi::QueryPool> timingPool_;
+    std::vector<uint8_t> timingLabels_;
+    int timingQueryLimit_ = 0;
+    int timingIndex_ = 0;
+    int timingOpenPass_ = -1;
+    bool timingActive_ = false;
 
     EulerConfig config_{};
     sim::VolumeBounds bounds_{};

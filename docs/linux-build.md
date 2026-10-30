@@ -138,6 +138,19 @@ pixel limit. The wider window than the reduced-order capture covers the
 remaining preview-renderer gap (the solver volume itself matches in position
 and density).
 
+`--solver-benchmark` runs the solver for a fixed number of steps and reports
+the GPU timestamps per pass, mirroring the Windows benchmark:
+
+```sh
+./build/explosion_linux --settings tools/capture_settings.ini \
+  --solver-benchmark --solver-resolution 32 --no-solver-auto-scale \
+  --solver-step-count 64 --solver-steps 16
+```
+
+The output includes the GPU total, the three sweeps, the reduction and the
+render-volume pass. Timestamps are read once after all steps are submitted, so
+the benchmark itself adds no per-step synchronisation.
+
 For a capture comparison, render the same settings on both platforms and run:
 
 ```sh

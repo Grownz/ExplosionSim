@@ -35,6 +35,7 @@ public:
     std::unique_ptr<Pipeline> CreatePipeline(const PipelineDesc& desc) override;
     std::unique_ptr<DescriptorSet> CreateDescriptorSet(Pipeline* pipeline) override;
     std::unique_ptr<CommandList> CreateCommandList() override;
+    std::unique_ptr<QueryPool> CreateQueryPool(uint32_t count) override;
     Texture* DepthTarget() override { return nullptr; }
     void BindPipeline(Pipeline* pipeline) override;
     void BindDescriptorSet(DescriptorSet* set, uint32_t index = 0) override;
@@ -161,6 +162,10 @@ private:
     bool initialized_ = false;
     bool frameActive_ = false;
     bool samplerAnisotropy_ = false;
+    // Nanoseconds per timestamp tick and the number of valid timestamp bits
+    // for the selected queue family; 0 disables CreateQueryPool.
+    float timestampPeriod_ = 1.0f;
+    uint32_t timestampValidBits_ = 0;
 };
 
 } // namespace ex::rhi::vulkan

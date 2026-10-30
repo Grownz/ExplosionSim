@@ -103,6 +103,15 @@ jobs:
           name: ExplosionSim-linux-hf-screenshot
           path: linux_hf_capture.png
 
+      - name: Solver benchmark (lavapipe, GPU timestamps)
+        run: |
+          ./build/explosion_linux --settings tools/capture_settings.ini \
+            --solver-benchmark --solver-resolution 32 \
+            --no-solver-auto-scale --solver-step-count 32 --solver-steps 16 \
+            2>&1 | tee /tmp/solver_benchmark.log
+          grep -q "GPU total" /tmp/solver_benchmark.log
+          grep -q "sweeps" /tmp/solver_benchmark.log
+
   windows:
     runs-on: windows-2022
     steps:

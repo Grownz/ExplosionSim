@@ -581,6 +581,57 @@ private:
     std::vector<DescriptorBinding> bindings_;
 };
 
+class QueryPoolImpl final : public rhi::QueryPool {
+public:
+    QueryPoolImpl(VkDevice device, VkQueryPool pool, uint32_t count,
+                  float periodNs, uint32_t validBits)
+        : device_(device), pool_(pool), count_(count), periodNs_(periodNs),
+          validBits_(validBits) {}
+    ~QueryPoolImpl() override {
+        if (pool_) {
+            vkDestroyQueryPool(device_, pool_, nullptr);
+        }
+    }
+
+    uint32_t Count() const override { return count_; }
+
+    void Reset() override {
+        if (pool_) {
+            vkResetQueryPool(device_, pool_, 0, count_);
+        }
+    }
+
+    bool Resolve(uint64_t* values, uint32_t count) override {
+        if (!pool_ || !values || count == 0 || count > count_) {
+            return false;
+        }
+        std::vector<uint64_t> raw(count);
+        const VkResult result = vkGetQueryPoolResults(
+            device_, pool_, 0, count, count * sizeof(uint64_t), raw.data(),
+            sizeof(uint64_t),
+            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+        if (result != VK_SUCCESS) {
+            return false;
+        }
+        const uint64_t mask = validBits_ >= 64
+                                  ? ~uint64_t(0)
+                                  : ((uint64_t(1) << validBits_) - 1);
+        for (uint32_t i = 0; i < count; ++i) {
+            values[i] = uint64_t(double(raw[i] & mask) * double(periodNs_));
+        }
+        return true;
+    }
+
+    VkQueryPool Handle() const { return pool_; }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkQueryPool pool_ = VK_NULL_HANDLE;
+    uint32_t count_ = 0;
+    float periodNs_ = 1.0f;
+    uint32_t validBits_ = 64;
+};
+
 bool CreateHostVisibleBuffer(VkPhysicalDevice physical, VkDevice device,
                              VkDeviceSize size, VkBufferUsageFlags usage,
                              VkBuffer& buffer, VkDeviceMemory& memory) {
@@ -788,8 +839,7 @@ public:
     }
 
     void TransitionTexture(rhi::Texture* texture,
-                           rhi::TextureState state) override {
-        if (!device_ || !computeActive_ || !texture) {
+                           rhi::TextureState state) override {        if (!device_ || !computeActive_ || !texture) {
             return;
         }
         auto* impl = dynamic_cast<TextureImpl*>(texture);
@@ -839,6 +889,19 @@ public:
                    VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
             0, 0, nullptr, 0, nullptr, 1, &barrier);
         impl->SetLayout(newLayout);
+    }
+
+    void WriteTimestamp(rhi::QueryPool* pool, uint32_t index) override {
+        if (!device_ || (!computeActive_ && !device_->frameActive_) || !pool) {
+            return;
+        }
+        auto* impl = dynamic_cast<QueryPoolImpl*>(pool);
+        if (!impl || index >= impl->Count()) {
+            return;
+        }
+        vkCmdWriteTimestamp(device_->commandBuffer_,
+                            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                            impl->Handle(), index);
     }
 
     void* NativeHandle() const override {
@@ -1085,6 +1148,8 @@ bool Device::PickPhysicalDevice() {
             physicalDevice_ = candidate;
             queueFamily_ = graphicsFamily;
             adapterName_ = properties.deviceName;
+            timestampPeriod_ = properties.limits.timestampPeriod;
+            timestampValidBits_ = families[graphicsFamily].timestampValidBits;
 
             VkPhysicalDeviceMemoryProperties memory{};
             vkGetPhysicalDeviceMemoryProperties(candidate, &memory);
@@ -1972,6 +2037,23 @@ void Device::WaitIdle() {
 
 std::unique_ptr<rhi::CommandList> Device::CreateCommandList() {
     return std::make_unique<CommandListImpl>(this);
+}
+
+std::unique_ptr<rhi::QueryPool> Device::CreateQueryPool(uint32_t count) {
+    if (!device_ || count == 0 || timestampValidBits_ == 0) {
+        return nullptr;
+    }
+    VkQueryPoolCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    info.queryType = VK_QUERY_TYPE_TIMESTAMP;
+    info.queryCount = count;
+    VkQueryPool pool = VK_NULL_HANDLE;
+    if (vkCreateQueryPool(device_, &info, nullptr, &pool) != VK_SUCCESS) {
+        return nullptr;
+    }
+    return std::make_unique<QueryPoolImpl>(device_, pool, count,
+                                           timestampPeriod_,
+                                           timestampValidBits_);
 }
 
 bool Device::ExecuteImmediate(

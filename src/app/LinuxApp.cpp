@@ -1125,20 +1125,51 @@ int main(int argc, char** argv) {
         };
         // Warm-up lets the driver/GPU settle before the measured window.
         runSteps(std::min<long long>(steps, std::max(8, stepsPerFrame * 2)));
+        const int frames = int((steps + stepsPerFrame - 1) / stepsPerFrame);
+        const bool timed = highFidelityRuntime.solver.BeginTiming(
+            int(steps * 5 + frames * 3 + 16));
         const auto start = std::chrono::steady_clock::now();
         runSteps(steps);
         const double elapsed = std::chrono::duration<double>(
                                    std::chrono::steady_clock::now() - start)
                                    .count();
+        const ex::gfx::SolverTiming timing =
+            highFidelityRuntime.solver.ResolveTiming();
         ex::LogInfo("Solver benchmark: %d^3, %lld steps in %d-step frames, "
-                    "%.3f s wall (%.3f ms/step, %.1f steps/s), domain half "
-                    "%.2f m, voxel %.1f mm, maxSpeed %.0f m/s",
+                    "domain half %.2f m, voxel %.1f mm, maxSpeed %.0f m/s",
                     highFidelityRuntime.solver.Stats().resolution, steps,
-                    stepsPerFrame, elapsed, elapsed * 1000.0 / double(steps),
-                    double(steps) / std::max(elapsed, 1e-9),
+                    stepsPerFrame,
                     highFidelityRuntime.solver.Stats().domainHalfExtent,
                     highFidelityRuntime.solver.Stats().voxelSize * 1000.0f,
                     highFidelityRuntime.solver.Stats().maxSpeed);
+        if (timing.valid) {
+            const auto passMs = [&timing](ex::gfx::SolverPass pass) {
+                return timing.passMs[int(pass)];
+            };
+            const auto passCount = [&timing](ex::gfx::SolverPass pass) {
+                return timing.passCount[int(pass)];
+            };
+            const double sweepMs = passMs(ex::gfx::SolverPass::SweepX) +
+                                   passMs(ex::gfx::SolverPass::SweepY) +
+                                   passMs(ex::gfx::SolverPass::SweepZ);
+            ex::LogInfo("  GPU total %.2f ms (%.3f ms/step, %.3f ms/frame), "
+                        "wall %.2f ms",
+                        timing.totalMs, timing.totalMs / double(steps),
+                        timing.totalMs / double(frames), elapsed * 1000.0);
+            ex::LogInfo("  sweeps %.2f ms (X %.2f, Y %.2f, Z %.2f), reduce "
+                        "%.2f ms (%d passes), render %.2f ms (%d passes)",
+                        sweepMs, passMs(ex::gfx::SolverPass::SweepX),
+                        passMs(ex::gfx::SolverPass::SweepY),
+                        passMs(ex::gfx::SolverPass::SweepZ),
+                        passMs(ex::gfx::SolverPass::Reduce),
+                        passCount(ex::gfx::SolverPass::Reduce),
+                        passMs(ex::gfx::SolverPass::Render),
+                        passCount(ex::gfx::SolverPass::Render));
+        } else {
+            ex::LogWarn("Solver benchmark: GPU timestamps unavailable "
+                        "(begin=%d); reporting wall time only (%.3f ms/step).",
+                        timed ? 1 : 0, elapsed * 1000.0 / double(steps));
+        }
         return 0;
     }
 

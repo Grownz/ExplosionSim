@@ -267,19 +267,19 @@ Windows and Linux captures with a tolerance.
 ### M4 - High-fidelity solver and GPU particles on Vulkan (25-40 days)
 
 Status: **done.** The RHI has compute pipelines, dispatches, storage
-buffers/images, indirect draws and compute barriers. The analytic volume bake
-and the GPU particle spawn/reset/integrate/finalize path run in
-`explosion_linux` (`--no-gpu-volume-bake` and `--no-gpu-particles` keep the CPU
-fallbacks). `RhiEulerSolver` ports the D3D11 solver to the RHI: state ping-pong
-textures, init/sweep/reduce/render/light/rescale compute passes, the fused
-source terms and the deterministic reduction. The high-fidelity path feeds the
-solver render/light volumes into the preview raymarcher and matches the Windows
-step count, time step and maximum speed at the reference capture. GPU timestamp
-queries are the one remaining parity gap; the RHI does not expose query pools
-yet, so the solver benchmark is CPU-timed on Linux.
+buffers/images, indirect draws, compute barriers and GPU timestamp query pools.
+The analytic volume bake and the GPU particle spawn/reset/integrate/finalize
+path run in `explosion_linux` (`--no-gpu-volume-bake` and `--no-gpu-particles`
+keep the CPU fallbacks). `RhiEulerSolver` ports the D3D11 solver to the RHI:
+state ping-pong textures, init/sweep/reduce/render/light/rescale compute
+passes, the fused source terms and the deterministic reduction. The
+high-fidelity path feeds the solver render/light volumes into the preview
+raymarcher and matches the Windows step count, time step and maximum speed at
+the reference capture. `--solver-benchmark` reports the same per-pass GPU
+timings as the Windows benchmark.
 
 - Port `GpuEulerSolver`: state textures, sweeps, reduce/rescale, light volume, render
-  volume (done; GPU timestamp queries deferred).
+  volume and GPU timestamp queries (done).
 - Port the GPU particle spawn/integrate/finalize passes and indirect draws (done).
 - Port the shock-front and volume shaders to SPIR-V (done).
 - Acceptance: HF mode and solver benchmark run on Linux; solver stats and images match
