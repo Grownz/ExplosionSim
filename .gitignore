@@ -23,6 +23,7 @@ CMakeUserPresets.json
 !docs/screenshots/*.png
 !assets/**/*.png
 !tools/reference/*.png
+!packaging/*.png
 *.log
 *.ppm
 settings.ini
