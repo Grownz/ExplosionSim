@@ -2,12 +2,8 @@ cmake_minimum_required(VERSION 3.21)
 
 project(ExplosionSim
     VERSION 0.10.5
-    DESCRIPTION "Physically based 3D explosion simulation for Windows x64"
+    DESCRIPTION "Physically based 3D explosion simulation"
     LANGUAGES C CXX)
-
-if(NOT WIN32)
-    message(FATAL_ERROR "ExplosionSim targets Windows only.")
-endif()
 
 if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     message(FATAL_ERROR "ExplosionSim requires a 64-bit toolchain.")
@@ -22,46 +18,102 @@ if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Static CRT keeps the produced executable self-contained (no VC++ redistributable).
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 
-option(EXPLOSION_BUILD_TESTS "Build the physics unit tests" ON)
-option(EXPLOSION_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
+option(EXPLOSION_BUILD_TESTS "Build the physics and core tests" ON)
+option(EXPLOSION_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${MSVC})
+option(EXPLOSION_BUILD_APP "Build the graphical application" ${WIN32})
+set(EXPLOSION_RHI "d3d11" CACHE STRING "Graphics backend (d3d11; vulkan is planned)")
+set(EXPLOSION_PLATFORM "win32" CACHE STRING "Platform layer (win32; sdl3 is planned)")
+
+if(EXPLOSION_BUILD_APP AND NOT WIN32)
+    message(STATUS "The Linux application build is not implemented yet; "
+                   "building the portable core and tests only.")
+    set(EXPLOSION_BUILD_APP OFF)
+endif()
+
+if(EXPLOSION_BUILD_APP)
+    if(NOT EXPLOSION_RHI STREQUAL "d3d11")
+        message(FATAL_ERROR "Only the d3d11 RHI backend is implemented on Windows.")
+    endif()
+    if(NOT EXPLOSION_PLATFORM STREQUAL "win32")
+        message(FATAL_ERROR "Only the win32 platform layer is implemented.")
+    endif()
+endif()
+
+# ---------------------------------------------------------------------------
+# Compiler flags
+# ---------------------------------------------------------------------------
+function(ex_target_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra)
+    endif()
+    if(EXPLOSION_WARNINGS_AS_ERRORS)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE /WX)
+        else()
+            target_compile_options(${target} PRIVATE -Werror)
+        endif()
+    endif()
+endfunction()
 
 # ---------------------------------------------------------------------------
 # Generated version metadata
 # ---------------------------------------------------------------------------
 configure_file(cmake/Version.h.in ${CMAKE_BINARY_DIR}/generated/Version.h @ONLY)
-configure_file(cmake/ExplosionSim.rc.in ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc @ONLY)
+if(WIN32)
+    configure_file(cmake/ExplosionSim.rc.in ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc @ONLY)
+endif()
 
 # ---------------------------------------------------------------------------
 # Third-party dependencies
 # ---------------------------------------------------------------------------
 include(FetchContent)
 
-# Dear ImGui ships without a CMakeLists.txt; SOURCE_SUBDIR points to a
-# non-existent folder so FetchContent only downloads it.
-FetchContent_Declare(imgui
-    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5.zip
-    URL_HASH SHA256=15C60AD10E331378CDA381002418F42EA2E98B9C05758EB493B23181BB38CA45
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    SOURCE_SUBDIR cmake/no-subdirectory)
-FetchContent_MakeAvailable(imgui)
+# DirectXMath is vendored so the simulation core can use its types on every
+# platform. A small SAL shim is required outside the Windows SDK.
+add_library(directxmath INTERFACE)
+target_include_directories(directxmath INTERFACE
+    ${CMAKE_SOURCE_DIR}/third_party/directxmath/Inc)
+if(NOT WIN32)
+    target_include_directories(directxmath INTERFACE
+        ${CMAKE_SOURCE_DIR}/third_party/directxmath/compat)
+endif()
+if(NOT MSVC)
+    # DirectXMath uses type-punned SIMD stores that GCC flags under -Wextra.
+    target_compile_options(directxmath INTERFACE -Wno-strict-aliasing)
+endif()
 
-add_library(imgui STATIC
-    ${imgui_SOURCE_DIR}/imgui.cpp
-    ${imgui_SOURCE_DIR}/imgui_draw.cpp
-    ${imgui_SOURCE_DIR}/imgui_tables.cpp
-    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
+if(EXPLOSION_BUILD_APP)
+    # Dear ImGui ships without a CMakeLists.txt; SOURCE_SUBDIR points to a
+    # non-existent folder so FetchContent only downloads it.
+    FetchContent_Declare(imgui
+        URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.5.zip
+        URL_HASH SHA256=15C60AD10E331378CDA381002418F42EA2E98B9C05758EB493B23181BB38CA45
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR cmake/no-subdirectory)
+    FetchContent_MakeAvailable(imgui)
 
-target_include_directories(imgui SYSTEM PUBLIC
-    ${imgui_SOURCE_DIR}
-    ${imgui_SOURCE_DIR}/backends)
+    add_library(imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
 
-target_link_libraries(imgui PUBLIC d3d11 dxgi d3dcompiler)
-target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
-target_compile_options(imgui PRIVATE /W3 /utf-8)
+    target_include_directories(imgui SYSTEM PUBLIC
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends)
+
+    target_link_libraries(imgui PUBLIC d3d11 dxgi d3dcompiler)
+    target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+    target_compile_options(imgui PRIVATE /W3 /utf-8)
+endif()
 
 # Jolt Physics (MIT) provides the rigid-body solver. The Build subdirectory
 # contains the library project; when included through FetchContent it builds
@@ -79,15 +131,17 @@ FetchContent_Declare(jolt
     SOURCE_SUBDIR Build)
 FetchContent_MakeAvailable(jolt)
 
-# nlohmann/json (MIT) parses the GitHub releases API response. It is header-only
-# and only used by the update checker.
-set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
-set(JSON_Install OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(nlohmann_json
-    URL https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.zip
-    URL_HASH SHA256=04022B05D806EB5FF73023C280B68697D12B93E1B7267A0B22A1A39EC7578069
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-FetchContent_MakeAvailable(nlohmann_json)
+if(EXPLOSION_BUILD_APP)
+    # nlohmann/json (MIT) parses the GitHub releases API response. It is
+    # header-only and only used by the update checker.
+    set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+    set(JSON_Install OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(nlohmann_json
+        URL https://github.com/nlohmann/json/archive/refs/tags/v3.11.3.zip
+        URL_HASH SHA256=04022B05D806EB5FF73023C280B68697D12B93E1B7267A0B22A1A39EC7578069
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
 
 # Keep the project standard explicit after adding the third-party subproject.
 set(CMAKE_CXX_STANDARD 20)
@@ -108,131 +162,142 @@ add_library(explosion_core STATIC
     src/core/Random.cpp)
 
 target_include_directories(explosion_core PUBLIC src)
-target_compile_definitions(explosion_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
-target_compile_options(explosion_core PRIVATE /W4 /permissive- /fp:fast /utf-8)
-target_link_libraries(explosion_core PRIVATE Jolt)
-if(EXPLOSION_WARNINGS_AS_ERRORS)
-    target_compile_options(explosion_core PRIVATE /WX)
+target_link_libraries(explosion_core PUBLIC directxmath PRIVATE Jolt)
+if(WIN32)
+    target_compile_definitions(explosion_core PUBLIC
+        NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
 endif()
+target_compile_options(explosion_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/fp:fast>)
+ex_target_warnings(explosion_core)
 
 # ---------------------------------------------------------------------------
 # Update helper (standalone Win32 executable)
 # ---------------------------------------------------------------------------
-add_library(miniz STATIC
-    third_party/miniz/miniz.c
-    third_party/miniz/miniz_tinfl.c
-    third_party/miniz/miniz_zip.c)
-target_include_directories(miniz PUBLIC third_party/miniz)
-target_compile_definitions(miniz PRIVATE MINIZ_NO_DEFLATE_APIS MINIZ_NO_STDIO)
-target_compile_options(miniz PRIVATE /W3 /O1 /GL)
+if(EXPLOSION_BUILD_APP)
+    add_library(miniz STATIC
+        third_party/miniz/miniz.c
+        third_party/miniz/miniz_tinfl.c
+        third_party/miniz/miniz_zip.c)
+    target_include_directories(miniz PUBLIC third_party/miniz)
+    target_compile_definitions(miniz PRIVATE MINIZ_NO_DEFLATE_APIS MINIZ_NO_STDIO)
+    target_compile_options(miniz PRIVATE /W3 /O1 /GL)
 
-add_executable(ExplosionSimUpdater WIN32
-    tools/updater/main.cpp
-    src/update/Sha256.cpp)
-target_include_directories(ExplosionSimUpdater PRIVATE src)
-target_link_libraries(ExplosionSimUpdater PRIVATE miniz shell32 bcrypt wintrust crypt32)
-target_compile_definitions(ExplosionSimUpdater PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
-target_compile_options(ExplosionSimUpdater PRIVATE /W4 /permissive- /utf-8 /O1 /Gy /GL)
-target_link_options(ExplosionSimUpdater PRIVATE /LTCG /OPT:REF /OPT:ICF)
-if(EXPLOSION_WARNINGS_AS_ERRORS)
-    target_compile_options(ExplosionSimUpdater PRIVATE /WX)
+    add_executable(ExplosionSimUpdater WIN32
+        tools/updater/main.cpp
+        src/update/Sha256.cpp)
+    target_include_directories(ExplosionSimUpdater PRIVATE src)
+    target_link_libraries(ExplosionSimUpdater PRIVATE miniz shell32 bcrypt wintrust crypt32)
+    target_compile_definitions(ExplosionSimUpdater PRIVATE
+        NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    target_compile_options(ExplosionSimUpdater PRIVATE /W4 /permissive- /utf-8 /O1 /Gy /GL)
+    target_link_options(ExplosionSimUpdater PRIVATE /LTCG /OPT:REF /OPT:ICF)
+    if(EXPLOSION_WARNINGS_AS_ERRORS)
+        target_compile_options(ExplosionSimUpdater PRIVATE /WX)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
-add_executable(ExplosionSim WIN32
-    src/main.cpp
-    src/app/App.cpp
-    src/app/Changelog.cpp
-    src/app/Settings.cpp
-    src/app/Splash.cpp
-    src/gfx/GfxDevice.cpp
-    src/gfx/rhi/d3d11/D3D11Rhi.cpp
-    src/gfx/Renderer.cpp
-    src/gfx/Camera.cpp
-    src/gfx/Shader.cpp
-    src/gfx/ImageIO.cpp
-    src/gfx/GpuEulerSolver.cpp
-    src/gfx/SceneRenderer.cpp
-    src/ui/Ui.cpp
-    src/update/Sha256.cpp
-    src/update/UpdateChecker.cpp
-    src/update/Version.cpp
-    ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc)
+if(EXPLOSION_BUILD_APP)
+    add_executable(ExplosionSim WIN32
+        src/main.cpp
+        src/app/App.cpp
+        src/app/Changelog.cpp
+        src/app/Settings.cpp
+        src/app/Splash.cpp
+        src/gfx/GfxDevice.cpp
+        src/gfx/rhi/d3d11/D3D11Rhi.cpp
+        src/gfx/Renderer.cpp
+        src/gfx/Camera.cpp
+        src/gfx/Shader.cpp
+        src/gfx/ImageIO.cpp
+        src/gfx/GpuEulerSolver.cpp
+        src/gfx/SceneRenderer.cpp
+        src/ui/Ui.cpp
+        src/update/Sha256.cpp
+        src/update/UpdateChecker.cpp
+        src/update/Version.cpp
+        ${CMAKE_BINARY_DIR}/generated/ExplosionSim.rc)
 
-target_include_directories(ExplosionSim PRIVATE src ${CMAKE_BINARY_DIR}/generated)
-target_link_libraries(ExplosionSim PRIVATE
-    explosion_core
-    imgui
-    nlohmann_json::nlohmann_json
-    bcrypt
-    d3d11
-    dxgi
-    d3dcompiler
-    dwmapi
-    winmm
-    winhttp
-    windowscodecs
-    msimg32
-    ole32
-    shell32)
+    target_include_directories(ExplosionSim PRIVATE src ${CMAKE_BINARY_DIR}/generated)
+    target_link_libraries(ExplosionSim PRIVATE
+        explosion_core
+        imgui
+        nlohmann_json::nlohmann_json
+        bcrypt
+        d3d11
+        dxgi
+        d3dcompiler
+        dwmapi
+        winmm
+        winhttp
+        windowscodecs
+        msimg32
+        ole32
+        shell32)
 
-target_compile_definitions(ExplosionSim PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _USE_MATH_DEFINES)
-target_compile_options(ExplosionSim PRIVATE /W4 /permissive- /fp:fast /utf-8)
-if(EXPLOSION_WARNINGS_AS_ERRORS)
-    target_compile_options(ExplosionSim PRIVATE /WX)
+    target_compile_definitions(ExplosionSim PRIVATE
+        NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _USE_MATH_DEFINES)
+    target_compile_options(ExplosionSim PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/fp:fast>)
+    ex_target_warnings(ExplosionSim)
+
+    add_dependencies(ExplosionSim ExplosionSimUpdater)
+
+    # Shaders are loaded at runtime so they can be tweaked without a rebuild.
+    add_custom_command(TARGET ExplosionSim POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/assets
+                $<TARGET_FILE_DIR:ExplosionSim>/assets
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_SOURCE_DIR}/CHANGELOG.md
+                $<TARGET_FILE_DIR:ExplosionSim>/CHANGELOG.md
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:ExplosionSimUpdater>
+                $<TARGET_FILE_DIR:ExplosionSim>/ExplosionSimUpdater.exe
+        COMMENT "Copying assets, changelog and updater next to the executable")
 endif()
-
-add_dependencies(ExplosionSim ExplosionSimUpdater)
-
-# Shaders are loaded at runtime so they can be tweaked without a rebuild.
-add_custom_command(TARGET ExplosionSim POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/assets
-            $<TARGET_FILE_DIR:ExplosionSim>/assets
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${CMAKE_SOURCE_DIR}/CHANGELOG.md
-            $<TARGET_FILE_DIR:ExplosionSim>/CHANGELOG.md
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:ExplosionSimUpdater>
-            $<TARGET_FILE_DIR:ExplosionSim>/ExplosionSimUpdater.exe
-    COMMENT "Copying assets, changelog and updater next to the executable")
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 if(EXPLOSION_BUILD_TESTS)
     enable_testing()
-    add_executable(explosion_tests
-        tests/physics_tests.cpp
-        src/app/Changelog.cpp
-        src/app/Settings.cpp
-        src/update/Sha256.cpp
-        src/update/Version.cpp)
-    target_link_libraries(explosion_tests PRIVATE explosion_core bcrypt)
-    target_compile_definitions(explosion_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
-    target_compile_options(explosion_tests PRIVATE /W4 /permissive- /utf-8)
-    if(EXPLOSION_WARNINGS_AS_ERRORS)
-        target_compile_options(explosion_tests PRIVATE /WX)
-    endif()
-    add_test(NAME physics COMMAND explosion_tests)
 
-    # GPU smoke test: creates its own D3D11 device and exercises the solver.
-    add_executable(gpu_tests
-        tests/gpu_tests.cpp
-        src/gfx/GpuEulerSolver.cpp
-        src/gfx/Shader.cpp)
-    target_link_libraries(gpu_tests PRIVATE explosion_core d3d11 dxgi d3dcompiler)
-    target_compile_definitions(gpu_tests PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
-    target_compile_options(gpu_tests PRIVATE /W4 /permissive- /utf-8)
-    if(EXPLOSION_WARNINGS_AS_ERRORS)
-        target_compile_options(gpu_tests PRIVATE /WX)
+    # Portable core smoke tests (Windows and Linux).
+    add_executable(core_tests
+        tests/core_tests.cpp)
+    target_link_libraries(core_tests PRIVATE explosion_core)
+    ex_target_warnings(core_tests)
+    add_test(NAME core COMMAND core_tests)
+
+    if(EXPLOSION_BUILD_APP)
+        add_executable(explosion_tests
+            tests/physics_tests.cpp
+            src/app/Changelog.cpp
+            src/app/Settings.cpp
+            src/update/Sha256.cpp
+            src/update/Version.cpp)
+        target_link_libraries(explosion_tests PRIVATE explosion_core bcrypt)
+        target_compile_definitions(explosion_tests PRIVATE
+            NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
+        ex_target_warnings(explosion_tests)
+        add_test(NAME physics COMMAND explosion_tests)
+
+        # GPU smoke test: creates its own D3D11 device and exercises the solver.
+        add_executable(gpu_tests
+            tests/gpu_tests.cpp
+            src/gfx/GpuEulerSolver.cpp
+            src/gfx/Shader.cpp)
+        target_link_libraries(gpu_tests PRIVATE explosion_core d3d11 dxgi d3dcompiler)
+        target_compile_definitions(gpu_tests PRIVATE
+            NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
+        ex_target_warnings(gpu_tests)
+        add_custom_command(TARGET gpu_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    ${CMAKE_SOURCE_DIR}/assets
+                    $<TARGET_FILE_DIR:gpu_tests>/assets
+            COMMENT "Copying assets next to the GPU test")
+        add_test(NAME gpu COMMAND gpu_tests)
     endif()
-    add_custom_command(TARGET gpu_tests POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-                ${CMAKE_SOURCE_DIR}/assets
-                $<TARGET_FILE_DIR:gpu_tests>/assets
-        COMMENT "Copying assets next to the GPU test")
-    add_test(NAME gpu COMMAND gpu_tests)
 endif()

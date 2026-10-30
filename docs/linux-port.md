@@ -1,12 +1,15 @@
 # Linux port and multi-platform RHI plan
 
-Status: **M1 in progress.** The backend-neutral RHI interfaces and the D3D11
-backend exist; `GfxDevice` and the swapchain run through the RHI. `SceneRenderer`
-creates its meshes, instance/chunk/shadow buffers, shadow and surface-detail
-textures, shaders, input layouts, fixed-function states and samplers through the
-RHI. The pass code still binds resources through the temporary D3D11 context
-bridge, and the other render passes plus the compute path are not ported yet.
-Linux and Vulkan are not implemented yet.
+Status: **M0 done, M1 nearly done.** The portable simulation core builds and
+passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The backend-neutral
+RHI interfaces and the D3D11 backend exist; `GfxDevice` and the swapchain run
+through the RHI. `SceneRenderer` creates its meshes, instance/chunk/shadow
+buffers, shadow and surface-detail textures, shaders, input layouts,
+fixed-function states and samplers through the RHI. The pass code still binds
+resources through the temporary D3D11 context bridge, and the other render
+passes plus the compute path are not ported yet. The Vulkan backend and SDL3
+platform layer are not implemented yet; see [`linux-build.md`](linux-build.md)
+for the current Linux build instructions.
 
 ## 1. Goal
 
@@ -182,6 +185,9 @@ external art/asset work. They are person-days, not calendar promises.
 
 ### M0 — Plan, toolchain and Linux CI skeleton (3–5 days)
 
+Status: **done.** The portable core and `core_tests` build on Ubuntu 24.04 in CI;
+see [`linux-build.md`](linux-build.md).
+
 - Approve this plan and the backend decisions.
 - Add an Ubuntu 24.04 CI job with CMake, Ninja, GCC/Clang, Vulkan headers/loader,
   SDL3, DXC and Mesa (lavapipe for headless tests).
@@ -190,6 +196,10 @@ external art/asset work. They are person-days, not calendar promises.
 - Acceptance: CI configures a dummy Linux target and runs the portable physics tests.
 
 ### M1 — RHI core + D3D11 backend, Windows unchanged (10–15 days)
+
+Status: **in progress.** RHI device/swapchain, buffers, textures, samplers,
+shaders and pipelines are in place and `SceneRenderer` uses them. The temporary
+D3D11 context bridge remains for the render passes and the compute path.
 
 - Add `src/gfx/rhi/Rhi.h`, `rhi/d3d11/*`.
 - Wrap `GfxDevice`/swapchain and port resource creation for the scene renderer.
