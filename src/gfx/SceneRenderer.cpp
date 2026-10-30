@@ -900,13 +900,9 @@ void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
         return;
     }
     const auto& objects = scene.Objects();
-    const UINT stride = sizeof(ChunkVertex);
-    const UINT offset = 0;
-    ID3D11Buffer* vertexBuffer =
-        static_cast<ID3D11Buffer*>(chunkVertexBuffer_->NativeHandle());
-    context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-    context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(chunkIndexBuffer_->NativeHandle()),
-                              DXGI_FORMAT_R32_UINT, 0);
+    rhiDevice_->BindVertexBuffer(chunkVertexBuffer_.get(),
+                                 sizeof(ChunkVertex));
+    rhiDevice_->BindIndexBuffer(chunkIndexBuffer_.get());
     rhiDevice_->BindPipeline(shadowPass ? chunkShadowPipeline_.get()
                                         : chunkPipeline_.get());
     ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(
@@ -917,7 +913,7 @@ void SceneRenderer::DrawChunks(ID3D11DeviceContext* context,
             !objects[draw.objectIndex].collapsed) {
             continue;
         }
-        context->DrawIndexed(draw.indexCount, draw.indexOffset, 0);
+        rhiDevice_->DrawIndexedInstanced(draw.indexCount, 1, draw.indexOffset);
     }
     ID3D11ShaderResourceView* nullSrv = nullptr;
     context->VSSetShaderResources(1, 1, &nullSrv);
@@ -1015,17 +1011,13 @@ void SceneRenderer::RenderStaticShadow(ID3D11DeviceContext* context,
 
     const Mesh& mesh = meshes_[0];
     if (mesh.vertexBuffer && mesh.indexBuffer && mesh.indexCount > 0) {
-        ID3D11Buffer* vertexBuffer = static_cast<ID3D11Buffer*>(mesh.vertexBuffer->NativeHandle());
-        UINT stride = sizeof(Vertex);
-        UINT offset = 0;
-        context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-        context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(mesh.indexBuffer->NativeHandle()), DXGI_FORMAT_R32_UINT,
-                                  0);
+        rhiDevice_->BindVertexBuffer(mesh.vertexBuffer.get(), sizeof(Vertex));
+        rhiDevice_->BindIndexBuffer(mesh.indexBuffer.get());
         ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(
             staticInstanceBuffer_->NativeShaderResourceView());
         context->VSSetShaderResources(0, 1, &srv);
-        context->DrawIndexedInstanced(mesh.indexCount, UINT(instances.size()), 0,
-                                      0, 0);
+        rhiDevice_->DrawIndexedInstanced(mesh.indexCount,
+                                         UINT(instances.size()));
     }
 
     ID3D11ShaderResourceView* nullSrv = nullptr;
@@ -1308,15 +1300,13 @@ void SceneRenderer::RenderShadow(ID3D11DeviceContext* context,
             if (mesh.instances.empty() || !mesh.instanceBuffer) {
                 continue;
             }
-            ID3D11Buffer* vertexBuffer = static_cast<ID3D11Buffer*>(mesh.vertexBuffer->NativeHandle());
-            UINT stride = sizeof(Vertex);
-            UINT offset = 0;
-            context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-            context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(mesh.indexBuffer->NativeHandle()), DXGI_FORMAT_R32_UINT, 0);
+            rhiDevice_->BindVertexBuffer(mesh.vertexBuffer.get(),
+                                         sizeof(Vertex));
+            rhiDevice_->BindIndexBuffer(mesh.indexBuffer.get());
             ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(mesh.instanceBuffer->NativeShaderResourceView());
             context->VSSetShaderResources(0, 1, &srv);
-            context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()),
-                                          0, 0, 0);
+            rhiDevice_->DrawIndexedInstanced(mesh.indexCount,
+                                             UINT(mesh.instances.size()));
         }
 
         // Voronoi rubble (phase B chunks) with the chunk shadow shader.
@@ -1369,15 +1359,12 @@ void SceneRenderer::RenderScene(ID3D11DeviceContext* context, const scene::Scene
         if (mesh.instances.empty() || !mesh.instanceBuffer) {
             continue;
         }
-        ID3D11Buffer* vertexBuffer = static_cast<ID3D11Buffer*>(mesh.vertexBuffer->NativeHandle());
-        UINT stride = sizeof(Vertex);
-        UINT offset = 0;
-        context->IASetVertexBuffers(0, 1, &vertexBuffer, &stride, &offset);
-        context->IASetIndexBuffer(static_cast<ID3D11Buffer*>(mesh.indexBuffer->NativeHandle()), DXGI_FORMAT_R32_UINT, 0);
+        rhiDevice_->BindVertexBuffer(mesh.vertexBuffer.get(), sizeof(Vertex));
+        rhiDevice_->BindIndexBuffer(mesh.indexBuffer.get());
         ID3D11ShaderResourceView* srv = static_cast<ID3D11ShaderResourceView*>(mesh.instanceBuffer->NativeShaderResourceView());
         context->VSSetShaderResources(0, 1, &srv);
-        context->DrawIndexedInstanced(mesh.indexCount, UINT(mesh.instances.size()), 0, 0,
-                                      0);
+        rhiDevice_->DrawIndexedInstanced(mesh.indexCount,
+                                         UINT(mesh.instances.size()));
     }
 
     // Voronoi rubble with the chunk vertex shader and the shared pixel shader.
