@@ -1,18 +1,21 @@
 # Linux build
 
-The portable simulation core already builds and passes its tests natively on
-Linux. The graphical application is still Windows-only until the SDL3 platform
-layer and the Vulkan backend land (milestones M2/M3 in
+The portable simulation core and the Vulkan bring-up target already build and
+run natively on Linux. The graphical application is still Windows-only until the
+SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
 [`linux-port.md`](linux-port.md)).
 
-## Current Linux target
+## Current Linux targets
 
 - `explosion_core`: blast model, particles, simulation, CPU volume bake, scene
   generation, Voronoi fracture, Jolt physics, thread pool.
 - `core_tests`: portable smoke tests for the blast model, deterministic scene
   generation and the CPU volume bake.
+- `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and
+  (with a desktop) an SDL3 window with a swapchain.
 
-Both are built by the `linux-core` CI job on Ubuntu 24.04.
+All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
+core tests and the Vulkan smoke test on Mesa lavapipe.
 
 ## Dependencies
 
@@ -21,13 +24,19 @@ Required now:
 - CMake 3.21 or newer
 - Ninja (or another CMake generator)
 - A C++20 compiler (GCC 13 or Clang 17 are tested)
-- Network access on the first configure for the Jolt FetchContent download
+- Vulkan loader (`libvulkan-dev`) and, for headless CI, a software driver
+  (`mesa-vulkan-drivers`)
+- Desktop development headers for a windowed SDL3 build (`libx11-dev` and
+  friends, or Wayland)
+- Network access on the first configure for the Jolt, Vulkan-Headers and SDL3
+  FetchContent downloads
 
 Planned for the application build:
 
-- Vulkan 1.2 loader and headers (`libvulkan-dev`)
-- SDL3 development files
 - DXC for HLSL to SPIR-V compilation
+
+Without X11 or Wayland headers SDL3 is configured in console mode, so the
+offscreen Vulkan path still builds and runs; only window creation is unavailable.
 
 ## Build and test
 
@@ -40,6 +49,21 @@ ctest --test-dir build --output-on-failure
 `EXPLOSION_BUILD_APP` defaults to `OFF` on Linux, so the configure step does not
 try to build the Win32/D3D11 application. The option is accepted and reported
 as not implemented yet.
+
+## Vulkan smoke test
+
+```sh
+# Offscreen, any Vulkan device (uses lavapipe when forced):
+VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+  ./build/vulkan_smoke --headless --width 320 --height 180 \
+  --frames 2 --output /tmp/vulkan_smoke.ppm
+
+# Windowed swapchain (needs a desktop session and SDL3 video drivers):
+./build/vulkan_smoke --frames 120
+```
+
+The smoke test prints the selected adapter and exits. `--debug` enables the
+Vulkan validation layer when it is installed.
 
 ## WSL development flow
 

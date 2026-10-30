@@ -1,15 +1,17 @@
 # Linux port and multi-platform RHI plan
 
-Status: **M0 done, M1 nearly done.** The portable simulation core builds and
-passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The backend-neutral
-RHI interfaces and the D3D11 backend exist; `GfxDevice` and the swapchain run
-through the RHI. `SceneRenderer` creates its meshes, instance/chunk/shadow
-buffers, shadow and surface-detail textures, shaders, input layouts,
-fixed-function states and samplers through the RHI. The pass code still binds
-resources through the temporary D3D11 context bridge, and the other render
-passes plus the compute path are not ported yet. The Vulkan backend and SDL3
-platform layer are not implemented yet; see [`linux-build.md`](linux-build.md)
-for the current Linux build instructions.
+Status: **M0 done, M1 nearly done, M2 started.** The portable simulation core
+builds and passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The
+backend-neutral RHI interfaces and the D3D11 backend exist; `GfxDevice` and the
+swapchain run through the RHI. `SceneRenderer` creates its meshes,
+instance/chunk/shadow buffers, shadow and surface-detail textures, shaders,
+input layouts, fixed-function states and samplers through the RHI. The pass code
+still binds resources through the temporary D3D11 context bridge.
+
+M2 now has an SDL3 window layer and a Vulkan 1.2 device with an offscreen
+target, swapchain, clear, present and readback (`vulkan_smoke`). The Vulkan
+resource factories and the application integration are next; see
+[`linux-build.md`](linux-build.md) for the current Linux build instructions.
 
 ## 1. Goal
 
@@ -208,6 +210,11 @@ D3D11 context bridge remains for the render passes and the compute path.
   D3D11 types confined to `rhi/d3d11` plus the temporary accessor.
 
 ### M2 — SDL3 platform layer + Vulkan device/swapchain (10–15 days)
+
+Status: **in progress.** The SDL3 window/event layer, Vulkan instance, physical
+and logical device, offscreen target, swapchain, clear, present and readback
+exist and are exercised by `vulkan_smoke` on Windows and Linux. The application
+still uses the Win32/D3D11 path.
 
 - Add `src/platform/Platform.h` and `platform/sdl3/*`.
 - Create window, input, DPI, timer, clipboard and file dialogs.

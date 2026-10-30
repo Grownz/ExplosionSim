@@ -25,6 +25,7 @@ endif()
 option(EXPLOSION_BUILD_TESTS "Build the physics and core tests" ON)
 option(EXPLOSION_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${MSVC})
 option(EXPLOSION_BUILD_APP "Build the graphical application" ${WIN32})
+option(EXPLOSION_BUILD_VULKAN_SMOKE "Build the Vulkan bring-up test" ON)
 set(EXPLOSION_RHI "d3d11" CACHE STRING "Graphics backend (d3d11; vulkan is planned)")
 set(EXPLOSION_PLATFORM "win32" CACHE STRING "Platform layer (win32; sdl3 is planned)")
 
@@ -86,6 +87,65 @@ endif()
 if(NOT MSVC)
     # DirectXMath uses type-punned SIMD stores that GCC flags under -Wextra.
     target_compile_options(directxmath INTERFACE -Wno-strict-aliasing)
+endif()
+
+if(EXPLOSION_BUILD_VULKAN_SMOKE)
+    # Vulkan-Headers are fetched so the backend can be built without a local
+    # Vulkan SDK. The loader itself comes from the SDK or the system package.
+    FetchContent_Declare(vulkan_headers
+        URL https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v1.3.275.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(vulkan_headers)
+
+    if(WIN32 AND DEFINED ENV{VULKAN_SDK})
+        find_library(VULKAN_LIBRARY NAMES vulkan-1 HINTS "$ENV{VULKAN_SDK}/Lib")
+    else()
+        find_library(VULKAN_LIBRARY NAMES vulkan)
+        if(NOT VULKAN_LIBRARY)
+            # Runtime-only installs (common in WSL) ship libvulkan.so.1 without
+            # the development symlink.
+            find_file(VULKAN_LIBRARY NAMES libvulkan.so.1
+                PATHS /usr/lib/x86_64-linux-gnu /usr/lib /lib/x86_64-linux-gnu /lib)
+        endif()
+    endif()
+
+    if(VULKAN_LIBRARY)
+        add_library(explosion_vulkan INTERFACE)
+        target_include_directories(explosion_vulkan INTERFACE
+            ${vulkan_headers_SOURCE_DIR}/include)
+        target_link_libraries(explosion_vulkan INTERFACE ${VULKAN_LIBRARY})
+
+        # SDL3 supplies the window, input and Vulkan surface for the smoke app
+        # and, from M3 on, for the Linux application.
+        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+        set(SDL_STATIC ON CACHE BOOL "" FORCE)
+        set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+        set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+        set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+        if(NOT WIN32)
+            find_package(X11 QUIET)
+            if(NOT X11_FOUND)
+                # Headless/CI environments without desktop development headers
+                # build SDL in console mode; the offscreen Vulkan path still
+                # works and the windowed path is exercised on desktop builds.
+                set(SDL_UNIX_CONSOLE_BUILD ON CACHE BOOL "" FORCE)
+                set(SDL_X11 OFF CACHE BOOL "" FORCE)
+                set(SDL_WAYLAND OFF CACHE BOOL "" FORCE)
+                set(SDL_KMSDRM OFF CACHE BOOL "" FORCE)
+            endif()
+        endif()
+        FetchContent_Declare(sdl3
+            URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.2.10.zip
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+        FetchContent_MakeAvailable(sdl3)
+        if(TARGET SDL3::SDL3-static)
+            set(EXPLOSION_SDL3_TARGET SDL3::SDL3-static)
+        else()
+            set(EXPLOSION_SDL3_TARGET SDL3::SDL3)
+        endif()
+    else()
+        message(STATUS "Vulkan loader not found; skipping vulkan_smoke.")
+    endif()
 endif()
 
 if(EXPLOSION_BUILD_APP)
@@ -169,6 +229,22 @@ if(WIN32)
 endif()
 target_compile_options(explosion_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/fp:fast>)
 ex_target_warnings(explosion_core)
+
+# ---------------------------------------------------------------------------
+# Vulkan bring-up test (M2)
+# ---------------------------------------------------------------------------
+if(EXPLOSION_BUILD_VULKAN_SMOKE AND TARGET explosion_vulkan)
+    add_executable(vulkan_smoke
+        tools/vulkan_smoke/main.cpp
+        src/platform/sdl3/Sdl3Window.cpp
+        src/gfx/rhi/vulkan/VulkanRhi.cpp)
+    target_include_directories(vulkan_smoke PRIVATE src)
+    target_link_libraries(vulkan_smoke PRIVATE
+        explosion_vulkan
+        explosion_core
+        ${EXPLOSION_SDL3_TARGET})
+    ex_target_warnings(vulkan_smoke)
+endif()
 
 # ---------------------------------------------------------------------------
 # Update helper (standalone Win32 executable)

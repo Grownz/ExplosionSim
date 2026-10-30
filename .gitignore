@@ -23,6 +23,7 @@ CMakeUserPresets.json
 !docs/screenshots/*.png
 !assets/**/*.png
 *.log
+*.ppm
 settings.ini
 imgui.ini
 test_settings_roundtrip.ini

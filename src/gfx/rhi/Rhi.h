@@ -80,6 +80,16 @@ struct DeviceDesc {
     int width = 1;
     int height = 1;
     bool offscreen = false;
+
+    // Vulkan only: the platform layer supplies the instance extensions and a
+    // callback that creates the VkSurfaceKHR for `window`. Non-dispatchable
+    // handles are passed as uint64_t so this header stays Vulkan-free.
+    struct SurfaceProvider {
+        const char* const* instanceExtensions = nullptr;
+        uint32_t instanceExtensionCount = 0;
+        void* user = nullptr;
+        bool (*create)(void* user, void* instance, uint64_t* outSurface) = nullptr;
+    } surface;
 };
 
 struct BufferDesc {
@@ -258,5 +268,6 @@ public:
 // Backend factory. Implemented by each backend; the caller selects it from
 // CMake or a runtime option.
 std::unique_ptr<Device> CreateD3D11Device(const DeviceDesc& desc);
+std::unique_ptr<Device> CreateVulkanDevice(const DeviceDesc& desc);
 
 } // namespace ex::rhi

@@ -11,6 +11,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install Vulkan, SDL and X11 build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers \
+            libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxfixes-dev libxss-dev libwayland-dev libxkbcommon-dev
+
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 
@@ -19,6 +26,12 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build --output-on-failure
+
+      - name: Vulkan smoke (lavapipe)
+        run: |
+          VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
+            ./build/vulkan_smoke --headless --width 320 --height 180 \
+            --frames 2 --output /tmp/vulkan_smoke.ppm
 
   windows:
     runs-on: windows-2022

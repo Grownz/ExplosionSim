@@ -539,6 +539,7 @@ dust into the same buffer; the renderer and the rest of the application stay unc
 The native Linux port and the multi-platform render-hardware-interface (RHI) plan are
 described in [linux-port.md](linux-port.md). It covers the D3D11-to-Vulkan backend
 split, the SDL3 platform layer, the HLSL-to-SPIR-V pipeline, milestones, acceptance
-criteria and effort estimates. The portable core and its tests already build on
-Linux; see [linux-build.md](linux-build.md). The graphical application remains
-Windows x64 only until the SDL3/Vulkan work lands.
+criteria and effort estimates. The portable core and its tests build on Linux, and
+the Vulkan device/swapchain bring-up (`vulkan_smoke`) runs on Windows and Linux; see
+[linux-build.md](linux-build.md). The graphical application remains Windows x64 only
+until the renderer integration lands.
