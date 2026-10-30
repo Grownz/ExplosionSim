@@ -5,6 +5,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,11 @@ public:
     void BeginFrame(float r, float g, float b, float a);
     void EndFrame(bool vsync);
 
+    // Temporary immediate-mode draw path used by the M3 bring-up tests. The
+    // command-list abstraction replaces these calls later.
+    void BindVertexBuffer(Buffer* buffer, uint64_t offset = 0);
+    void Draw(uint32_t vertexCount, uint32_t firstVertex = 0);
+
     // Offscreen only: copies the last rendered BGRA8 image into `bgra`.
     bool ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight);
 
@@ -65,6 +71,7 @@ private:
 
     bool BeginCommandBuffer();
     bool WaitForFence();
+    bool ExecuteImmediate(const std::function<void(VkCommandBuffer)>& record);
 
     VkFormat ChooseSurfaceFormat() const;
     VkExtent2D ChooseExtent(const VkSurfaceCapabilitiesKHR& caps) const;
@@ -98,6 +105,11 @@ private:
     VkDeviceMemory depthMemory_ = VK_NULL_HANDLE;
     VkImageView depthView_ = VK_NULL_HANDLE;
     VkFramebuffer offscreenFramebuffer_ = VK_NULL_HANDLE;
+
+    VkPipeline boundPipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout boundPipelineLayout_ = VK_NULL_HANDLE;
+    VkBuffer boundVertexBuffer_ = VK_NULL_HANDLE;
+    VkDeviceSize boundVertexOffset_ = 0;
 
     DeviceDesc desc_{};
     std::string adapterName_ = "unknown";

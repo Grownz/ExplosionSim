@@ -103,6 +103,339 @@ VkImageView CreateImageView(VkDevice device, VkImage image, VkFormat format,
     return view;
 }
 
+VkFormat ToVkFormat(Format format) {
+    switch (format) {
+    case Format::B8G8R8A8_UNORM:
+        return VK_FORMAT_B8G8R8A8_UNORM;
+    case Format::R8G8B8A8_UNORM:
+        return VK_FORMAT_R8G8B8A8_UNORM;
+    case Format::R8G8B8A8_UNORM_SRGB:
+        return VK_FORMAT_R8G8B8A8_SRGB;
+    case Format::R16G16B16A16_FLOAT:
+        return VK_FORMAT_R16G16B16A16_SFLOAT;
+    case Format::R32_FLOAT:
+        return VK_FORMAT_R32_SFLOAT;
+    case Format::R32_TYPELESS:
+        return VK_FORMAT_D32_SFLOAT;
+    case Format::D32_FLOAT:
+        return VK_FORMAT_D32_SFLOAT;
+    default:
+        return VK_FORMAT_UNDEFINED;
+    }
+}
+
+VkFormat ToVkVertexFormat(VertexFormat format) {
+    switch (format) {
+    case VertexFormat::Float:
+        return VK_FORMAT_R32_SFLOAT;
+    case VertexFormat::Float2:
+        return VK_FORMAT_R32G32_SFLOAT;
+    case VertexFormat::Float3:
+        return VK_FORMAT_R32G32B32_SFLOAT;
+    case VertexFormat::Float4:
+        return VK_FORMAT_R32G32B32A32_SFLOAT;
+    case VertexFormat::UInt:
+        return VK_FORMAT_R32_UINT;
+    case VertexFormat::UInt2:
+        return VK_FORMAT_R32G32_UINT;
+    case VertexFormat::UInt3:
+        return VK_FORMAT_R32G32B32_UINT;
+    case VertexFormat::UInt4:
+        return VK_FORMAT_R32G32B32A32_UINT;
+    default:
+        return VK_FORMAT_UNDEFINED;
+    }
+}
+
+VkBufferUsageFlags ToVkBufferUsage(BufferUsage usage) {
+    VkBufferUsageFlags flags = 0;
+    if (HasUsage(usage, BufferUsage::Vertex)) {
+        flags |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    }
+    if (HasUsage(usage, BufferUsage::Index)) {
+        flags |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    }
+    if (HasUsage(usage, BufferUsage::Uniform)) {
+        flags |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+    }
+    if (HasUsage(usage, BufferUsage::Storage) ||
+        HasUsage(usage, BufferUsage::ShaderRead)) {
+        flags |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+    }
+    if (HasUsage(usage, BufferUsage::Indirect)) {
+        flags |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    }
+    if (HasUsage(usage, BufferUsage::Staging)) {
+        flags |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    }
+    return flags;
+}
+
+VkImageUsageFlags ToVkTextureUsage(TextureUsage usage) {
+    VkImageUsageFlags flags = 0;
+    if (HasUsage(usage, TextureUsage::Sampled)) {
+        flags |= VK_IMAGE_USAGE_SAMPLED_BIT;
+    }
+    if (HasUsage(usage, TextureUsage::Storage)) {
+        flags |= VK_IMAGE_USAGE_STORAGE_BIT;
+    }
+    if (HasUsage(usage, TextureUsage::RenderTarget)) {
+        flags |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    }
+    if (HasUsage(usage, TextureUsage::DepthStencil)) {
+        flags |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    }
+    if (HasUsage(usage, TextureUsage::Staging)) {
+        flags |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    }
+    return flags;
+}
+
+VkCompareOp ToVkCompare(CompareOp op) {
+    switch (op) {
+    case CompareOp::Never:
+        return VK_COMPARE_OP_NEVER;
+    case CompareOp::Less:
+        return VK_COMPARE_OP_LESS;
+    case CompareOp::Equal:
+        return VK_COMPARE_OP_EQUAL;
+    case CompareOp::LessEqual:
+        return VK_COMPARE_OP_LESS_OR_EQUAL;
+    case CompareOp::Greater:
+        return VK_COMPARE_OP_GREATER;
+    case CompareOp::NotEqual:
+        return VK_COMPARE_OP_NOT_EQUAL;
+    case CompareOp::GreaterEqual:
+        return VK_COMPARE_OP_GREATER_OR_EQUAL;
+    case CompareOp::Always:
+        return VK_COMPARE_OP_ALWAYS;
+    }
+    return VK_COMPARE_OP_LESS_OR_EQUAL;
+}
+
+VkCullModeFlags ToVkCull(CullMode mode) {
+    switch (mode) {
+    case CullMode::None:
+        return VK_CULL_MODE_NONE;
+    case CullMode::Front:
+        return VK_CULL_MODE_FRONT_BIT;
+    case CullMode::Back:
+        return VK_CULL_MODE_BACK_BIT;
+    }
+    return VK_CULL_MODE_NONE;
+}
+
+VkPrimitiveTopology ToVkTopology(PrimitiveTopology topology) {
+    switch (topology) {
+    case PrimitiveTopology::TriangleList:
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    case PrimitiveTopology::TriangleStrip:
+        return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    case PrimitiveTopology::LineList:
+        return VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
+    case PrimitiveTopology::PointList:
+        return VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
+    }
+    return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+}
+
+class BufferImpl final : public rhi::Buffer {
+public:
+    BufferImpl(VkDevice device, VkBuffer buffer, VkDeviceMemory memory,
+               VkDeviceSize size, bool hostVisible)
+        : device_(device), buffer_(buffer), memory_(memory), size_(size),
+          hostVisible_(hostVisible) {}
+    ~BufferImpl() override {
+        Unmap();
+        if (buffer_) {
+            vkDestroyBuffer(device_, buffer_, nullptr);
+        }
+        if (memory_) {
+            vkFreeMemory(device_, memory_, nullptr);
+        }
+    }
+
+    uint64_t Size() const override { return size_; }
+
+    void* Map() override {
+        if (!hostVisible_) {
+            return nullptr;
+        }
+        if (mapped_) {
+            return mapped_;
+        }
+        if (vkMapMemory(device_, memory_, 0, VK_WHOLE_SIZE, 0, &mapped_) !=
+            VK_SUCCESS) {
+            mapped_ = nullptr;
+        }
+        return mapped_;
+    }
+
+    void Unmap() override {
+        if (mapped_) {
+            vkUnmapMemory(device_, memory_);
+            mapped_ = nullptr;
+        }
+    }
+
+    void* NativeHandle() const override {
+        return reinterpret_cast<void*>(uintptr_t(buffer_));
+    }
+    void* NativeShaderResourceView() const override { return nullptr; }
+
+    VkBuffer Handle() const { return buffer_; }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkBuffer buffer_ = VK_NULL_HANDLE;
+    VkDeviceMemory memory_ = VK_NULL_HANDLE;
+    VkDeviceSize size_ = 0;
+    bool hostVisible_ = false;
+    void* mapped_ = nullptr;
+};
+
+class TextureImpl final : public rhi::Texture {
+public:
+    TextureImpl(VkDevice device, VkImage image, VkDeviceMemory memory,
+                VkImageView view, VkFormat format, const TextureDesc& desc)
+        : device_(device), image_(image), memory_(memory), view_(view),
+          format_(format), desc_(desc) {}
+    ~TextureImpl() override {
+        if (view_) {
+            vkDestroyImageView(device_, view_, nullptr);
+        }
+        if (image_) {
+            vkDestroyImage(device_, image_, nullptr);
+        }
+        if (memory_) {
+            vkFreeMemory(device_, memory_, nullptr);
+        }
+    }
+
+    uint32_t Width() const override { return desc_.width; }
+    uint32_t Height() const override { return desc_.height; }
+    uint32_t Depth() const override { return desc_.depth; }
+    Format GetFormat() const override { return desc_.format; }
+    void* NativeHandle() const override {
+        return reinterpret_cast<void*>(uintptr_t(image_));
+    }
+    void* NativeShaderResourceView() const override {
+        return reinterpret_cast<void*>(uintptr_t(view_));
+    }
+    void* NativeRenderTargetView() const override {
+        return reinterpret_cast<void*>(uintptr_t(view_));
+    }
+    void* NativeDepthStencilView() const override {
+        return reinterpret_cast<void*>(uintptr_t(view_));
+    }
+
+    VkImage Handle() const { return image_; }
+    VkImageView View() const { return view_; }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkImage image_ = VK_NULL_HANDLE;
+    VkDeviceMemory memory_ = VK_NULL_HANDLE;
+    VkImageView view_ = VK_NULL_HANDLE;
+    VkFormat format_ = VK_FORMAT_UNDEFINED;
+    TextureDesc desc_{};
+};
+
+class SamplerImpl final : public rhi::Sampler {
+public:
+    SamplerImpl(VkDevice device, VkSampler sampler)
+        : device_(device), sampler_(sampler) {}
+    ~SamplerImpl() override {
+        if (sampler_) {
+            vkDestroySampler(device_, sampler_, nullptr);
+        }
+    }
+    void* NativeHandle() const override {
+        return reinterpret_cast<void*>(uintptr_t(sampler_));
+    }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkSampler sampler_ = VK_NULL_HANDLE;
+};
+
+class ShaderImpl final : public rhi::Shader {
+public:
+    ShaderImpl(VkDevice device, VkShaderModule module, ShaderStage stage,
+               const char* entryPoint)
+        : device_(device), module_(module), stage_(stage),
+          entryPoint_(entryPoint ? entryPoint : "main") {}
+    ~ShaderImpl() override {
+        if (module_) {
+            vkDestroyShaderModule(device_, module_, nullptr);
+        }
+    }
+    ShaderStage Stage() const override { return stage_; }
+    void* NativeHandle() const override {
+        return reinterpret_cast<void*>(uintptr_t(module_));
+    }
+    VkShaderModule Module() const { return module_; }
+    const char* EntryPoint() const { return entryPoint_.c_str(); }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkShaderModule module_ = VK_NULL_HANDLE;
+    ShaderStage stage_ = ShaderStage::Vertex;
+    std::string entryPoint_;
+};
+
+class PipelineImpl final : public rhi::Pipeline {
+public:
+    PipelineImpl(VkDevice device, VkPipeline pipeline, VkPipelineLayout layout)
+        : device_(device), pipeline_(pipeline), layout_(layout) {}
+    ~PipelineImpl() override {
+        if (pipeline_) {
+            vkDestroyPipeline(device_, pipeline_, nullptr);
+        }
+        if (layout_) {
+            vkDestroyPipelineLayout(device_, layout_, nullptr);
+        }
+    }
+    void* NativeHandle() const override {
+        return reinterpret_cast<void*>(uintptr_t(pipeline_));
+    }
+
+    VkPipeline Pipeline() const { return pipeline_; }
+    VkPipelineLayout Layout() const { return layout_; }
+
+private:
+    VkDevice device_ = VK_NULL_HANDLE;
+    VkPipeline pipeline_ = VK_NULL_HANDLE;
+    VkPipelineLayout layout_ = VK_NULL_HANDLE;
+};
+
+bool CreateHostVisibleBuffer(VkPhysicalDevice physical, VkDevice device,
+                             VkDeviceSize size, VkBufferUsageFlags usage,
+                             VkBuffer& buffer, VkDeviceMemory& memory) {
+    VkBufferCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    info.size = size;
+    info.usage = usage;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &info, nullptr, &buffer) != VK_SUCCESS) {
+        return false;
+    }
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device, buffer, &requirements);
+    const uint32_t type = FindMemoryType(
+        physical, requirements.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (type == std::numeric_limits<uint32_t>::max()) {
+        return false;
+    }
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize = requirements.size;
+    allocate.memoryTypeIndex = type;
+    return vkAllocateMemory(device, &allocate, nullptr, &memory) == VK_SUCCESS &&
+           vkBindBufferMemory(device, buffer, memory, 0) == VK_SUCCESS;
+}
+
 } // namespace
 
 Device::~Device() {
@@ -742,6 +1075,13 @@ void Device::BeginFrame(float r, float g, float b, float a) {
     info.clearValueCount = 2;
     info.pClearValues = clears;
     vkCmdBeginRenderPass(commandBuffer_, &info, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport viewport{0.0f, 0.0f, float(width_), float(height_), 0.0f, 1.0f};
+    vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
+    VkRect2D scissor{{0, 0}, {uint32_t(width_), uint32_t(height_)}};
+    vkCmdSetScissor(commandBuffer_, 0, 1, &scissor);
+    boundPipeline_ = VK_NULL_HANDLE;
+    boundPipelineLayout_ = VK_NULL_HANDLE;
+    boundVertexBuffer_ = VK_NULL_HANDLE;
     frameActive_ = true;
 }
 
@@ -906,27 +1246,506 @@ void Device::WaitIdle() {
     }
 }
 
-std::unique_ptr<Buffer> Device::CreateBuffer(const BufferDesc&) {
-    return nullptr;
+bool Device::ExecuteImmediate(
+    const std::function<void(VkCommandBuffer)>& record) {
+    if (!WaitForFence() || !BeginCommandBuffer()) {
+        return false;
+    }
+    record(commandBuffer_);
+    vkEndCommandBuffer(commandBuffer_);
+
+    VkSubmitInfo submit{};
+    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers = &commandBuffer_;
+    if (vkResetFences(device_, 1, &fence_) != VK_SUCCESS ||
+        vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS ||
+        vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
+        return false;
+    }
+    return true;
 }
 
-std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc&) {
-    return nullptr;
+std::unique_ptr<Buffer> Device::CreateBuffer(const BufferDesc& desc) {
+    if (!device_ || desc.size == 0) {
+        return nullptr;
+    }
+
+    VkBufferCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    info.size = desc.size;
+    info.usage = ToVkBufferUsage(desc.usage);
+    if (info.usage == 0) {
+        info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    }
+    info.usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkBuffer buffer = VK_NULL_HANDLE;
+    if (vkCreateBuffer(device_, &info, nullptr, &buffer) != VK_SUCCESS) {
+        return nullptr;
+    }
+    VkMemoryRequirements requirements{};
+    vkGetBufferMemoryRequirements(device_, buffer, &requirements);
+
+    const bool hostVisible = HasUsage(desc.usage, BufferUsage::Dynamic) ||
+                             HasUsage(desc.usage, BufferUsage::Staging);
+    const uint32_t type = FindMemoryType(
+        physicalDevice_, requirements.memoryTypeBits,
+        hostVisible ? (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+                    : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == std::numeric_limits<uint32_t>::max()) {
+        vkDestroyBuffer(device_, buffer, nullptr);
+        return nullptr;
+    }
+
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize = requirements.size;
+    allocate.memoryTypeIndex = type;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    if (vkAllocateMemory(device_, &allocate, nullptr, &memory) != VK_SUCCESS ||
+        vkBindBufferMemory(device_, buffer, memory, 0) != VK_SUCCESS) {
+        vkDestroyBuffer(device_, buffer, nullptr);
+        if (memory) {
+            vkFreeMemory(device_, memory, nullptr);
+        }
+        return nullptr;
+    }
+
+    auto result = std::make_unique<BufferImpl>(device_, buffer, memory, desc.size,
+                                               hostVisible);
+    if (!desc.initialData) {
+        return result;
+    }
+
+    if (hostVisible) {
+        void* mapped = result->Map();
+        if (!mapped) {
+            return nullptr;
+        }
+        std::memcpy(mapped, desc.initialData, size_t(desc.size));
+        result->Unmap();
+        return result;
+    }
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    if (!CreateHostVisibleBuffer(physicalDevice_, device_, desc.size,
+                                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging,
+                                 stagingMemory)) {
+        return nullptr;
+    }
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, stagingMemory, 0, desc.size, 0, &mapped) !=
+        VK_SUCCESS) {
+        vkDestroyBuffer(device_, staging, nullptr);
+        vkFreeMemory(device_, stagingMemory, nullptr);
+        return nullptr;
+    }
+    std::memcpy(mapped, desc.initialData, size_t(desc.size));
+    vkUnmapMemory(device_, stagingMemory);
+
+    const bool copied = ExecuteImmediate([&](VkCommandBuffer command) {
+        VkBufferCopy region{0, 0, desc.size};
+        vkCmdCopyBuffer(command, staging, buffer, 1, &region);
+    });
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMemory, nullptr);
+    return copied ? std::move(result) : nullptr;
 }
 
-std::unique_ptr<Shader> Device::CreateShader(const ShaderDesc&) {
-    return nullptr;
+std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
+    if (!device_ || desc.width == 0 || desc.height == 0) {
+        return nullptr;
+    }
+    const VkFormat format = ToVkFormat(desc.format);
+    if (format == VK_FORMAT_UNDEFINED) {
+        return nullptr;
+    }
+
+    const bool is3D = desc.depth > 1;
+    VkImageCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.imageType = is3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
+    info.extent = {desc.width, desc.height, is3D ? desc.depth : 1};
+    info.mipLevels = desc.mipLevels;
+    info.arrayLayers = 1;
+    info.format = format;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    info.usage = ToVkTextureUsage(desc.usage);
+    if (info.usage == 0) {
+        info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    }
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    VkImage image = VK_NULL_HANDLE;
+    if (vkCreateImage(device_, &info, nullptr, &image) != VK_SUCCESS) {
+        return nullptr;
+    }
+    VkMemoryRequirements requirements{};
+    vkGetImageMemoryRequirements(device_, image, &requirements);
+    const uint32_t type = FindMemoryType(physicalDevice_, requirements.memoryTypeBits,
+                                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type == std::numeric_limits<uint32_t>::max()) {
+        vkDestroyImage(device_, image, nullptr);
+        return nullptr;
+    }
+    VkMemoryAllocateInfo allocate{};
+    allocate.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocate.allocationSize = requirements.size;
+    allocate.memoryTypeIndex = type;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    if (vkAllocateMemory(device_, &allocate, nullptr, &memory) != VK_SUCCESS ||
+        vkBindImageMemory(device_, image, memory, 0) != VK_SUCCESS) {
+        vkDestroyImage(device_, image, nullptr);
+        if (memory) {
+            vkFreeMemory(device_, memory, nullptr);
+        }
+        return nullptr;
+    }
+
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = is3D ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask =
+        HasUsage(desc.usage, TextureUsage::DepthStencil)
+            ? VK_IMAGE_ASPECT_DEPTH_BIT
+            : VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.levelCount = desc.mipLevels;
+    viewInfo.subresourceRange.layerCount = 1;
+    VkImageView view = VK_NULL_HANDLE;
+    if (vkCreateImageView(device_, &viewInfo, nullptr, &view) != VK_SUCCESS) {
+        vkDestroyImage(device_, image, nullptr);
+        vkFreeMemory(device_, memory, nullptr);
+        return nullptr;
+    }
+
+    auto result = std::make_unique<TextureImpl>(device_, image, memory, view,
+                                                format, desc);
+    if (!desc.subresources || desc.subresourceCount == 0) {
+        return result;
+    }
+
+    VkDeviceSize stagingSize = 0;
+    std::vector<VkDeviceSize> offsets(desc.subresourceCount);
+    for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
+        offsets[i] = stagingSize;
+        stagingSize += VkDeviceSize(desc.subresources[i].rowPitch) *
+                       desc.subresources[i].height;
+    }
+    if (stagingSize == 0) {
+        return result;
+    }
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    if (!CreateHostVisibleBuffer(physicalDevice_, device_, stagingSize,
+                                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging,
+                                 stagingMemory)) {
+        return nullptr;
+    }
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, stagingMemory, 0, stagingSize, 0, &mapped) !=
+        VK_SUCCESS) {
+        vkDestroyBuffer(device_, staging, nullptr);
+        vkFreeMemory(device_, stagingMemory, nullptr);
+        return nullptr;
+    }
+    for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
+        std::memcpy(static_cast<uint8_t*>(mapped) + offsets[i],
+                    desc.subresources[i].data,
+                    size_t(desc.subresources[i].rowPitch) *
+                        desc.subresources[i].height);
+    }
+    vkUnmapMemory(device_, stagingMemory);
+
+    const VkImageAspectFlags aspect =
+        HasUsage(desc.usage, TextureUsage::DepthStencil)
+            ? VK_IMAGE_ASPECT_DEPTH_BIT
+            : VK_IMAGE_ASPECT_COLOR_BIT;
+    const VkImageLayout finalLayout =
+        HasUsage(desc.usage, TextureUsage::Sampled)
+            ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            : (HasUsage(desc.usage, TextureUsage::RenderTarget)
+                   ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
+                   : VK_IMAGE_LAYOUT_GENERAL);
+
+    const bool copied = ExecuteImmediate([&](VkCommandBuffer command) {
+        VkImageMemoryBarrier toTransfer{};
+        toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toTransfer.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toTransfer.image = image;
+        toTransfer.subresourceRange = {aspect, 0, desc.mipLevels, 0, 1};
+        toTransfer.srcAccessMask = 0;
+        toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                             nullptr, 1, &toTransfer);
+
+        for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
+            VkBufferImageCopy region{};
+            region.bufferOffset = offsets[i];
+            region.imageSubresource = {aspect, i, 0, 1};
+            region.imageExtent = {desc.subresources[i].width,
+                                  desc.subresources[i].height, 1};
+            vkCmdCopyBufferToImage(command, staging, image,
+                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                                   &region);
+        }
+
+        VkImageMemoryBarrier toFinal{};
+        toFinal.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toFinal.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toFinal.newLayout = finalLayout;
+        toFinal.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toFinal.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toFinal.image = image;
+        toFinal.subresourceRange = {aspect, 0, desc.mipLevels, 0, 1};
+        toFinal.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toFinal.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr,
+                             0, nullptr, 1, &toFinal);
+    });
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMemory, nullptr);
+    return copied ? std::move(result) : nullptr;
 }
 
-std::unique_ptr<Sampler> Device::CreateSampler(const SamplerDesc&) {
-    return nullptr;
+std::unique_ptr<Shader> Device::CreateShader(const ShaderDesc& desc) {
+    if (!device_ || !desc.data || desc.size == 0 || (desc.size % 4) != 0) {
+        return nullptr;
+    }
+    VkShaderModuleCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    info.codeSize = desc.size;
+    info.pCode = static_cast<const uint32_t*>(desc.data);
+    VkShaderModule module = VK_NULL_HANDLE;
+    if (vkCreateShaderModule(device_, &info, nullptr, &module) != VK_SUCCESS) {
+        return nullptr;
+    }
+    return std::make_unique<ShaderImpl>(device_, module, desc.stage, desc.name);
 }
 
-std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc&) {
-    return nullptr;
+std::unique_ptr<Sampler> Device::CreateSampler(const SamplerDesc& desc) {
+    if (!device_) {
+        return nullptr;
+    }
+    VkSamplerCreateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    info.magFilter = desc.linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+    info.minFilter = info.magFilter;
+    info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    const VkSamplerAddressMode address =
+        desc.clamp ? VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE
+                   : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    info.addressModeU = address;
+    info.addressModeV = address;
+    info.addressModeW = address;
+    info.borderColor = desc.comparison
+                           ? VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE
+                           : VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK;
+    info.compareEnable = desc.comparison ? VK_TRUE : VK_FALSE;
+    info.compareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    info.maxLod = desc.comparison ? 0.0f : VK_LOD_CLAMP_NONE;
+
+    VkSampler sampler = VK_NULL_HANDLE;
+    if (vkCreateSampler(device_, &info, nullptr, &sampler) != VK_SUCCESS) {
+        return nullptr;
+    }
+    return std::make_unique<SamplerImpl>(device_, sampler);
 }
 
-void Device::BindPipeline(Pipeline*) {}
+std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
+    if (!device_ || !renderPass_ || !desc.vertexShader || !desc.pixelShader) {
+        return nullptr;
+    }
+    auto* vertexShader = dynamic_cast<ShaderImpl*>(desc.vertexShader);
+    auto* pixelShader = dynamic_cast<ShaderImpl*>(desc.pixelShader);
+    if (!vertexShader || !pixelShader) {
+        return nullptr;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertexShader->Module();
+    stages[0].pName = vertexShader->EntryPoint();
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = pixelShader->Module();
+    stages[1].pName = pixelShader->EntryPoint();
+
+    uint32_t stride = desc.vertexStride;
+    if (stride == 0) {
+        for (uint32_t i = 0; i < desc.vertexAttributeCount; ++i) {
+            const VertexAttribute& attribute = desc.vertexAttributes[i];
+            uint32_t size = 4;
+            switch (attribute.format) {
+            case VertexFormat::Float2:
+            case VertexFormat::UInt2:
+                size = 8;
+                break;
+            case VertexFormat::Float3:
+            case VertexFormat::UInt3:
+                size = 12;
+                break;
+            case VertexFormat::Float4:
+            case VertexFormat::UInt4:
+                size = 16;
+                break;
+            default:
+                break;
+            }
+            stride = std::max(stride, attribute.offset + size);
+        }
+    }
+
+    VkVertexInputBindingDescription binding{0, stride,
+                                            VK_VERTEX_INPUT_RATE_VERTEX};
+    std::vector<VkVertexInputAttributeDescription> attributes;
+    attributes.reserve(desc.vertexAttributeCount);
+    for (uint32_t i = 0; i < desc.vertexAttributeCount; ++i) {
+        const VertexAttribute& attribute = desc.vertexAttributes[i];
+        VkVertexInputAttributeDescription converted{};
+        converted.location = i;
+        converted.binding = attribute.bufferSlot;
+        converted.format = ToVkVertexFormat(attribute.format);
+        converted.offset = attribute.offset;
+        if (converted.format == VK_FORMAT_UNDEFINED) {
+            return nullptr;
+        }
+        attributes.push_back(converted);
+    }
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{};
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertexInput.vertexBindingDescriptionCount = stride > 0 ? 1 : 0;
+    vertexInput.pVertexBindingDescriptions = &binding;
+    vertexInput.vertexAttributeDescriptionCount = uint32_t(attributes.size());
+    vertexInput.pVertexAttributeDescriptions = attributes.data();
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = ToVkTopology(desc.topology);
+    inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+    VkPipelineViewportStateCreateInfo viewport{};
+    viewport.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewport.viewportCount = 1;
+    viewport.scissorCount = 1;
+
+    VkPipelineRasterizationStateCreateInfo raster{};
+    raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode = ToVkCull(desc.cullMode);
+    raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    raster.lineWidth = 1.0f;
+    raster.depthClampEnable = VK_FALSE;
+    raster.rasterizerDiscardEnable = VK_FALSE;
+
+    VkPipelineMultisampleStateCreateInfo multisample{};
+    multisample.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depth{};
+    depth.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth.depthTestEnable = desc.depthTest ? VK_TRUE : VK_FALSE;
+    depth.depthWriteEnable = desc.depthWrite ? VK_TRUE : VK_FALSE;
+    depth.depthCompareOp = ToVkCompare(desc.depthCompare);
+    depth.depthBoundsTestEnable = VK_FALSE;
+    depth.stencilTestEnable = VK_FALSE;
+
+    VkPipelineColorBlendAttachmentState blendAttachment{};
+    blendAttachment.blendEnable = desc.blendEnable ? VK_TRUE : VK_FALSE;
+    blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    blendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    blendAttachment.colorWriteMask =
+        VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
+    VkPipelineColorBlendStateCreateInfo blend{};
+    blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments = &blendAttachment;
+
+    const VkDynamicState dynamicStates[] = {VK_DYNAMIC_STATE_VIEWPORT,
+                                            VK_DYNAMIC_STATE_SCISSOR};
+    VkPipelineDynamicStateCreateInfo dynamic{};
+    dynamic.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic.dynamicStateCount = 2;
+    dynamic.pDynamicStates = dynamicStates;
+
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    if (vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &layout) !=
+        VK_SUCCESS) {
+        return nullptr;
+    }
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages;
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewport;
+    pipelineInfo.pRasterizationState = &raster;
+    pipelineInfo.pMultisampleState = &multisample;
+    pipelineInfo.pDepthStencilState = &depth;
+    pipelineInfo.pColorBlendState = &blend;
+    pipelineInfo.pDynamicState = &dynamic;
+    pipelineInfo.layout = layout;
+    pipelineInfo.renderPass = renderPass_;
+    pipelineInfo.subpass = 0;
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineInfo,
+                                  nullptr, &pipeline) != VK_SUCCESS) {
+        vkDestroyPipelineLayout(device_, layout, nullptr);
+        return nullptr;
+    }
+    return std::make_unique<PipelineImpl>(device_, pipeline, layout);
+}
+
+void Device::BindPipeline(Pipeline* pipeline) {
+    auto* impl = dynamic_cast<PipelineImpl*>(pipeline);
+    boundPipeline_ = impl ? impl->Pipeline() : VK_NULL_HANDLE;
+    boundPipelineLayout_ = impl ? impl->Layout() : VK_NULL_HANDLE;
+}
+
+void Device::BindVertexBuffer(Buffer* buffer, uint64_t offset) {
+    auto* impl = dynamic_cast<BufferImpl*>(buffer);
+    boundVertexBuffer_ = impl ? impl->Handle() : VK_NULL_HANDLE;
+    boundVertexOffset_ = offset;
+}
+
+void Device::Draw(uint32_t vertexCount, uint32_t firstVertex) {
+    if (!frameActive_ || !boundPipeline_ || !boundVertexBuffer_) {
+        return;
+    }
+    vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      boundPipeline_);
+    vkCmdBindVertexBuffers(commandBuffer_, 0, 1, &boundVertexBuffer_,
+                           &boundVertexOffset_);
+    vkCmdDraw(commandBuffer_, vertexCount, 1, firstVertex, 0);
+}
 
 } // namespace ex::rhi::vulkan
 

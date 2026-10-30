@@ -12,7 +12,8 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
 - `core_tests`: portable smoke tests for the blast model, deterministic scene
   generation and the CPU volume bake.
 - `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and
-  (with a desktop) an SDL3 window with a swapchain.
+  (with a desktop) an SDL3 window with a swapchain. `--triangle` also exercises
+  vertex buffers, SPIR-V shader modules and a graphics pipeline.
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.
@@ -60,7 +61,14 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 
 # Windowed swapchain (needs a desktop session and SDL3 video drivers):
 ./build/vulkan_smoke --frames 120
+
+# Vertex buffer + SPIR-V shaders + graphics pipeline:
+./build/vulkan_smoke --headless --triangle --frames 2 \
+  --output /tmp/vulkan_triangle.ppm
 ```
+
+The triangle shaders are compiled from `tools/vulkan_smoke/triangle.hlsl` with
+DXC and embedded as SPIR-V in `TriangleShaders.h`.
 
 The smoke test prints the selected adapter and exits. `--debug` enables the
 Vulkan validation layer when it is installed.

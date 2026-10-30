@@ -224,6 +224,7 @@ struct PipelineDesc {
     Shader* pixelShader = nullptr;
     const VertexAttribute* vertexAttributes = nullptr;
     uint32_t vertexAttributeCount = 0;
+    uint32_t vertexStride = 0; // Vulkan vertex binding stride; 0 = derive
     // DXBC signature used to build the D3D11 input layout. Vulkan uses the
     // vertex attributes instead and ignores this.
     const void* vertexShaderBytecode = nullptr;

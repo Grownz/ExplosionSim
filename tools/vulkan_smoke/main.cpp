@@ -3,6 +3,7 @@
 
 #include "gfx/rhi/vulkan/VulkanRhi.h"
 #include "platform/Platform.h"
+#include "TriangleShaders.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -21,6 +22,7 @@ struct Options {
     int frames = -1; // -1 = default (3 headless, unlimited windowed)
     bool headless = false;
     bool debug = false;
+    bool triangle = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -43,6 +45,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--debug") == 0) {
             options.debug = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--triangle") == 0) {
+            options.triangle = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -140,6 +146,58 @@ int main(int argc, char** argv) {
     }
     auto* device = static_cast<ex::rhi::vulkan::Device*>(base.get());
 
+    struct TriangleVertex {
+        float position[3];
+        float color[3];
+    };
+    std::unique_ptr<ex::rhi::Buffer> vertexBuffer;
+    std::unique_ptr<ex::rhi::Shader> vertexShader;
+    std::unique_ptr<ex::rhi::Shader> pixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> pipeline;
+    if (options.triangle) {
+        const TriangleVertex vertices[] = {
+            {{0.0f, -0.7f, 0.0f}, {1.0f, 0.2f, 0.2f}},
+            {{0.7f, 0.6f, 0.0f}, {0.2f, 1.0f, 0.3f}},
+            {{-0.7f, 0.6f, 0.0f}, {0.2f, 0.4f, 1.0f}},
+        };
+        ex::rhi::BufferDesc bufferDesc{};
+        bufferDesc.size = sizeof(vertices);
+        bufferDesc.usage = ex::rhi::BufferUsage::Vertex;
+        bufferDesc.initialData = vertices;
+        vertexBuffer = device->CreateBuffer(bufferDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kTriangleVS;
+        shaderDesc.size = kTriangleVSSize;
+        shaderDesc.name = "VSMain";
+        vertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kTrianglePS;
+        shaderDesc.size = kTrianglePSSize;
+        shaderDesc.name = "PSMain";
+        pixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::VertexAttribute attributes[] = {
+            {"POSITION", 0, ex::rhi::VertexFormat::Float3, 0, 0},
+            {"COLOR", 0, ex::rhi::VertexFormat::Float3, 12, 0},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = vertexShader.get();
+        pipelineDesc.pixelShader = pixelShader.get();
+        pipelineDesc.vertexAttributes = attributes;
+        pipelineDesc.vertexAttributeCount = 2;
+        pipelineDesc.vertexStride = sizeof(TriangleVertex);
+        pipelineDesc.depthTest = false;
+        pipelineDesc.depthWrite = false;
+        pipeline = device->CreatePipeline(pipelineDesc);
+
+        if (!vertexBuffer || !vertexShader || !pixelShader || !pipeline) {
+            std::fprintf(stderr, "Vulkan triangle resources failed.\n");
+            return 1;
+        }
+    }
+
     const int frames =
         options.frames >= 0 ? options.frames : (options.headless ? 3 : 0);
     int rendered = 0;
@@ -149,6 +207,11 @@ int main(int argc, char** argv) {
         }
         const float t = float(frame % 120) / 120.0f;
         device->BeginFrame(0.1f + 0.2f * t, 0.2f, 0.4f - 0.2f * t, 1.0f);
+        if (pipeline) {
+            device->BindPipeline(pipeline.get());
+            device->BindVertexBuffer(vertexBuffer.get());
+            device->Draw(3);
+        }
         device->EndFrame(true);
         ++rendered;
     }
@@ -174,6 +237,11 @@ int main(int argc, char** argv) {
                     device->Height(), rendered);
     }
 
+    device->WaitIdle();
+    pipeline.reset();
+    pixelShader.reset();
+    vertexShader.reset();
+    vertexBuffer.reset();
     base.reset();
     window.reset();
     return 0;
