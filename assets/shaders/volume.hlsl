@@ -1,12 +1,12 @@
 #include "common.hlsli"
 
-Texture3D<float4> VolumeTexture : register(t0);
-Texture2D<float> SceneDepth : register(t1);
-Texture3D<float4> NoiseTexture : register(t2);
-Texture3D<float4> VolumeAux : register(t3);
-Texture3D<float> LightVolume : register(t4);
-SamplerState LinearSampler : register(s0);
-SamplerState NoiseSampler : register(s1);
+EX_VK_BINDING(8) Texture3D<float4> VolumeTexture : register(t0);
+EX_VK_BINDING(9) Texture2D<float> SceneDepth : register(t1);
+EX_VK_BINDING(10) Texture3D<float4> NoiseTexture : register(t2);
+EX_VK_BINDING(11) Texture3D<float4> VolumeAux : register(t3);
+EX_VK_BINDING(12) Texture3D<float> LightVolume : register(t4);
+EX_VK_BINDING(16) SamplerState LinearSampler : register(s0);
+EX_VK_BINDING(17) SamplerState NoiseSampler : register(s1);
 
 // Samples only the extinction channel. Used for the gradient-based shading.
 float SampleDensity(float3 uvw)

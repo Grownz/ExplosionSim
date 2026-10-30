@@ -2014,7 +2014,9 @@ std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
 
     VkPipelineColorBlendAttachmentState blendAttachment{};
     blendAttachment.blendEnable = desc.blendEnable ? VK_TRUE : VK_FALSE;
-    blendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttachment.srcColorBlendFactor =
+        desc.premultipliedBlend ? VK_BLEND_FACTOR_ONE
+                                : VK_BLEND_FACTOR_SRC_ALPHA;
     blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
     blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;

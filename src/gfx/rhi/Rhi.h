@@ -255,6 +255,9 @@ struct PipelineDesc {
     bool depthTest = true;
     bool depthWrite = true;
     bool blendEnable = false;
+    // Premultiplied alpha uses One / InvSrcAlpha instead of SrcAlpha /
+    // InvSrcAlpha (volume and particle passes).
+    bool premultipliedBlend = false;
     CullMode cullMode = CullMode::None;
     bool depthClip = true;
     PrimitiveTopology topology = PrimitiveTopology::TriangleList;

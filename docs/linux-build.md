@@ -22,7 +22,8 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   `--bloom` runs the real downsample/upsample bloom chain into render targets;
   `--scene` draws an instanced cube through the real scene shader with
   structured instance buffers, shadow maps and surface detail; `--shock` runs
-  the shock-front refraction pass with scene color and depth.
+  the shock-front refraction pass with scene color and depth; `--volume` runs
+  the volumetric raymarch with the 3D volume/noise/light textures.
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.
@@ -106,13 +107,18 @@ VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json \
 # Shock front: refraction pass with scene color and depth:
 ./build/vulkan_smoke --headless --shock --frames 2 \
   --output /tmp/vulkan_shock.ppm
+
+# Volumetric raymarch with 3D volume, noise and light textures:
+./build/vulkan_smoke --headless --volume --frames 2 \
+  --output /tmp/vulkan_volume.ppm
 ```
 
 The smoke shaders are compiled from `tools/vulkan_smoke/*.hlsl` and
 `assets/shaders/sky.hlsl`/`composite.hlsl`/`ground.hlsl`/`bloom.hlsl`/
-`scene.hlsl`/`shock.hlsl` with DXC and embedded as SPIR-V in
+`scene.hlsl`/`shock.hlsl`/`volume.hlsl` with DXC and embedded as SPIR-V in
 `TriangleShaders.h`, `QuadShaders.h`, `SkyShaders.h`, `CompositeShaders.h`,
-`GroundShaders.h`, `BloomShaders.h`, `SceneShaders.h` and `ShockShaders.h`.
+`GroundShaders.h`, `BloomShaders.h`, `SceneShaders.h`, `ShockShaders.h` and
+`VolumeShaders.h`.
 
 Shared shaders use the `EX_VK_BINDING(n)` macro from `common.hlsli`. It expands
 to `[[vk::binding(n, 0)]]` under DXC and to nothing under D3DCompile. The binding

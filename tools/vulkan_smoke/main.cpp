@@ -11,6 +11,7 @@
 #include "BloomShaders.h"
 #include "SceneShaders.h"
 #include "ShockShaders.h"
+#include "VolumeShaders.h"
 
 #include <DirectXMath.h>
 
@@ -40,6 +41,7 @@ struct Options {
     bool bloom = false;
     bool scene = false;
     bool shock = false;
+    bool volume = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -98,6 +100,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--shock") == 0) {
             options.shock = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--volume") == 0) {
+            options.volume = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -1314,6 +1320,218 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Texture> volumeTexture;
+    std::unique_ptr<ex::rhi::Texture> volumeAuxTexture;
+    std::unique_ptr<ex::rhi::Texture> volumeNoiseTexture;
+    std::unique_ptr<ex::rhi::Texture> volumeLightTexture;
+    std::unique_ptr<ex::rhi::Texture> volumeDepthTexture;
+    std::unique_ptr<ex::rhi::Sampler> volumeSampler;
+    std::unique_ptr<ex::rhi::Sampler> volumeNoiseSampler;
+    std::unique_ptr<ex::rhi::Buffer> volumeUniformBuffer;
+    std::unique_ptr<ex::rhi::Shader> volumeVertexShader;
+    std::unique_ptr<ex::rhi::Shader> volumePixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> volumePipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> volumeSet;
+
+    if (options.volume) {
+        uint8_t volumePixels[4 * 4 * 4 * 4] = {};
+        for (int z = 0; z < 4; ++z) {
+            for (int y = 0; y < 4; ++y) {
+                for (int x = 0; x < 4; ++x) {
+                    const size_t index =
+                        ((size_t(z) * 4 + size_t(y)) * 4 + size_t(x)) * 4;
+                    volumePixels[index + 0] = 255;
+                    volumePixels[index + 1] = 200;
+                    volumePixels[index + 2] = 80;
+                    volumePixels[index + 3] = 40;
+                }
+            }
+        }
+        ex::rhi::TextureSubresource volumeSubresource{};
+        volumeSubresource.data = volumePixels;
+        volumeSubresource.width = 4;
+        volumeSubresource.height = 4;
+        volumeSubresource.rowPitch = 16;
+        volumeSubresource.slicePitch = 64;
+        ex::rhi::TextureDesc volumeDesc{};
+        volumeDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+        volumeDesc.width = 4;
+        volumeDesc.height = 4;
+        volumeDesc.depth = 4;
+        volumeDesc.usage = ex::rhi::TextureUsage::Sampled;
+        volumeDesc.subresources = &volumeSubresource;
+        volumeDesc.subresourceCount = 1;
+        volumeTexture = device->CreateTexture(volumeDesc);
+        volumeAuxTexture = device->CreateTexture(volumeDesc);
+
+        uint8_t noisePixels[4 * 4 * 4 * 4] = {};
+        for (size_t i = 0; i < sizeof(noisePixels); ++i) {
+            noisePixels[i] = uint8_t((i * 37) & 0xff);
+        }
+        ex::rhi::TextureSubresource noiseSubresource = volumeSubresource;
+        noiseSubresource.data = noisePixels;
+        ex::rhi::TextureDesc noiseDesc = volumeDesc;
+        noiseDesc.subresources = &noiseSubresource;
+        volumeNoiseTexture = device->CreateTexture(noiseDesc);
+
+        uint8_t lightPixels[4 * 4 * 4 * 4];
+        for (size_t i = 0; i < sizeof(lightPixels); ++i) {
+            lightPixels[i] = 255;
+        }
+        ex::rhi::TextureSubresource lightSubresource = volumeSubresource;
+        lightSubresource.data = lightPixels;
+        ex::rhi::TextureDesc lightDesc = volumeDesc;
+        lightDesc.subresources = &lightSubresource;
+        volumeLightTexture = device->CreateTexture(lightDesc);
+
+        uint8_t depthPixels[4 * 4 * 4];
+        for (uint8_t& value : depthPixels) {
+            value = 230;
+        }
+        ex::rhi::TextureSubresource depthSubresource{};
+        depthSubresource.data = depthPixels;
+        depthSubresource.width = 4;
+        depthSubresource.height = 4;
+        depthSubresource.rowPitch = 16;
+        ex::rhi::TextureDesc depthDesc{};
+        depthDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+        depthDesc.width = 4;
+        depthDesc.height = 4;
+        depthDesc.usage = ex::rhi::TextureUsage::Sampled;
+        depthDesc.subresources = &depthSubresource;
+        depthDesc.subresourceCount = 1;
+        volumeDepthTexture = device->CreateTexture(depthDesc);
+
+        ex::rhi::SamplerDesc samplerDesc{};
+        samplerDesc.linear = true;
+        samplerDesc.clamp = true;
+        volumeSampler = device->CreateSampler(samplerDesc);
+        volumeNoiseSampler = device->CreateSampler(samplerDesc);
+
+        float constants[112] = {};
+        constants[0] = 1.0f;
+        constants[5] = 1.0f;
+        constants[10] = 1.0f;
+        constants[15] = 1.0f;
+        constants[16] = 1.0f;
+        constants[21] = 1.0f;
+        constants[26] = 1.0f;
+        constants[31] = 1.0f;
+        constants[32] = 0.05f;
+        constants[33] = 0.05f;
+        constants[34] = -5.0f;
+        constants[35] = 0.0f;
+        constants[36] = 0.3f;
+        constants[37] = 0.8f;
+        constants[38] = 0.5f;
+        constants[39] = 1.0f;
+        constants[40] = 1.0f;
+        constants[41] = 0.7f;
+        constants[42] = 0.44f;
+        constants[43] = 1.0f;
+        constants[44] = 0.0f;
+        constants[45] = 0.0f;
+        constants[46] = 0.0f;
+        constants[47] = 5.0f;
+        constants[48] = 2.0f;
+        constants[49] = 2.0f;
+        constants[50] = 2.0f;
+        constants[51] = 32.0f;
+        constants[52] = float(options.width);
+        constants[53] = float(options.height);
+        constants[54] = 1.0f / float(options.width);
+        constants[55] = 1.0f / float(options.height);
+        constants[60] = 0.0f;
+        constants[61] = 0.0f;
+        constants[62] = 1.0f;
+        constants[63] = 0.0f;
+        constants[64] = 0.0f;
+        constants[65] = 1.0f / 60.0f;
+        constants[66] = 0.0f;
+        constants[67] = 0.0f;
+        constants[88] = 0.0f;
+        constants[89] = 0.0f;
+        constants[90] = 0.0f;
+        constants[91] = 1.0f;
+        constants[92] = 0.1f;
+        constants[93] = 0.0f;
+        constants[94] = 0.0f;
+        constants[95] = 0.0f;
+        constants[96] = 1.0f;
+        constants[97] = 3.0f;
+        constants[98] = 3.0f;
+        constants[99] = 0.0f;
+
+        ex::rhi::BufferDesc uniformDesc{};
+        uniformDesc.size = sizeof(constants);
+        uniformDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        uniformDesc.initialData = constants;
+        volumeUniformBuffer = device->CreateBuffer(uniformDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kVolumeVS;
+        shaderDesc.size = kVolumeVSSize;
+        shaderDesc.name = "FullscreenVS";
+        volumeVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kVolumePS;
+        shaderDesc.size = kVolumePSSize;
+        shaderDesc.name = "PSVolume";
+        volumePixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {0, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {8, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {9, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {10, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {11, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {12, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {16, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {17, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = volumeVertexShader.get();
+        pipelineDesc.pixelShader = volumePixelShader.get();
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 8;
+        pipelineDesc.depthTest = false;
+        pipelineDesc.depthWrite = false;
+        pipelineDesc.blendEnable = true;
+        pipelineDesc.premultipliedBlend = true;
+        volumePipeline = device->CreatePipeline(pipelineDesc);
+        if (volumePipeline) {
+            volumeSet = device->CreateDescriptorSet(volumePipeline.get());
+        }
+        if (volumeSet) {
+            volumeSet->SetBuffer(0, volumeUniformBuffer.get(), 0,
+                                 sizeof(constants));
+            volumeSet->SetImage(8, volumeTexture.get());
+            volumeSet->SetImage(9, volumeDepthTexture.get());
+            volumeSet->SetImage(10, volumeNoiseTexture.get());
+            volumeSet->SetImage(11, volumeAuxTexture.get());
+            volumeSet->SetImage(12, volumeLightTexture.get());
+            volumeSet->SetSampler(16, volumeSampler.get());
+            volumeSet->SetSampler(17, volumeNoiseSampler.get());
+        }
+        if (!volumeTexture || !volumeAuxTexture || !volumeNoiseTexture ||
+            !volumeLightTexture || !volumeDepthTexture || !volumeSampler ||
+            !volumeNoiseSampler || !volumeUniformBuffer || !volumeVertexShader ||
+            !volumePixelShader || !volumePipeline || !volumeSet) {
+            std::fprintf(stderr, "Vulkan volume resources failed.\n");
+            return 1;
+        }
+    }
+
     std::unique_ptr<ex::rhi::Texture> targetTexture;
     std::unique_ptr<ex::rhi::DescriptorSet> targetCompositeSet;
     if (options.target) {
@@ -1407,6 +1625,10 @@ int main(int argc, char** argv) {
                 device->BindPipeline(shockPipeline.get());
                 device->BindDescriptorSet(shockSet.get());
                 device->Draw(3);
+            } else if (volumePipeline) {
+                device->BindPipeline(volumePipeline.get());
+                device->BindDescriptorSet(volumeSet.get());
+                device->Draw(3);
             } else if (scenePipeline) {
                 device->BindPipeline(scenePipeline.get());
                 device->BindDescriptorSet(sceneSet.get());
@@ -1445,6 +1667,18 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    volumeSet.reset();
+    volumePipeline.reset();
+    volumePixelShader.reset();
+    volumeVertexShader.reset();
+    volumeUniformBuffer.reset();
+    volumeNoiseSampler.reset();
+    volumeSampler.reset();
+    volumeDepthTexture.reset();
+    volumeLightTexture.reset();
+    volumeNoiseTexture.reset();
+    volumeAuxTexture.reset();
+    volumeTexture.reset();
     shockSet.reset();
     shockPipeline.reset();
     shockPixelShader.reset();
