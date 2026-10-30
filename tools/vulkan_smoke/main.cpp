@@ -1515,14 +1515,19 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> volumePipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> volumeSet;
 
-    if (options.volume) {
-        uint8_t volumePixels[4 * 4 * 4 * 4] = {};
-        for (int z = 0; z < 4; ++z) {
-            for (int y = 0; y < 4; ++y) {
-                for (int x = 0; x < 4; ++x) {
+    if (options.volume || options.city) {
+        const int volumeSize = options.city ? 8 : 4;
+        std::vector<uint8_t> volumePixels(
+            size_t(volumeSize) * size_t(volumeSize) * size_t(volumeSize) * 4, 0);
+        for (int z = 0; z < volumeSize; ++z) {
+            for (int y = 0; y < volumeSize; ++y) {
+                for (int x = 0; x < volumeSize; ++x) {
                     const size_t index =
-                        ((size_t(z) * 4 + size_t(y)) * 4 + size_t(x)) * 4;
-                    volumePixels[index + 0] = 255;
+                        ((size_t(z) * size_t(volumeSize) + size_t(y)) *
+                             size_t(volumeSize) +
+                         size_t(x)) *
+                        4;
+                    volumePixels[index + 0] = options.city ? 2 : 255;
                     volumePixels[index + 1] = 200;
                     volumePixels[index + 2] = 80;
                     volumePixels[index + 3] = 40;
@@ -1530,55 +1535,55 @@ int main(int argc, char** argv) {
             }
         }
         ex::rhi::TextureSubresource volumeSubresource{};
-        volumeSubresource.data = volumePixels;
-        volumeSubresource.width = 4;
-        volumeSubresource.height = 4;
-        volumeSubresource.rowPitch = 16;
-        volumeSubresource.slicePitch = 64;
+        volumeSubresource.data = volumePixels.data();
+        volumeSubresource.width = uint32_t(volumeSize);
+        volumeSubresource.height = uint32_t(volumeSize);
+        volumeSubresource.rowPitch = uint32_t(volumeSize) * 4;
+        volumeSubresource.slicePitch =
+            uint32_t(volumeSize) * uint32_t(volumeSize) * 4;
         ex::rhi::TextureDesc volumeDesc{};
         volumeDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
-        volumeDesc.width = 4;
-        volumeDesc.height = 4;
-        volumeDesc.depth = 4;
+        volumeDesc.width = uint32_t(volumeSize);
+        volumeDesc.height = uint32_t(volumeSize);
+        volumeDesc.depth = uint32_t(volumeSize);
         volumeDesc.usage = ex::rhi::TextureUsage::Sampled;
         volumeDesc.subresources = &volumeSubresource;
         volumeDesc.subresourceCount = 1;
         volumeTexture = device->CreateTexture(volumeDesc);
         volumeAuxTexture = device->CreateTexture(volumeDesc);
 
-        uint8_t noisePixels[4 * 4 * 4 * 4] = {};
-        for (size_t i = 0; i < sizeof(noisePixels); ++i) {
+        std::vector<uint8_t> noisePixels(volumePixels.size());
+        for (size_t i = 0; i < noisePixels.size(); ++i) {
             noisePixels[i] = uint8_t((i * 37) & 0xff);
         }
         ex::rhi::TextureSubresource noiseSubresource = volumeSubresource;
-        noiseSubresource.data = noisePixels;
+        noiseSubresource.data = noisePixels.data();
         ex::rhi::TextureDesc noiseDesc = volumeDesc;
         noiseDesc.subresources = &noiseSubresource;
         volumeNoiseTexture = device->CreateTexture(noiseDesc);
 
-        uint8_t lightPixels[4 * 4 * 4 * 4];
-        for (size_t i = 0; i < sizeof(lightPixels); ++i) {
-            lightPixels[i] = 255;
-        }
+        std::vector<uint8_t> lightPixels(volumePixels.size(), 255);
         ex::rhi::TextureSubresource lightSubresource = volumeSubresource;
-        lightSubresource.data = lightPixels;
+        lightSubresource.data = lightPixels.data();
         ex::rhi::TextureDesc lightDesc = volumeDesc;
         lightDesc.subresources = &lightSubresource;
         volumeLightTexture = device->CreateTexture(lightDesc);
 
-        uint8_t depthPixels[4 * 4 * 4];
-        for (uint8_t& value : depthPixels) {
-            value = 230;
-        }
+        const uint32_t depthWidth =
+            options.city ? uint32_t(options.width) : 4;
+        const uint32_t depthHeight =
+            options.city ? uint32_t(options.height) : 4;
+        std::vector<uint8_t> depthPixels(
+            size_t(depthWidth) * size_t(depthHeight) * 4, 230);
         ex::rhi::TextureSubresource depthSubresource{};
-        depthSubresource.data = depthPixels;
-        depthSubresource.width = 4;
-        depthSubresource.height = 4;
-        depthSubresource.rowPitch = 16;
+        depthSubresource.data = depthPixels.data();
+        depthSubresource.width = depthWidth;
+        depthSubresource.height = depthHeight;
+        depthSubresource.rowPitch = depthWidth * 4;
         ex::rhi::TextureDesc depthDesc{};
         depthDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
-        depthDesc.width = 4;
-        depthDesc.height = 4;
+        depthDesc.width = depthWidth;
+        depthDesc.height = depthHeight;
         depthDesc.usage = ex::rhi::TextureUsage::Sampled;
         depthDesc.subresources = &depthSubresource;
         depthDesc.subresourceCount = 1;
@@ -1643,6 +1648,36 @@ int main(int argc, char** argv) {
         constants[97] = 3.0f;
         constants[98] = 3.0f;
         constants[99] = 0.0f;
+
+        if (options.city) {
+            constants[32] = 0.0f;
+            constants[33] = 55.0f;
+            constants[34] = -150.0f;
+            constants[44] = -15.0f;
+            constants[45] = 0.0f;
+            constants[46] = -15.0f;
+            constants[47] = 0.05f;
+            constants[48] = 15.0f;
+            constants[49] = 25.0f;
+            constants[50] = 15.0f;
+            constants[51] = 32.0f;
+            constants[60] = 0.0f;
+            constants[61] = 0.0f;
+            constants[62] = 8.0f;
+            constants[63] = 0.0f;
+            constants[88] = 0.0f;
+            constants[89] = 10.0f;
+            constants[90] = 0.0f;
+            constants[91] = 1.0f;
+            constants[92] = 0.5f;
+            constants[93] = 0.0f;
+            constants[94] = 0.5f;
+            constants[95] = 0.5f;
+            constants[96] = 1.0f;
+            constants[97] = 0.2f;
+            constants[98] = 0.2f;
+            constants[99] = 0.0f;
+        }
 
         ex::rhi::BufferDesc uniformDesc{};
         uniformDesc.size = sizeof(constants);
@@ -1883,6 +1918,11 @@ int main(int argc, char** argv) {
                 device->DrawIndexedInstanced(draw.indexCount,
                                              draw.instanceCount,
                                              draw.indexOffset);
+            }
+            if (volumePipeline) {
+                device->BindPipeline(volumePipeline.get());
+                device->BindDescriptorSet(volumeSet.get());
+                device->Draw(3);
             }
             if (particlesPipeline) {
                 device->BindPipeline(particlesPipeline.get());
