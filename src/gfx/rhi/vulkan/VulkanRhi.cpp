@@ -2015,9 +2015,12 @@ std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
     VkPipelineColorBlendAttachmentState blendAttachment{};
     blendAttachment.blendEnable = desc.blendEnable ? VK_TRUE : VK_FALSE;
     blendAttachment.srcColorBlendFactor =
-        desc.premultipliedBlend ? VK_BLEND_FACTOR_ONE
-                                : VK_BLEND_FACTOR_SRC_ALPHA;
-    blendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        desc.additiveBlend || desc.premultipliedBlend
+            ? VK_BLEND_FACTOR_ONE
+            : VK_BLEND_FACTOR_SRC_ALPHA;
+    blendAttachment.dstColorBlendFactor =
+        desc.additiveBlend ? VK_BLEND_FACTOR_ONE
+                           : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     blendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
     blendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     blendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
@@ -2182,6 +2185,26 @@ void Device::Draw(uint32_t vertexCount, uint32_t firstVertex) {
                                &boundVertexOffset_);
     }
     vkCmdDraw(commandBuffer_, vertexCount, 1, firstVertex, 0);
+}
+
+void Device::DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
+                           uint32_t firstVertex, uint32_t firstInstance) {
+    if (!frameActive_ || !boundPipeline_) {
+        return;
+    }
+    vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      boundPipeline_);
+    if (boundDescriptorSet_) {
+        vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                boundPipelineLayout_, 0, 1, &boundDescriptorSet_,
+                                0, nullptr);
+    }
+    if (boundVertexBuffer_) {
+        vkCmdBindVertexBuffers(commandBuffer_, 0, 1, &boundVertexBuffer_,
+                               &boundVertexOffset_);
+    }
+    vkCmdDraw(commandBuffer_, vertexCount, instanceCount, firstVertex,
+              firstInstance);
 }
 
 void Device::DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,

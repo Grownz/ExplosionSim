@@ -12,6 +12,7 @@
 #include "SceneShaders.h"
 #include "ShockShaders.h"
 #include "VolumeShaders.h"
+#include "ParticleShaders.h"
 
 #include <DirectXMath.h>
 
@@ -42,6 +43,7 @@ struct Options {
     bool scene = false;
     bool shock = false;
     bool volume = false;
+    bool particles = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -104,6 +106,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--volume") == 0) {
             options.volume = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--particles") == 0) {
+            options.particles = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -567,7 +573,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> groundPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> groundSet;
 
-    if (options.ground || options.scene) {
+    if (options.ground || options.scene || options.particles) {
         using namespace DirectX;
         float constants[112] = {};
         const XMMATRIX view = XMMatrixLookAtLH(
@@ -629,6 +635,8 @@ int main(int argc, char** argv) {
         constants[69] = 0.0f;
         constants[70] = 0.0f;
         constants[71] = 1.0f;
+        constants[72] = 1.0f;
+        constants[77] = 1.0f;
         constants[80] = 10.0f;
         constants[81] = 1.0f;
         constants[82] = 0.3f;
@@ -1532,6 +1540,118 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Buffer> particlesInstanceBuffer;
+    std::unique_ptr<ex::rhi::Texture> particlesDepthTexture;
+    std::unique_ptr<ex::rhi::Shader> particlesVertexShader;
+    std::unique_ptr<ex::rhi::Shader> particlesPixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> particlesPipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> particlesSet;
+
+    if (options.particles) {
+        struct ParticleInstance {
+            float position[3];
+            float size;
+            float color[3];
+            float opacity;
+            float rotation;
+            float variation;
+            float padding[2];
+        };
+        ParticleInstance instance{};
+        instance.position[2] = 0.0f;
+        instance.size = 1.0f;
+        instance.color[0] = 1.0f;
+        instance.color[1] = 0.6f;
+        instance.color[2] = 0.2f;
+        instance.opacity = 1.0f;
+        instance.rotation = 0.0f;
+        instance.variation = 0.0f;
+        instance.padding[0] = 1.0f;
+        instance.padding[1] = 0.0f;
+
+        ex::rhi::BufferDesc instanceDesc{};
+        instanceDesc.size = sizeof(instance);
+        instanceDesc.usage = ex::rhi::BufferUsage::Storage |
+                             ex::rhi::BufferUsage::ShaderRead |
+                             ex::rhi::BufferUsage::Dynamic;
+        instanceDesc.structureStride = sizeof(ParticleInstance);
+        instanceDesc.initialData = &instance;
+        particlesInstanceBuffer = device->CreateBuffer(instanceDesc);
+        if (particlesInstanceBuffer) {
+            void* mapped = particlesInstanceBuffer->Map();
+            if (mapped) {
+                std::memcpy(mapped, &instance, sizeof(instance));
+                particlesInstanceBuffer->Unmap();
+            }
+        }
+
+        std::vector<float> depthData(
+            size_t(options.width) * size_t(options.height), 1.0f);
+        ex::rhi::TextureSubresource depthSubresource{};
+        depthSubresource.data = depthData.data();
+        depthSubresource.width = uint32_t(options.width);
+        depthSubresource.height = uint32_t(options.height);
+        depthSubresource.rowPitch = uint32_t(options.width) * 4;
+        ex::rhi::TextureDesc depthDesc{};
+        depthDesc.format = ex::rhi::Format::R32_FLOAT;
+        depthDesc.width = uint32_t(options.width);
+        depthDesc.height = uint32_t(options.height);
+        depthDesc.usage = ex::rhi::TextureUsage::Sampled;
+        depthDesc.subresources = &depthSubresource;
+        depthDesc.subresourceCount = 1;
+        particlesDepthTexture = device->CreateTexture(depthDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kParticlesVS;
+        shaderDesc.size = kParticlesVSSize;
+        shaderDesc.name = "VSParticle";
+        particlesVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kParticlesPS;
+        shaderDesc.size = kParticlesPSSize;
+        shaderDesc.name = "PSAdditive";
+        particlesPixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {0, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel, 3},
+            {8, ex::rhi::DescriptorType::StorageBuffer, 1,
+             ex::rhi::ShaderStage::Vertex},
+            {9, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {16, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = particlesVertexShader.get();
+        pipelineDesc.pixelShader = particlesPixelShader.get();
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 4;
+        pipelineDesc.depthTest = false;
+        pipelineDesc.depthWrite = false;
+        pipelineDesc.blendEnable = true;
+        pipelineDesc.additiveBlend = true;
+        particlesPipeline = device->CreatePipeline(pipelineDesc);
+        if (particlesPipeline) {
+            particlesSet = device->CreateDescriptorSet(particlesPipeline.get());
+        }
+        if (particlesSet) {
+            particlesSet->SetBuffer(0, groundUniformBuffer.get(), 0,
+                                    groundUniformBuffer->Size());
+            particlesSet->SetBuffer(8, particlesInstanceBuffer.get(), 0,
+                                    particlesInstanceBuffer->Size());
+            particlesSet->SetImage(9, particlesDepthTexture.get());
+            particlesSet->SetSampler(16, groundVolumeSampler.get());
+        }
+        if (!particlesInstanceBuffer || !particlesDepthTexture ||
+            !particlesVertexShader || !particlesPixelShader ||
+            !particlesPipeline || !particlesSet) {
+            std::fprintf(stderr, "Vulkan particle resources failed.\n");
+            return 1;
+        }
+    }
+
     std::unique_ptr<ex::rhi::Texture> targetTexture;
     std::unique_ptr<ex::rhi::DescriptorSet> targetCompositeSet;
     if (options.target) {
@@ -1629,6 +1749,10 @@ int main(int argc, char** argv) {
                 device->BindPipeline(volumePipeline.get());
                 device->BindDescriptorSet(volumeSet.get());
                 device->Draw(3);
+            } else if (particlesPipeline) {
+                device->BindPipeline(particlesPipeline.get());
+                device->BindDescriptorSet(particlesSet.get());
+                device->DrawInstanced(6, 1);
             } else if (scenePipeline) {
                 device->BindPipeline(scenePipeline.get());
                 device->BindDescriptorSet(sceneSet.get());
@@ -1667,6 +1791,12 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    particlesSet.reset();
+    particlesPipeline.reset();
+    particlesPixelShader.reset();
+    particlesVertexShader.reset();
+    particlesInstanceBuffer.reset();
+    particlesDepthTexture.reset();
     volumeSet.reset();
     volumePipeline.reset();
     volumePixelShader.reset();

@@ -11,9 +11,9 @@ struct Instance
     float2 padding;
 };
 
-StructuredBuffer<Instance> Instances : register(t0);
-Texture2D<float> SceneDepth : register(t1);
-SamplerState LinearSampler : register(s0);
+EX_VK_BINDING(8) StructuredBuffer<Instance> Instances : register(t0);
+EX_VK_BINDING(9) Texture2D<float> SceneDepth : register(t1);
+EX_VK_BINDING(16) SamplerState LinearSampler : register(s0);
 
 struct ParticleOutput
 {

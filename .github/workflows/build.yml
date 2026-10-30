@@ -52,6 +52,8 @@ jobs:
             --frames 2 --output /tmp/vulkan_shock.ppm
           ./build/vulkan_smoke --headless --volume --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_volume.ppm
+          ./build/vulkan_smoke --headless --particles --width 320 --height 180 \
+            --frames 2 --output /tmp/vulkan_particles.ppm
 
   windows:
     runs-on: windows-2022

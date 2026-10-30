@@ -258,6 +258,8 @@ struct PipelineDesc {
     // Premultiplied alpha uses One / InvSrcAlpha instead of SrcAlpha /
     // InvSrcAlpha (volume and particle passes).
     bool premultipliedBlend = false;
+    // Additive blending uses One / One (sparks, embers, fire).
+    bool additiveBlend = false;
     CullMode cullMode = CullMode::None;
     bool depthClip = true;
     PrimitiveTopology topology = PrimitiveTopology::TriangleList;

@@ -948,10 +948,11 @@ std::unique_ptr<rhi::Pipeline> Device::CreatePipeline(const PipelineDesc& desc) 
 
     D3D11_BLEND_DESC blendDesc{};
     blendDesc.RenderTarget[0].BlendEnable = desc.blendEnable ? TRUE : FALSE;
-    blendDesc.RenderTarget[0].SrcBlend = desc.premultipliedBlend
-                                            ? D3D11_BLEND_ONE
-                                            : D3D11_BLEND_SRC_ALPHA;
-    blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+    blendDesc.RenderTarget[0].SrcBlend =
+        desc.additiveBlend || desc.premultipliedBlend ? D3D11_BLEND_ONE
+                                                      : D3D11_BLEND_SRC_ALPHA;
+    blendDesc.RenderTarget[0].DestBlend =
+        desc.additiveBlend ? D3D11_BLEND_ONE : D3D11_BLEND_INV_SRC_ALPHA;
     blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
     blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
     blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_INV_SRC_ALPHA;

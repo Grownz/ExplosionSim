@@ -52,6 +52,8 @@ public:
     void BindVertexBuffer(Buffer* buffer, uint64_t offset = 0);
     void BindIndexBuffer(Buffer* buffer, uint64_t offset = 0);
     void Draw(uint32_t vertexCount, uint32_t firstVertex = 0);
+    void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
+                       uint32_t firstVertex = 0, uint32_t firstInstance = 0);
     void DrawIndexedInstanced(uint32_t indexCount, uint32_t instanceCount,
                               uint32_t firstIndex = 0, int32_t baseVertex = 0,
                               uint32_t firstInstance = 0);
