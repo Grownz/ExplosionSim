@@ -1211,7 +1211,11 @@ void Device::BeginFrame(float r, float g, float b, float a) {
     info.clearValueCount = 2;
     info.pClearValues = clears;
     vkCmdBeginRenderPass(commandBuffer_, &info, VK_SUBPASS_CONTENTS_INLINE);
-    VkViewport viewport{0.0f, 0.0f, float(width_), float(height_), 0.0f, 1.0f};
+    // Vulkan's NDC Y points down while D3D's points up. A negative viewport
+    // height flips the image so both backends share the same screen-space
+    // convention.
+    VkViewport viewport{0.0f, float(height_), float(width_), -float(height_),
+                        0.0f, 1.0f};
     vkCmdSetViewport(commandBuffer_, 0, 1, &viewport);
     VkRect2D scissor{{0, 0}, {uint32_t(width_), uint32_t(height_)}};
     vkCmdSetScissor(commandBuffer_, 0, 1, &scissor);
@@ -1574,10 +1578,16 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
 
     VkDeviceSize stagingSize = 0;
     std::vector<VkDeviceSize> offsets(desc.subresourceCount);
+    std::vector<VkDeviceSize> sliceSizes(desc.subresourceCount);
     for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
         offsets[i] = stagingSize;
-        stagingSize += VkDeviceSize(desc.subresources[i].rowPitch) *
-                       desc.subresources[i].height;
+        const VkDeviceSize rowBytes =
+            VkDeviceSize(desc.subresources[i].rowPitch) *
+            desc.subresources[i].height;
+        sliceSizes[i] = desc.subresources[i].slicePitch
+                            ? desc.subresources[i].slicePitch
+                            : rowBytes;
+        stagingSize += sliceSizes[i] * (is3D ? desc.depth : 1);
     }
     if (stagingSize == 0) {
         return result;
@@ -1598,10 +1608,16 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
         return nullptr;
     }
     for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
-        std::memcpy(static_cast<uint8_t*>(mapped) + offsets[i],
-                    desc.subresources[i].data,
-                    size_t(desc.subresources[i].rowPitch) *
-                        desc.subresources[i].height);
+        const uint32_t slices = is3D ? desc.depth : 1;
+        const size_t rowBytes =
+            size_t(desc.subresources[i].rowPitch) * desc.subresources[i].height;
+        for (uint32_t slice = 0; slice < slices; ++slice) {
+            std::memcpy(static_cast<uint8_t*>(mapped) + offsets[i] +
+                            size_t(sliceSizes[i]) * slice,
+                        static_cast<const uint8_t*>(desc.subresources[i].data) +
+                            size_t(sliceSizes[i]) * slice,
+                        rowBytes);
+        }
     }
     vkUnmapMemory(device_, stagingMemory);
 
@@ -1632,14 +1648,19 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
                              nullptr, 1, &toTransfer);
 
         for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
-            VkBufferImageCopy region{};
-            region.bufferOffset = offsets[i];
-            region.imageSubresource = {aspect, i, 0, 1};
-            region.imageExtent = {desc.subresources[i].width,
-                                  desc.subresources[i].height, 1};
-            vkCmdCopyBufferToImage(command, staging, image,
-                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                                   &region);
+            const uint32_t slices = is3D ? desc.depth : 1;
+            for (uint32_t slice = 0; slice < slices; ++slice) {
+                VkBufferImageCopy region{};
+                region.bufferOffset =
+                    offsets[i] + sliceSizes[i] * VkDeviceSize(slice);
+                region.imageSubresource = {aspect, i, 0, 1};
+                region.imageOffset = {0, 0, int32_t(slice)};
+                region.imageExtent = {desc.subresources[i].width,
+                                      desc.subresources[i].height, 1};
+                vkCmdCopyBufferToImage(command, staging, image,
+                                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                                       &region);
+            }
         }
 
         VkImageMemoryBarrier toFinal{};

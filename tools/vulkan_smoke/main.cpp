@@ -7,6 +7,9 @@
 #include "QuadShaders.h"
 #include "SkyShaders.h"
 #include "CompositeShaders.h"
+#include "GroundShaders.h"
+
+#include <DirectXMath.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -29,6 +32,7 @@ struct Options {
     bool quad = false;
     bool sky = false;
     bool composite = false;
+    bool ground = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -67,6 +71,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--composite") == 0) {
             options.composite = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--ground") == 0) {
+            options.ground = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -518,6 +526,267 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Buffer> groundUniformBuffer;
+    std::unique_ptr<ex::rhi::Buffer> groundShadowBuffer;
+    std::unique_ptr<ex::rhi::Texture> groundSceneDepth;
+    std::unique_ptr<ex::rhi::Texture> groundShadowTextures[4];
+    std::unique_ptr<ex::rhi::Texture> groundVolumeTexture;
+    std::unique_ptr<ex::rhi::Sampler> groundShadowSampler;
+    std::unique_ptr<ex::rhi::Sampler> groundVolumeSampler;
+    std::unique_ptr<ex::rhi::Shader> groundVertexShader;
+    std::unique_ptr<ex::rhi::Shader> groundPixelShader;
+    std::unique_ptr<ex::rhi::Pipeline> groundPipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> groundSet;
+
+    if (options.ground) {
+        using namespace DirectX;
+        float constants[112] = {};
+        const XMMATRIX view = XMMatrixLookAtLH(
+            XMVectorSet(0.0f, 2.0f, -10.0f, 0.0f),
+            XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f),
+            XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+        const XMMATRIX projection = XMMatrixPerspectiveFovLH(
+            XMConvertToRadians(60.0f),
+            float(options.width) / float(options.height), 0.1f, 1000.0f);
+        const XMMATRIX viewProjection = view * projection;
+        const XMMATRIX inverseViewProjection =
+            XMMatrixInverse(nullptr, viewProjection);
+        XMFLOAT4X4 viewProjectionMatrix{};
+        XMFLOAT4X4 inverseViewProjectionMatrix{};
+        XMStoreFloat4x4(&viewProjectionMatrix, viewProjection);
+        XMStoreFloat4x4(&inverseViewProjectionMatrix, inverseViewProjection);
+        std::memcpy(&constants[0], &viewProjectionMatrix,
+                    sizeof(viewProjectionMatrix));
+        std::memcpy(&constants[16], &inverseViewProjectionMatrix,
+                    sizeof(inverseViewProjectionMatrix));
+
+        constants[32] = 0.0f;
+        constants[33] = 2.0f;
+        constants[34] = -10.0f;
+        constants[35] = 0.0f;
+        constants[36] = 0.3f;
+        constants[37] = 0.8f;
+        constants[38] = 0.5f;
+        constants[39] = 1.0f;
+        constants[40] = 1.0f;
+        constants[41] = 0.7f;
+        constants[42] = 0.44f;
+        constants[43] = 1.0f;
+        constants[44] = 0.0f;
+        constants[45] = 0.0f;
+        constants[46] = 0.0f;
+        constants[47] = 0.1f;
+        constants[48] = 1.0f;
+        constants[49] = 1.0f;
+        constants[50] = 1.0f;
+        constants[51] = 32.0f;
+        constants[52] = float(options.width);
+        constants[53] = float(options.height);
+        constants[54] = 1.0f / float(options.width);
+        constants[55] = 1.0f / float(options.height);
+        constants[56] = 0.0f;
+        constants[57] = 0.0f;
+        constants[58] = 0.0f;
+        constants[59] = 0.2f;
+        constants[60] = 0.0f;
+        constants[61] = 0.0f;
+        constants[62] = 0.5f;
+        constants[63] = 0.0f;
+        constants[64] = 0.0f;
+        constants[65] = 1.0f / 60.0f;
+        constants[66] = 0.0f;
+        constants[67] = 0.0f;
+        constants[68] = 1.0f;
+        constants[69] = 0.0f;
+        constants[70] = 0.0f;
+        constants[71] = 1.0f;
+        constants[80] = 10.0f;
+        constants[81] = 1.0f;
+        constants[82] = 0.3f;
+        constants[83] = 100.0f;
+        constants[84] = 0.1f;
+        constants[85] = 1000.0f;
+        constants[86] = 0.0f;
+        constants[87] = 1.0f;
+        constants[88] = 0.0f;
+        constants[89] = 0.0f;
+        constants[90] = 0.0f;
+        constants[91] = 0.0f;
+
+        ex::rhi::BufferDesc uniformDesc{};
+        uniformDesc.size = sizeof(constants);
+        uniformDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        uniformDesc.initialData = constants;
+        groundUniformBuffer = device->CreateBuffer(uniformDesc);
+
+        float shadow[80] = {};
+        for (int matrix = 0; matrix < 4; ++matrix) {
+            const int matrixBase = matrix * 16;
+            shadow[matrixBase + 0] = 1.0f;
+            shadow[matrixBase + 5] = 1.0f;
+            shadow[matrixBase + 10] = 1.0f;
+            shadow[matrixBase + 15] = 1.0f;
+        }
+        shadow[64] = 10.0f;
+        shadow[65] = 30.0f;
+        shadow[66] = 100.0f;
+        shadow[67] = 0.0f;
+        shadow[68] = 1.0f / 2048.0f;
+        shadow[69] = 1.0f / 1024.0f;
+        shadow[70] = 1.0f / 1024.0f;
+        shadow[71] = 0.0f;
+        shadow[72] = 0.1f;
+        shadow[73] = 0.1f;
+        shadow[74] = 0.1f;
+        shadow[75] = 0.0f;
+        shadow[76] = 1.0f / 4096.0f;
+        shadow[77] = 1.0f / 4096.0f;
+        shadow[78] = 0.0004f;
+        shadow[79] = 0.0f;
+
+        ex::rhi::BufferDesc shadowDesc{};
+        shadowDesc.size = sizeof(shadow);
+        shadowDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        shadowDesc.initialData = shadow;
+        groundShadowBuffer = device->CreateBuffer(shadowDesc);
+
+        const float lit = 1.0f;
+        ex::rhi::TextureSubresource depthSubresource{};
+        depthSubresource.data = &lit;
+        depthSubresource.width = 1;
+        depthSubresource.height = 1;
+        depthSubresource.rowPitch = 4;
+        ex::rhi::TextureDesc depthDesc{};
+        depthDesc.format = ex::rhi::Format::D32_FLOAT;
+        depthDesc.width = 1;
+        depthDesc.height = 1;
+        depthDesc.usage = ex::rhi::TextureUsage::Sampled |
+                          ex::rhi::TextureUsage::DepthStencil;
+        depthDesc.subresources = &depthSubresource;
+        depthDesc.subresourceCount = 1;
+        groundSceneDepth = device->CreateTexture(depthDesc);
+
+        const float shadowPixels[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+        ex::rhi::TextureSubresource shadowSubresource{};
+        shadowSubresource.data = shadowPixels;
+        shadowSubresource.width = 2;
+        shadowSubresource.height = 2;
+        shadowSubresource.rowPitch = 8;
+        ex::rhi::TextureDesc shadowTextureDesc = depthDesc;
+        shadowTextureDesc.width = 2;
+        shadowTextureDesc.height = 2;
+        shadowTextureDesc.subresources = &shadowSubresource;
+        for (int i = 0; i < 4; ++i) {
+            groundShadowTextures[i] = device->CreateTexture(shadowTextureDesc);
+        }
+
+        const uint8_t volumePixels[32] = {};
+        ex::rhi::TextureSubresource volumeSubresource{};
+        volumeSubresource.data = volumePixels;
+        volumeSubresource.width = 2;
+        volumeSubresource.height = 2;
+        volumeSubresource.rowPitch = 8;
+        volumeSubresource.slicePitch = 16;
+        ex::rhi::TextureDesc volumeDesc{};
+        volumeDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+        volumeDesc.width = 2;
+        volumeDesc.height = 2;
+        volumeDesc.depth = 2;
+        volumeDesc.usage = ex::rhi::TextureUsage::Sampled;
+        volumeDesc.subresources = &volumeSubresource;
+        volumeDesc.subresourceCount = 1;
+        groundVolumeTexture = device->CreateTexture(volumeDesc);
+
+        ex::rhi::SamplerDesc shadowSamplerDesc{};
+        shadowSamplerDesc.comparison = true;
+        shadowSamplerDesc.linear = true;
+        shadowSamplerDesc.border[0] = 1.0f;
+        shadowSamplerDesc.border[1] = 1.0f;
+        shadowSamplerDesc.border[2] = 1.0f;
+        shadowSamplerDesc.border[3] = 1.0f;
+        groundShadowSampler = device->CreateSampler(shadowSamplerDesc);
+
+        ex::rhi::SamplerDesc volumeSamplerDesc{};
+        volumeSamplerDesc.linear = true;
+        volumeSamplerDesc.clamp = true;
+        groundVolumeSampler = device->CreateSampler(volumeSamplerDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kGroundVS;
+        shaderDesc.size = kGroundVSSize;
+        shaderDesc.name = "FullscreenVS";
+        groundVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kGroundPS;
+        shaderDesc.size = kGroundPSSize;
+        shaderDesc.name = "PSGround";
+        groundPixelShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {0, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {2, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {9, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {10, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {11, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {12, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {13, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {14, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {18, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {19, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = groundVertexShader.get();
+        pipelineDesc.pixelShader = groundPixelShader.get();
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 10;
+        pipelineDesc.depthTest = true;
+        pipelineDesc.depthWrite = true;
+        pipelineDesc.depthCompare = ex::rhi::CompareOp::LessEqual;
+        groundPipeline = device->CreatePipeline(pipelineDesc);
+        if (groundPipeline) {
+            groundSet = device->CreateDescriptorSet(groundPipeline.get());
+        }
+        if (groundSet) {
+            groundSet->SetBuffer(0, groundUniformBuffer.get(), 0,
+                                 sizeof(constants));
+            groundSet->SetBuffer(2, groundShadowBuffer.get(), 0,
+                                 sizeof(shadow));
+            groundSet->SetImage(9, groundSceneDepth.get());
+            for (int i = 0; i < 4; ++i) {
+                groundSet->SetImage(uint32_t(10 + i),
+                                    groundShadowTextures[i].get());
+            }
+            groundSet->SetImage(14, groundVolumeTexture.get());
+            groundSet->SetSampler(18, groundShadowSampler.get());
+            groundSet->SetSampler(19, groundVolumeSampler.get());
+        }
+        bool ok = groundUniformBuffer && groundShadowBuffer &&
+                  groundSceneDepth && groundVolumeTexture &&
+                  groundShadowSampler && groundVolumeSampler &&
+                  groundVertexShader && groundPixelShader && groundPipeline &&
+                  groundSet;
+        for (int i = 0; i < 4; ++i) {
+            ok = ok && groundShadowTextures[i];
+        }
+        if (!ok) {
+            std::fprintf(stderr, "Vulkan ground resources failed.\n");
+            return 1;
+        }
+    }
+
     const int frames =
         options.frames >= 0 ? options.frames : (options.headless ? 3 : 0);
     int rendered = 0;
@@ -543,6 +812,10 @@ int main(int argc, char** argv) {
         } else if (compositePipeline) {
             device->BindPipeline(compositePipeline.get());
             device->BindDescriptorSet(compositeSet.get());
+            device->Draw(3);
+        } else if (groundPipeline) {
+            device->BindPipeline(groundPipeline.get());
+            device->BindDescriptorSet(groundSet.get());
             device->Draw(3);
         }
         device->EndFrame(true);
@@ -571,6 +844,19 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    groundSet.reset();
+    groundPipeline.reset();
+    groundPixelShader.reset();
+    groundVertexShader.reset();
+    groundVolumeSampler.reset();
+    groundShadowSampler.reset();
+    groundVolumeTexture.reset();
+    for (auto& texture : groundShadowTextures) {
+        texture.reset();
+    }
+    groundSceneDepth.reset();
+    groundShadowBuffer.reset();
+    groundUniformBuffer.reset();
     compositeSet.reset();
     compositePipeline.reset();
     compositePixelShader.reset();

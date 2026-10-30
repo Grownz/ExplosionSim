@@ -104,6 +104,8 @@ struct TextureSubresource {
     uint32_t width = 0;
     uint32_t height = 0;
     uint32_t rowPitch = 0;
+    // Bytes between depth slices for 3D uploads; 0 means rowPitch * height.
+    uint32_t slicePitch = 0;
 };
 
 struct TextureDesc {

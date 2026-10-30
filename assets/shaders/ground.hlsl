@@ -1,15 +1,15 @@
 #include "common.hlsli"
 
-Texture2D<float> SceneDepth : register(t1);
-Texture2D<float> ShadowMap0 : register(t2);
-Texture2D<float> ShadowMap1 : register(t3);
-Texture2D<float> ShadowMap2 : register(t4);
-Texture2D<float> StaticShadowMap : register(t5);
-Texture3D<float4> VolumeTexture : register(t6);
-SamplerComparisonState ShadowSampler : register(s2);
-SamplerState VolumeSampler : register(s3);
+EX_VK_BINDING(9) Texture2D<float> SceneDepth : register(t1);
+EX_VK_BINDING(10) Texture2D<float> ShadowMap0 : register(t2);
+EX_VK_BINDING(11) Texture2D<float> ShadowMap1 : register(t3);
+EX_VK_BINDING(12) Texture2D<float> ShadowMap2 : register(t4);
+EX_VK_BINDING(13) Texture2D<float> StaticShadowMap : register(t5);
+EX_VK_BINDING(14) Texture3D<float4> VolumeTexture : register(t6);
+EX_VK_BINDING(18) SamplerComparisonState ShadowSampler : register(s2);
+EX_VK_BINDING(19) SamplerState VolumeSampler : register(s3);
 
-cbuffer ShadowConstants : register(b2)
+EX_VK_BINDING(2) cbuffer ShadowConstants : register(b2)
 {
     float4x4 LightViewProj[3];
     float4x4 StaticLightViewProj;
