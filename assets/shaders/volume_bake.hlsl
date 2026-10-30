@@ -4,7 +4,16 @@
 //
 //   R = density, G = temperature / 12 kK, B = dust mask, A = soot mask.
 
-cbuffer VolumeBakeConstants : register(b0)
+// Vulkan binding annotations for the compute path. The shader has its own
+// constants and does not include common.hlsli (its FrameConstants names would
+// collide with the volume fields).
+#if defined(EXPLOSION_VULKAN)
+#define EX_VK_BINDING(n) [[vk::binding(n, 0)]]
+#else
+#define EX_VK_BINDING(n)
+#endif
+
+EX_VK_BINDING(0) cbuffer VolumeBakeConstants : register(b0)
 {
     float4 BoundsMin;   // xyz = box minimum, w = resolution
     float4 BoundsSize;  // xyz = box size, w = voxel size
@@ -15,7 +24,7 @@ cbuffer VolumeBakeConstants : register(b0)
     float4 Shock;       // x = radius, y = mach, z = burst height, w = dust intensity
 };
 
-RWTexture3D<float4> Output : register(u0);
+EX_VK_BINDING(21) RWTexture3D<float4> Output : register(u0);
 
 static const float kTemperatureScale = 12000.0f;
 

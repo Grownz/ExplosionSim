@@ -6,9 +6,11 @@
 #include "core/Log.h"
 #include "core/ThreadPool.h"
 #include "gfx/Camera.h"
+#include "gfx/GpuVolumeBaker.h"
 #include "gfx/rhi/Rhi.h"
 #include "platform/Platform.h"
 #include "sim/Simulation.h"
+#include "VolumeBakeShader.h"
 
 #include <algorithm>
 #include <cctype>
@@ -60,6 +62,7 @@ struct Options {
     bool sceneVehicles = true;
     bool sceneVegetation = true;
     int volumeResolution = 0;
+    bool gpuVolumeBake = true;
     int raymarchSteps = 128;
     float exposure = 0.8f;
     float bloomStrength = 0.10f;
@@ -90,6 +93,7 @@ void PrintUsage() {
     std::printf("  --scene-density <x>  Environment density multiplier.\n");
     std::printf("  --no-scene           Disable the procedural environment.\n");
     std::printf("  --volume-resolution <n>  Volume grid resolution (default 128).\n");
+    std::printf("  --no-gpu-volume-bake Disable the GPU volume bake.\n");
     std::printf("  --raymarch-steps <n>     Volume raymarch steps (default 128).\n");
     std::printf("  --exposure <x>       Tonemap exposure (default 0.8).\n");
     std::printf("  --bloom-strength <x> Bloom strength (default 0.10).\n");
@@ -444,6 +448,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
             options.particlesEnabled = false;
             continue;
         }
+        if (std::strcmp(arg, "--no-gpu-volume-bake") == 0) {
+            options.gpuVolumeBake = false;
+            continue;
+        }
         std::fprintf(stderr, "Unknown option: %s\n", arg);
         return false;
     }
@@ -684,6 +692,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    ex::gfx::GpuVolumeBaker gpuVolume;
+    bool gpuVolumeReady =
+        options.gpuVolumeBake &&
+        device->GetBackend() == ex::rhi::Backend::Vulkan &&
+        gpuVolume.Initialize(device.get(), kVolumeBakeCS, kVolumeBakeCSSize);
+    if (!gpuVolumeReady) {
+        ex::LogWarn("GPU volume bake unavailable; using the CPU baker.");
+    }
+
     ex::core::ThreadPool pool;
     ex::sim::SimulationSettings simulationSettings{};
     simulationSettings.chargeMassKg =
@@ -692,7 +709,7 @@ int main(int argc, char** argv) {
         options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 0.4;
     simulationSettings.mode = ex::sim::SimulationMode::ReducedOrder;
     simulationSettings.gpuParticles = false;
-    simulationSettings.gpuVolumeBake = false;
+    simulationSettings.gpuVolumeBake = gpuVolumeReady;
     simulationSettings.timeScale = options.timeScale;
     simulationSettings.fuseSeconds =
         options.headless ? 0.0 : options.fuseSeconds;
@@ -760,6 +777,21 @@ int main(int argc, char** argv) {
         simulation.Volume().Poll();
         simulation.Volume().BakeNow(simulation.Blast());
         simulation.Volume().Poll();
+        if (gpuVolumeReady) {
+            ex::sim::VolumeBakeRequest request;
+            if (simulation.Volume().TakeGpuRequest(request) &&
+                gpuVolume.Bake(request)) {
+                preview.SetGpuVolume(gpuVolume.Texture(), gpuVolume.Bounds(),
+                                     gpuVolume.Extinction(),
+                                     gpuVolume.Version());
+            } else {
+                ex::LogWarn("GPU volume bake failed; using the CPU baker.");
+                gpuVolumeReady = false;
+                simulation.Volume().SetGpuBake(false);
+                simulation.Volume().BakeNow(simulation.Blast());
+                simulation.Volume().Poll();
+            }
+        }
     }
     FrameCamera(simulation, camera, options);
 
@@ -791,7 +823,23 @@ int main(int argc, char** argv) {
             const float dt = float(std::clamp(now - lastTime, 0.0, 0.05));
             lastTime = now;
             simulation.Update(dt);
-            simulation.Volume().Poll();
+            if (gpuVolumeReady) {
+                ex::sim::VolumeBakeRequest request;
+                if (simulation.Volume().TakeGpuRequest(request)) {
+                    if (gpuVolume.Bake(request)) {
+                        preview.SetGpuVolume(
+                            gpuVolume.Texture(), gpuVolume.Bounds(),
+                            gpuVolume.Extinction(), gpuVolume.Version());
+                    } else {
+                        ex::LogWarn(
+                            "GPU volume bake failed; using the CPU baker.");
+                        gpuVolumeReady = false;
+                        simulation.Volume().SetGpuBake(false);
+                    }
+                }
+            } else {
+                simulation.Volume().Poll();
+            }
         }
 
         preview.Render(device.get(), simulation, camera, device->Width(),

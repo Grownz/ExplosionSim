@@ -97,12 +97,14 @@ separate `explosion_linux` target whenever Vulkan and SDL3 are available.
 ```
 
 The shell runs `sim::Simulation` and renders the full reduced-order preview
-through the Vulkan RHI: sky, ground, the generated town, the CPU volume bake,
+through the Vulkan RHI: sky, ground, the generated town, the volume bake,
 the additive/fire/alpha particle batches, the shock-front refraction, bloom and
-the tonemap composite. The camera follows the same reduced-order framing as the
-Windows app. `--screenshot` accepts `.png` and `.ppm`; the scene seed, density,
-charge, burst height, volume resolution and the main render settings can be
-overridden from the command line for capture comparisons. The shell loads the
+the tonemap composite. The volume bake runs as a compute shader by default;
+`--no-gpu-volume-bake` forces the CPU path. The camera follows the same
+reduced-order framing as the Windows app. `--screenshot` accepts `.png` and
+`.ppm`; the scene seed, density, charge, burst height, volume resolution and the
+main render settings can be overridden from the command line for capture
+comparisons. The shell loads the
 same `settings.ini` keys as the Windows app and renders the Voronoi chunk
 geometry for collapsed buildings. `tools/capture_settings.ini` is the shared
 deterministic capture profile; pass `--settings <path>` to load any compatible

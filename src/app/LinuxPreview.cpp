@@ -1290,6 +1290,33 @@ bool LinuxPreview::CreateComposite(ex::rhi::Device* device) {
            bloomDownSet_ && bloomUpSet_;
 }
 
+void LinuxPreview::SetGpuVolume(ex::rhi::Texture* texture,
+                                const ex::sim::VolumeBounds& bounds,
+                                float extinction, uint64_t version) {
+    if (!texture) {
+        return;
+    }
+    gpuVolumeTexture_ = texture;
+    gpuVolumeBounds_ = bounds;
+    gpuVolumeExtinction_ = extinction;
+    gpuVolumeValid_ = true;
+    volumeVersion_ = version;
+    if (groundSet_) {
+        groundSet_->SetImage(14, texture);
+    }
+    if (volumeSet_) {
+        volumeSet_->SetImage(8, texture);
+    }
+    if (chunkSet_) {
+        chunkSet_->SetImage(15, texture);
+    }
+    for (SceneDraw& draw : sceneDraws_) {
+        if (draw.set) {
+            draw.set->SetImage(15, texture);
+        }
+    }
+}
+
 bool LinuxPreview::UploadVolume(const ex::sim::VolumeFrame& frame) {
     if (!device_ || frame.empty() || !frame.halfFloat ||
         frame.bytesPerVoxel != 8) {
@@ -1319,6 +1346,7 @@ bool LinuxPreview::UploadVolume(const ex::sim::VolumeFrame& frame) {
         return false;
     }
     volumeTexture_ = std::move(texture);
+    gpuVolumeValid_ = false;
     if (groundSet_) {
         groundSet_->SetImage(14, volumeTexture_.get());
     }
@@ -1427,18 +1455,27 @@ void LinuxPreview::UpdateFrameConstants(const ex::sim::Simulation& simulation,
     frameConstantsData_[42] = 0.44f;
     frameConstantsData_[43] = settings_.bloomStrength;
 
-    const ex::sim::VolumeFrame& volume = simulation.Volume().Current();
-    const bool volumeValid =
-        simulation.Volume().HasData() && !volume.empty();
     XMFLOAT3 volumeMin{0.0f, 0.0f, 0.0f};
     XMFLOAT3 volumeMax{1.0f, 1.0f, 1.0f};
     float extinctionScale = 0.1f;
     int volumeResolution = 1;
-    if (volumeValid) {
-        volumeMin = volume.bounds.min;
-        volumeMax = volume.bounds.max;
-        extinctionScale = volume.extinctionScale;
-        volumeResolution = std::max(volume.resolution, 1);
+    if (gpuVolumeValid_) {
+        volumeMin = gpuVolumeBounds_.min;
+        volumeMax = gpuVolumeBounds_.max;
+        extinctionScale = gpuVolumeExtinction_;
+        volumeResolution = gpuVolumeTexture_
+                               ? std::max(int(gpuVolumeTexture_->Depth()), 1)
+                               : 1;
+    } else {
+        const ex::sim::VolumeFrame& volume = simulation.Volume().Current();
+        const bool volumeValid =
+            simulation.Volume().HasData() && !volume.empty();
+        if (volumeValid) {
+            volumeMin = volume.bounds.min;
+            volumeMax = volume.bounds.max;
+            extinctionScale = volume.extinctionScale;
+            volumeResolution = std::max(volume.resolution, 1);
+        }
     }
     frameConstantsData_[44] = volumeMin.x;
     frameConstantsData_[45] = volumeMin.y;
@@ -1577,7 +1614,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         }
     }
 
-    if (simulation.Volume().HasData()) {
+    if (!gpuVolumeValid_ && simulation.Volume().HasData()) {
         const ex::sim::VolumeFrame& volume = simulation.Volume().Current();
         if (volume.version != volumeVersion_ && UploadVolume(volume)) {
             volumeVersion_ = volume.version;

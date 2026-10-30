@@ -68,6 +68,11 @@ enum class ShaderStage {
     Compute,
 };
 
+enum class TextureState {
+    General,
+    ShaderRead,
+};
+
 struct Extent2D {
     uint32_t width = 0;
     uint32_t height = 0;
@@ -246,6 +251,7 @@ struct VertexAttribute {
 struct PipelineDesc {
     Shader* vertexShader = nullptr;
     Shader* pixelShader = nullptr;
+    Shader* computeShader = nullptr;
     const VertexAttribute* vertexAttributes = nullptr;
     uint32_t vertexAttributeCount = 0;
     uint32_t vertexStride = 0; // Vulkan vertex binding stride; 0 = derive
@@ -334,6 +340,14 @@ public:
                                       uint32_t firstIndex = 0,
                                       int32_t baseVertex = 0,
                                       uint32_t firstInstance = 0) = 0;
+
+    // Compute pass. BeginCompute/EndCompute bracket a dispatch sequence; on
+    // D3D11 they are no-ops because the immediate context records directly.
+    virtual void BeginCompute() = 0;
+    virtual void EndCompute() = 0;
+    virtual void Dispatch(uint32_t x, uint32_t y, uint32_t z) = 0;
+    // Transitions a storage image between general and shader-read layouts.
+    virtual void TransitionTexture(Texture* texture, TextureState state) = 0;
 
     virtual void* NativeHandle() const = 0;
 };

@@ -41,6 +41,9 @@ public:
     bool Initialize(ex::rhi::Device* device, int width, int height);
     void Shutdown();
     void SetSettings(const Settings& settings) { settings_ = settings; }
+    void SetGpuVolume(ex::rhi::Texture* texture,
+                      const ex::sim::VolumeBounds& bounds, float extinction,
+                      uint64_t version);
     void Render(ex::rhi::Device* device, ex::sim::Simulation& simulation,
                 const ex::gfx::Camera& camera, int width, int height,
                 bool vsync);
@@ -151,6 +154,10 @@ private:
     std::unique_ptr<ex::rhi::Pipeline> volumePipeline_;
     std::unique_ptr<ex::rhi::DescriptorSet> volumeSet_;
     uint64_t volumeVersion_ = 0;
+    ex::rhi::Texture* gpuVolumeTexture_ = nullptr;
+    ex::sim::VolumeBounds gpuVolumeBounds_{};
+    float gpuVolumeExtinction_ = 0.1f;
+    bool gpuVolumeValid_ = false;
 
     // Additive particles.
     std::unique_ptr<ex::rhi::Buffer> particleInstanceBuffer_;

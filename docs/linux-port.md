@@ -1,23 +1,23 @@
 # Linux port and multi-platform RHI plan
 
-Status: **M0 done, M1 done, M2 done, M3 in progress.** The portable simulation
-core builds and passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The
-backend-neutral RHI interfaces and the D3D11 backend exist; `GfxDevice` and the
-swapchain run through the RHI. `SceneRenderer` creates its meshes,
-instance/chunk/shadow buffers, shadow and surface-detail textures, shaders,
-input layouts, fixed-function states and samplers through the RHI, and its
-shadow/main passes now record through `rhi::CommandList` instead of the D3D11
-context. `Renderer` owns its HDR/bloom targets as RHI textures.
+Status: **M0-M3 done, M4 started.** The portable simulation core builds and
+passes `core_tests` natively on Linux (Ubuntu 24.04 CI job). The backend-neutral
+RHI interfaces, D3D11 and Vulkan backends, `SceneRenderer`, command lists,
+compute pipelines and the native Linux app are in place. The app drives
+`sim::Simulation`, loads the Windows settings keys, uploads the GPU volume bake
+and the additive/fire/alpha particle batches, renders Voronoi chunks and runs
+the reduced-order chain through the RHI. The Euler solver and GPU particle
+integration are next.
 
 M2 now has an SDL3 window layer, a Vulkan 1.2 device with an offscreen target,
 swapchain, clear, present and readback (`vulkan_smoke`), and the native
 `explosion_linux` application shell with resize and PNG/PPM captures. The shell
-drives `sim::Simulation`, loads the Windows settings keys, uploads the CPU volume
-bake and the additive/fire/alpha particle batches, renders Voronoi chunks and
-runs the reduced-order chain through the RHI. The CI `capture-parity` job
-compares the Linux capture against the checked-in Windows reference with a
-documented tolerance. See [`linux-build.md`](linux-build.md) for the current
-Linux build instructions.
+drives `sim::Simulation`, loads the Windows settings keys, uses the GPU volume
+bake (with a CPU fallback) and the additive/fire/alpha particle batches, renders
+Voronoi chunks and runs the reduced-order chain through the RHI. The CI
+`capture-parity` job compares the Linux capture against the checked-in Windows
+reference with a documented tolerance. See [`linux-build.md`](linux-build.md)
+for the current Linux build instructions.
 
 ## 1. Goal
 
@@ -264,7 +264,12 @@ Windows and Linux captures with a tolerance.
 - Acceptance: Linux renders the full reduced-order scene; `--screenshot` output is
   visually equivalent; 60 fps target at 1080p on the reference GPU.
 
-### M4 — High-fidelity solver and GPU particles on Vulkan (25–40 days)
+### M4 - High-fidelity solver and GPU particles on Vulkan (25-40 days)
+
+Status: **started.** The RHI now has compute pipelines, dispatches and storage-image
+transitions, and the analytic volume bake runs on the GPU in `explosion_linux`
+(`--no-gpu-volume-bake` keeps the CPU fallback). The Euler solver, GPU particle
+integration and indirect draws are next.
 
 - Port `GpuEulerSolver`: state textures, sweeps, reduce/rescale, light volume, render
   volume, timestamp queries.

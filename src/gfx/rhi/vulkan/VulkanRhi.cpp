@@ -682,12 +682,101 @@ public:
         }
     }
 
+    void BeginCompute() override {
+        if (!device_ || device_->frameActive_ || computeActive_) {
+            return;
+        }
+        if (!device_->WaitForFence() || !device_->BeginCommandBuffer()) {
+            return;
+        }
+        device_->boundPipeline_ = VK_NULL_HANDLE;
+        device_->boundPipelineLayout_ = VK_NULL_HANDLE;
+        device_->boundDescriptorSet_ = VK_NULL_HANDLE;
+        computeActive_ = true;
+    }
+
+    void EndCompute() override {
+        if (!device_ || !computeActive_) {
+            return;
+        }
+        vkEndCommandBuffer(device_->commandBuffer_);
+        VkSubmitInfo submit{};
+        submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &device_->commandBuffer_;
+        vkResetFences(device_->device_, 1, &device_->fence_);
+        if (vkQueueSubmit(device_->queue_, 1, &submit, device_->fence_) !=
+            VK_SUCCESS) {
+            computeActive_ = false;
+            return;
+        }
+        vkWaitForFences(device_->device_, 1, &device_->fence_, VK_TRUE, UINT64_MAX);
+        computeActive_ = false;
+    }
+
+    void Dispatch(uint32_t x, uint32_t y, uint32_t z) override {
+        if (!device_ || !computeActive_ || !device_->boundPipeline_) {
+            return;
+        }
+        vkCmdBindPipeline(device_->commandBuffer_,
+                          VK_PIPELINE_BIND_POINT_COMPUTE,
+                          device_->boundPipeline_);
+        if (device_->boundDescriptorSet_) {
+            vkCmdBindDescriptorSets(device_->commandBuffer_,
+                                    VK_PIPELINE_BIND_POINT_COMPUTE,
+                                    device_->boundPipelineLayout_, 0, 1,
+                                    &device_->boundDescriptorSet_, 0, nullptr);
+        }
+        vkCmdDispatch(device_->commandBuffer_, x, y, z);
+    }
+
+    void TransitionTexture(rhi::Texture* texture,
+                           rhi::TextureState state) override {
+        if (!device_ || !computeActive_ || !texture) {
+            return;
+        }
+        auto* impl = dynamic_cast<TextureImpl*>(texture);
+        if (!impl) {
+            return;
+        }
+        VkImageMemoryBarrier barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        barrier.oldLayout = state == rhi::TextureState::General
+                                ? VK_IMAGE_LAYOUT_UNDEFINED
+                                : VK_IMAGE_LAYOUT_GENERAL;
+        barrier.newLayout = state == rhi::TextureState::General
+                                ? VK_IMAGE_LAYOUT_GENERAL
+                                : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = impl->Handle();
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+        barrier.srcAccessMask = state == rhi::TextureState::General
+                                    ? 0
+                                    : VK_ACCESS_SHADER_WRITE_BIT;
+        barrier.dstAccessMask = state == rhi::TextureState::General
+                                    ? VK_ACCESS_SHADER_WRITE_BIT
+                                    : VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(
+            device_->commandBuffer_,
+            state == rhi::TextureState::General ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                                                : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            state == rhi::TextureState::General ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
+                                                : VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
     void* NativeHandle() const override {
         return device_ ? device_->commandBuffer_ : VK_NULL_HANDLE;
     }
 
 private:
     Device* device_ = nullptr;
+    bool computeActive_ = false;
 };
 
 Device::~Device() {
@@ -2159,7 +2248,73 @@ std::unique_ptr<Sampler> Device::CreateSampler(const SamplerDesc& desc) {
 }
 
 std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
-    if (!device_ || !renderPass_ || !desc.vertexShader || !desc.pixelShader) {
+    if (!device_) {
+        return nullptr;
+    }
+    if (desc.computeShader) {
+        auto* computeShader = dynamic_cast<ShaderImpl*>(desc.computeShader);
+        if (!computeShader ||
+            desc.computeShader->Stage() != ShaderStage::Compute) {
+            return nullptr;
+        }
+        std::vector<VkDescriptorSetLayoutBinding> layoutBindings;
+        std::vector<DescriptorBinding> bindings;
+        layoutBindings.reserve(desc.descriptorBindingCount);
+        bindings.reserve(desc.descriptorBindingCount);
+        for (uint32_t i = 0; i < desc.descriptorBindingCount; ++i) {
+            const DescriptorBinding& descriptorBinding =
+                desc.descriptorBindings[i];
+            bindings.push_back(descriptorBinding);
+            VkDescriptorSetLayoutBinding converted{};
+            converted.binding = descriptorBinding.binding;
+            converted.descriptorType =
+                ToVkDescriptorType(descriptorBinding.type);
+            converted.descriptorCount =
+                descriptorBinding.count == 0 ? 1 : descriptorBinding.count;
+            converted.stageFlags = ToVkStage(descriptorBinding);
+            layoutBindings.push_back(converted);
+        }
+        VkDescriptorSetLayoutCreateInfo descriptorInfo{};
+        descriptorInfo.sType =
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        descriptorInfo.bindingCount = uint32_t(layoutBindings.size());
+        descriptorInfo.pBindings = layoutBindings.data();
+        VkDescriptorSetLayout descriptorLayout = VK_NULL_HANDLE;
+        if (vkCreateDescriptorSetLayout(device_, &descriptorInfo, nullptr,
+                                        &descriptorLayout) != VK_SUCCESS) {
+            return nullptr;
+        }
+        VkPipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts = &descriptorLayout;
+        VkPipelineLayout layout = VK_NULL_HANDLE;
+        if (vkCreatePipelineLayout(device_, &layoutInfo, nullptr, &layout) !=
+            VK_SUCCESS) {
+            vkDestroyDescriptorSetLayout(device_, descriptorLayout, nullptr);
+            return nullptr;
+        }
+        VkPipelineShaderStageCreateInfo stage{};
+        stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        stage.module = computeShader->Module();
+        stage.pName = computeShader->EntryPoint();
+        VkComputePipelineCreateInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        info.stage = stage;
+        info.layout = layout;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        if (vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &info,
+                                     nullptr, &pipeline) != VK_SUCCESS) {
+            vkDestroyPipelineLayout(device_, layout, nullptr);
+            vkDestroyDescriptorSetLayout(device_, descriptorLayout, nullptr);
+            return nullptr;
+        }
+        return std::make_unique<PipelineImpl>(device_, pipeline, layout,
+                                              descriptorLayout,
+                                              std::move(bindings));
+    }
+    if (!renderPass_ || !desc.vertexShader || !desc.pixelShader) {
         return nullptr;
     }
     auto* vertexShader = dynamic_cast<ShaderImpl*>(desc.vertexShader);

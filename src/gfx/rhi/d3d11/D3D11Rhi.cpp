@@ -273,10 +273,20 @@ public:
           blendState_(std::move(blendState)),
           topology_(topology) {}
 
-    void* NativeHandle() const override { return vs_.Get(); }
+    explicit PipelineImpl(ComPtr<ID3D11ComputeShader> cs)
+        : cs_(std::move(cs)) {}
+
+    void* NativeHandle() const override {
+        return cs_ ? static_cast<void*>(cs_.Get())
+                   : static_cast<void*>(vs_.Get());
+    }
 
     void Bind(ID3D11DeviceContext* context) const {
         if (!context) {
+            return;
+        }
+        if (cs_) {
+            context->CSSetShader(cs_.Get(), nullptr, 0);
             return;
         }
         context->IASetInputLayout(inputLayout_.Get());
@@ -292,6 +302,7 @@ private:
     ComPtr<ID3D11InputLayout> inputLayout_;
     ComPtr<ID3D11VertexShader> vs_;
     ComPtr<ID3D11PixelShader> ps_;
+    ComPtr<ID3D11ComputeShader> cs_;
     ComPtr<ID3D11DepthStencilState> depthState_;
     ComPtr<ID3D11RasterizerState> rasterizer_;
     ComPtr<ID3D11BlendState> blendState_;
@@ -456,6 +467,15 @@ public:
                                           baseVertex, firstInstance);
         }
     }
+
+    void BeginCompute() override {}
+    void EndCompute() override {}
+    void Dispatch(uint32_t x, uint32_t y, uint32_t z) override {
+        if (context_) {
+            context_->Dispatch(x, y, z);
+        }
+    }
+    void TransitionTexture(rhi::Texture*, rhi::TextureState) override {}
 
     void* NativeHandle() const override { return context_; }
 
@@ -1105,7 +1125,22 @@ std::unique_ptr<rhi::Sampler> Device::CreateSampler(const SamplerDesc& desc) {
 }
 
 std::unique_ptr<rhi::Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
-    if (!device_ || !desc.vertexShader) {
+    if (!device_) {
+        return nullptr;
+    }
+    if (desc.computeShader) {
+        if (desc.computeShader->Stage() != ShaderStage::Compute) {
+            return nullptr;
+        }
+        ComPtr<ID3D11ComputeShader> cs(
+            static_cast<ID3D11ComputeShader*>(
+                desc.computeShader->NativeHandle()));
+        if (!cs) {
+            return nullptr;
+        }
+        return std::make_unique<PipelineImpl>(std::move(cs));
+    }
+    if (!desc.vertexShader) {
         return nullptr;
     }
 
