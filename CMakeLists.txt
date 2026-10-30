@@ -221,6 +221,7 @@ add_library(explosion_core STATIC
     src/scene/Scene.cpp
     src/scene/VoronoiFracture.cpp
     src/scene/PhysicsWorld.cpp
+    src/gfx/SceneMeshLibrary.cpp
     src/core/ThreadPool.cpp
     src/core/Random.cpp)
 

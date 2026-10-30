@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "gfx/GfxDevice.h"
+#include "gfx/SceneMeshLibrary.h"
 #include "scene/SceneTypes.h"
 #include "scene/VehicleModels.h"
 
@@ -17,11 +18,7 @@ namespace ex::gfx {
 // correctly occlude the fireball/smoke.
 class SceneRenderer {
 public:
-    struct Vertex {
-        DirectX::XMFLOAT3 position;
-        DirectX::XMFLOAT3 normal;
-        DirectX::XMFLOAT3 color;
-    };
+    using Vertex = SceneMeshVertex;
 
     bool Initialize(rhi::Device* rhiDevice);
     void Shutdown();

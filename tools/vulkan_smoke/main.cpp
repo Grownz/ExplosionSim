@@ -15,6 +15,7 @@
 #include "ParticleShaders.h"
 #include "scene/SceneTypes.h"
 #include "sim/BlastModel.h"
+#include "gfx/SceneMeshLibrary.h"
 
 #include <DirectXMath.h>
 
@@ -1028,59 +1029,20 @@ int main(int argc, char** argv) {
     uint32_t sceneInstanceCount = 1;
 
     if (options.scene || options.sceneFrame || options.city) {
-        struct SceneVertex {
-            float position[3];
-            float normal[3];
-            float color[3];
-        };
-        const SceneVertex vertices[] = {
-            {{-0.5f, -0.5f, -0.5f}, {0, 0, -1}, {0.80f, 0.45f, 0.35f}},
-            {{0.5f, -0.5f, -0.5f}, {0, 0, -1}, {0.80f, 0.45f, 0.35f}},
-            {{0.5f, 0.5f, -0.5f}, {0, 0, -1}, {0.80f, 0.45f, 0.35f}},
-            {{-0.5f, 0.5f, -0.5f}, {0, 0, -1}, {0.80f, 0.45f, 0.35f}},
-            {{0.5f, -0.5f, 0.5f}, {0, 0, 1}, {0.35f, 0.55f, 0.80f}},
-            {{-0.5f, -0.5f, 0.5f}, {0, 0, 1}, {0.35f, 0.55f, 0.80f}},
-            {{-0.5f, 0.5f, 0.5f}, {0, 0, 1}, {0.35f, 0.55f, 0.80f}},
-            {{0.5f, 0.5f, 0.5f}, {0, 0, 1}, {0.35f, 0.55f, 0.80f}},
-            {{-0.5f, -0.5f, 0.5f}, {-1, 0, 0}, {0.45f, 0.75f, 0.45f}},
-            {{-0.5f, -0.5f, -0.5f}, {-1, 0, 0}, {0.45f, 0.75f, 0.45f}},
-            {{-0.5f, 0.5f, -0.5f}, {-1, 0, 0}, {0.45f, 0.75f, 0.45f}},
-            {{-0.5f, 0.5f, 0.5f}, {-1, 0, 0}, {0.45f, 0.75f, 0.45f}},
-            {{0.5f, -0.5f, -0.5f}, {1, 0, 0}, {0.75f, 0.65f, 0.35f}},
-            {{0.5f, -0.5f, 0.5f}, {1, 0, 0}, {0.75f, 0.65f, 0.35f}},
-            {{0.5f, 0.5f, 0.5f}, {1, 0, 0}, {0.75f, 0.65f, 0.35f}},
-            {{0.5f, 0.5f, -0.5f}, {1, 0, 0}, {0.75f, 0.65f, 0.35f}},
-            {{-0.5f, 0.5f, -0.5f}, {0, 1, 0}, {0.85f, 0.85f, 0.80f}},
-            {{0.5f, 0.5f, -0.5f}, {0, 1, 0}, {0.85f, 0.85f, 0.80f}},
-            {{0.5f, 0.5f, 0.5f}, {0, 1, 0}, {0.85f, 0.85f, 0.80f}},
-            {{-0.5f, 0.5f, 0.5f}, {0, 1, 0}, {0.85f, 0.85f, 0.80f}},
-            {{-0.5f, -0.5f, 0.5f}, {0, -1, 0}, {0.30f, 0.30f, 0.30f}},
-            {{0.5f, -0.5f, 0.5f}, {0, -1, 0}, {0.30f, 0.30f, 0.30f}},
-            {{0.5f, -0.5f, -0.5f}, {0, -1, 0}, {0.30f, 0.30f, 0.30f}},
-            {{-0.5f, -0.5f, -0.5f}, {0, -1, 0}, {0.30f, 0.30f, 0.30f}},
-        };
-        uint32_t indices[36] = {};
-        for (int face = 0; face < 6; ++face) {
-            const uint32_t faceBase = uint32_t(face) * 4;
-            const uint32_t offset = uint32_t(face) * 6;
-            indices[offset + 0] = faceBase + 0;
-            indices[offset + 1] = faceBase + 1;
-            indices[offset + 2] = faceBase + 2;
-            indices[offset + 3] = faceBase + 0;
-            indices[offset + 4] = faceBase + 2;
-            indices[offset + 5] = faceBase + 3;
-        }
+        const ex::gfx::SceneMeshData buildingMesh =
+            ex::gfx::MakeBuildingMesh();
 
         ex::rhi::BufferDesc vertexDesc{};
-        vertexDesc.size = sizeof(vertices);
+        vertexDesc.size = buildingMesh.vertices.size() *
+                          sizeof(ex::gfx::SceneMeshVertex);
         vertexDesc.usage = ex::rhi::BufferUsage::Vertex;
-        vertexDesc.initialData = vertices;
+        vertexDesc.initialData = buildingMesh.vertices.data();
         sceneVertexBuffer = device->CreateBuffer(vertexDesc);
 
         ex::rhi::BufferDesc indexDesc{};
-        indexDesc.size = sizeof(indices);
+        indexDesc.size = buildingMesh.indices.size() * sizeof(uint32_t);
         indexDesc.usage = ex::rhi::BufferUsage::Index;
-        indexDesc.initialData = indices;
+        indexDesc.initialData = buildingMesh.indices.data();
         sceneIndexBuffer = device->CreateBuffer(indexDesc);
 
         struct SceneInstance {
@@ -1108,7 +1070,7 @@ int main(int argc, char** argv) {
                     DirectX::XMMatrixScaling(object.size.x, object.size.y,
                                              object.size.z) *
                     DirectX::XMMatrixTranslation(object.position.x,
-                                                 object.size.y * 0.5f,
+                                                 object.position.y,
                                                  object.position.z);
                 DirectX::XMFLOAT4X4 matrix{};
                 DirectX::XMStoreFloat4x4(&matrix, world);
@@ -1243,7 +1205,7 @@ int main(int argc, char** argv) {
         pipelineDesc.pixelShader = scenePixelShader.get();
         pipelineDesc.vertexAttributes = attributes;
         pipelineDesc.vertexAttributeCount = 3;
-        pipelineDesc.vertexStride = sizeof(SceneVertex);
+        pipelineDesc.vertexStride = sizeof(ex::gfx::SceneMeshVertex);
         pipelineDesc.descriptorBindings = bindings;
         pipelineDesc.descriptorBindingCount = 14;
         pipelineDesc.depthTest = true;
