@@ -8,6 +8,7 @@
 #include "SkyShaders.h"
 #include "CompositeShaders.h"
 #include "GroundShaders.h"
+#include "BloomShaders.h"
 
 #include <DirectXMath.h>
 
@@ -34,6 +35,7 @@ struct Options {
     bool composite = false;
     bool ground = false;
     bool target = false;
+    bool bloom = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -80,6 +82,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--target") == 0) {
             options.target = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--bloom") == 0) {
+            options.bloom = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -436,7 +442,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> compositePipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> compositeSet;
 
-    if (options.composite || options.target) {
+    if (options.composite || options.target || options.bloom) {
         const uint8_t scenePixels[16] = {
             128, 64, 32, 255, 128, 64, 32, 255,
             128, 64, 32, 255, 128, 64, 32, 255,
@@ -792,6 +798,144 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::unique_ptr<ex::rhi::Texture> bloomSourceTexture;
+    std::unique_ptr<ex::rhi::Texture> bloomDownTarget;
+    std::unique_ptr<ex::rhi::Texture> bloomUpTarget;
+    std::unique_ptr<ex::rhi::Sampler> bloomSampler;
+    std::unique_ptr<ex::rhi::Buffer> bloomUniformBuffer;
+    std::unique_ptr<ex::rhi::Shader> bloomVertexShader;
+    std::unique_ptr<ex::rhi::Shader> bloomDownShader;
+    std::unique_ptr<ex::rhi::Shader> bloomUpShader;
+    std::unique_ptr<ex::rhi::Pipeline> bloomDownPipeline;
+    std::unique_ptr<ex::rhi::Pipeline> bloomUpPipeline;
+    std::unique_ptr<ex::rhi::DescriptorSet> bloomDownSet;
+    std::unique_ptr<ex::rhi::DescriptorSet> bloomUpSet;
+    std::unique_ptr<ex::rhi::DescriptorSet> bloomCompositeSet;
+
+    if (options.bloom) {
+        uint8_t sourcePixels[4 * 4 * 4] = {};
+        for (int y = 1; y <= 2; ++y) {
+            for (int x = 1; x <= 2; ++x) {
+                const size_t index = (size_t(y) * 4 + size_t(x)) * 4;
+                sourcePixels[index + 0] = 255;
+                sourcePixels[index + 1] = 180;
+                sourcePixels[index + 2] = 80;
+                sourcePixels[index + 3] = 255;
+            }
+        }
+        ex::rhi::TextureSubresource sourceSubresource{};
+        sourceSubresource.data = sourcePixels;
+        sourceSubresource.width = 4;
+        sourceSubresource.height = 4;
+        sourceSubresource.rowPitch = 16;
+        ex::rhi::TextureDesc sourceDesc{};
+        sourceDesc.format = ex::rhi::Format::R8G8B8A8_UNORM;
+        sourceDesc.width = 4;
+        sourceDesc.height = 4;
+        sourceDesc.usage = ex::rhi::TextureUsage::Sampled;
+        sourceDesc.subresources = &sourceSubresource;
+        sourceDesc.subresourceCount = 1;
+        bloomSourceTexture = device->CreateTexture(sourceDesc);
+
+        ex::rhi::TextureDesc targetDesc{};
+        targetDesc.format = ex::rhi::Format::B8G8R8A8_UNORM;
+        targetDesc.width = uint32_t(options.width);
+        targetDesc.height = uint32_t(options.height);
+        targetDesc.usage = ex::rhi::TextureUsage::RenderTarget |
+                           ex::rhi::TextureUsage::Sampled;
+        bloomDownTarget = device->CreateTexture(targetDesc);
+        bloomUpTarget = device->CreateTexture(targetDesc);
+
+        ex::rhi::SamplerDesc samplerDesc{};
+        samplerDesc.linear = true;
+        samplerDesc.clamp = true;
+        bloomSampler = device->CreateSampler(samplerDesc);
+
+        float bloomConstants[8] = {
+            1.0f / 4.0f, 1.0f / 4.0f, 1.0f / 4.0f, 1.0f / 4.0f,
+            0.5f, 1.0f, 1.0f, 1.0f,
+        };
+        ex::rhi::BufferDesc uniformDesc{};
+        uniformDesc.size = sizeof(bloomConstants);
+        uniformDesc.usage =
+            ex::rhi::BufferUsage::Uniform | ex::rhi::BufferUsage::Dynamic;
+        uniformDesc.initialData = bloomConstants;
+        bloomUniformBuffer = device->CreateBuffer(uniformDesc);
+
+        ex::rhi::ShaderDesc shaderDesc{};
+        shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+        shaderDesc.data = kBloomVS;
+        shaderDesc.size = kBloomVSSize;
+        shaderDesc.name = "FullscreenVS";
+        bloomVertexShader = device->CreateShader(shaderDesc);
+        shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+        shaderDesc.data = kBloomDownPS;
+        shaderDesc.size = kBloomDownPSSize;
+        shaderDesc.name = "PSDownsample";
+        bloomDownShader = device->CreateShader(shaderDesc);
+        shaderDesc.data = kBloomUpPS;
+        shaderDesc.size = kBloomUpPSSize;
+        shaderDesc.name = "PSUpsample";
+        bloomUpShader = device->CreateShader(shaderDesc);
+
+        const ex::rhi::DescriptorBinding bindings[] = {
+            {8, ex::rhi::DescriptorType::SampledImage, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {16, ex::rhi::DescriptorType::Sampler, 1,
+             ex::rhi::ShaderStage::Pixel},
+            {1, ex::rhi::DescriptorType::UniformBuffer, 1,
+             ex::rhi::ShaderStage::Pixel},
+        };
+        ex::rhi::PipelineDesc pipelineDesc{};
+        pipelineDesc.vertexShader = bloomVertexShader.get();
+        pipelineDesc.pixelShader = bloomDownShader.get();
+        pipelineDesc.descriptorBindings = bindings;
+        pipelineDesc.descriptorBindingCount = 3;
+        pipelineDesc.depthTest = false;
+        pipelineDesc.depthWrite = false;
+        bloomDownPipeline = device->CreatePipeline(pipelineDesc);
+        pipelineDesc.pixelShader = bloomUpShader.get();
+        bloomUpPipeline = device->CreatePipeline(pipelineDesc);
+
+        if (bloomDownPipeline) {
+            bloomDownSet = device->CreateDescriptorSet(bloomDownPipeline.get());
+        }
+        if (bloomUpPipeline) {
+            bloomUpSet = device->CreateDescriptorSet(bloomUpPipeline.get());
+        }
+        if (compositePipeline) {
+            bloomCompositeSet =
+                device->CreateDescriptorSet(compositePipeline.get());
+        }
+        if (bloomDownSet) {
+            bloomDownSet->SetImage(8, bloomSourceTexture.get());
+            bloomDownSet->SetSampler(16, bloomSampler.get());
+            bloomDownSet->SetBuffer(1, bloomUniformBuffer.get(), 0,
+                                    sizeof(bloomConstants));
+        }
+        if (bloomUpSet) {
+            bloomUpSet->SetImage(8, bloomDownTarget.get());
+            bloomUpSet->SetSampler(16, bloomSampler.get());
+            bloomUpSet->SetBuffer(1, bloomUniformBuffer.get(), 0,
+                                  sizeof(bloomConstants));
+        }
+        if (bloomCompositeSet) {
+            bloomCompositeSet->SetImage(8, bloomUpTarget.get());
+            bloomCompositeSet->SetImage(9, compositeBloomTexture.get());
+            bloomCompositeSet->SetSampler(16, compositeSampler.get());
+            bloomCompositeSet->SetBuffer(1, compositeUniformBuffer.get(), 0,
+                                         compositeUniformBuffer->Size());
+        }
+        if (!bloomSourceTexture || !bloomDownTarget || !bloomUpTarget ||
+            !bloomSampler || !bloomUniformBuffer || !bloomVertexShader ||
+            !bloomDownShader || !bloomUpShader || !bloomDownPipeline ||
+            !bloomUpPipeline || !bloomDownSet || !bloomUpSet ||
+            !bloomCompositeSet) {
+            std::fprintf(stderr, "Vulkan bloom resources failed.\n");
+            return 1;
+        }
+    }
+
     std::unique_ptr<ex::rhi::Texture> targetTexture;
     std::unique_ptr<ex::rhi::DescriptorSet> targetCompositeSet;
     if (options.target) {
@@ -828,7 +972,27 @@ int main(int argc, char** argv) {
             break;
         }
         const float t = float(frame % 120) / 120.0f;
-        if (options.target) {
+        if (options.bloom) {
+            device->BeginFrameTexture(bloomDownTarget.get(), 0.0f, 0.0f, 0.0f,
+                                      1.0f);
+            device->BindPipeline(bloomDownPipeline.get());
+            device->BindDescriptorSet(bloomDownSet.get());
+            device->Draw(3);
+            device->EndFrame(false);
+
+            device->BeginFrameTexture(bloomUpTarget.get(), 0.0f, 0.0f, 0.0f,
+                                      1.0f);
+            device->BindPipeline(bloomUpPipeline.get());
+            device->BindDescriptorSet(bloomUpSet.get());
+            device->Draw(3);
+            device->EndFrame(false);
+
+            device->BeginFrame(0.02f, 0.02f, 0.03f, 1.0f);
+            device->BindPipeline(compositePipeline.get());
+            device->BindDescriptorSet(bloomCompositeSet.get());
+            device->Draw(3);
+            device->EndFrame(true);
+        } else if (options.target) {
             device->BeginFrameTexture(targetTexture.get(), 0.05f, 0.05f, 0.1f,
                                       1.0f);
             device->BindPipeline(quadPipeline.get());
@@ -893,6 +1057,19 @@ int main(int argc, char** argv) {
     }
 
     device->WaitIdle();
+    bloomCompositeSet.reset();
+    bloomUpSet.reset();
+    bloomDownSet.reset();
+    bloomUpPipeline.reset();
+    bloomDownPipeline.reset();
+    bloomUpShader.reset();
+    bloomDownShader.reset();
+    bloomVertexShader.reset();
+    bloomUniformBuffer.reset();
+    bloomSampler.reset();
+    bloomUpTarget.reset();
+    bloomDownTarget.reset();
+    bloomSourceTexture.reset();
     targetCompositeSet.reset();
     targetTexture.reset();
     groundSet.reset();

@@ -1,7 +1,7 @@
 #include "common.hlsli"
 
-Texture2D<float4> SourceTexture : register(t0);
-SamplerState LinearSampler : register(s0);
+EX_VK_BINDING(8) Texture2D<float4> SourceTexture : register(t0);
+EX_VK_BINDING(16) SamplerState LinearSampler : register(s0);
 
 // 4-tap box downsample with an optional HDR threshold.
 float4 PSDownsample(VSOut input) : SV_Target

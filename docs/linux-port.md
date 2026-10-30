@@ -227,12 +227,13 @@ still uses the Win32/D3D11 path.
 
 Status: **started.** Vulkan buffer, texture, sampler, shader-module, graphics
 pipeline, descriptor-set and render-to-texture support exist. `vulkan_smoke`
-runs the real sky, ground and composite shaders plus a textured quad, triangle
-and a two-pass render-to-texture/composite test. Ground uses cascaded/static
-comparison-sampled shadow maps and a 3D volume texture. The Vulkan viewport
-flips Y so both backends share D3D's screen-space convention. The remaining
-passes (scene instancing, volume raymarch, bloom, shock, particles) and the
-general HLSL→SPIR-V build integration are next.
+runs the real sky, ground, composite and bloom shaders plus a textured quad,
+triangle and a two-pass render-to-texture/composite test. Ground uses
+cascaded/static comparison-sampled shadow maps and a 3D volume texture; bloom
+uses the real downsample/upsample chain. The Vulkan viewport flips Y so both
+backends share D3D's screen-space convention. The remaining passes (scene
+instancing, volume raymarch, shock, particles) and the general HLSL→SPIR-V build
+integration are next.
 
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,
   particles and the shadow maps.
