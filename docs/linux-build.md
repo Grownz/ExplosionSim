@@ -28,8 +28,8 @@ SDL3 platform layer and the Vulkan renderer land (milestones M2/M3 in
   instance buffer; `--frame` composes sky → bloom → composite across render
   targets in one frame; `--scene-frame` renders sky, ground and the instanced
   scene into one shared HDR/depth target before bloom and composite; `--city`
-  generates the procedural scene and renders its buildings/vehicles/trees as
-  instanced geometry through the same Vulkan frame.
+  generates the procedural scene and renders its buildings, trees and vehicles
+  from the shared mesh library through the same Vulkan frame.
 
 All three are built by the `linux-core` CI job on Ubuntu 24.04; the job runs the
 core tests and the Vulkan smoke test on Mesa lavapipe.

@@ -1017,32 +1017,60 @@ int main(int argc, char** argv) {
         }
     }
 
+    struct SceneDraw {
+        std::unique_ptr<ex::rhi::Buffer> instanceBuffer;
+        std::unique_ptr<ex::rhi::DescriptorSet> set;
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
+        uint32_t instanceCount = 0;
+    };
+    std::vector<SceneDraw> sceneDraws;
     std::unique_ptr<ex::rhi::Buffer> sceneVertexBuffer;
     std::unique_ptr<ex::rhi::Buffer> sceneIndexBuffer;
-    std::unique_ptr<ex::rhi::Buffer> sceneInstanceBuffer;
     std::unique_ptr<ex::rhi::Buffer> sceneShadowCascadeBuffer;
     std::unique_ptr<ex::rhi::Texture> sceneSurfaceTexture;
     std::unique_ptr<ex::rhi::Shader> sceneVertexShader;
     std::unique_ptr<ex::rhi::Shader> scenePixelShader;
     std::unique_ptr<ex::rhi::Pipeline> scenePipeline;
-    std::unique_ptr<ex::rhi::DescriptorSet> sceneSet;
-    uint32_t sceneInstanceCount = 1;
 
     if (options.scene || options.sceneFrame || options.city) {
         const ex::gfx::SceneMeshData buildingMesh =
             ex::gfx::MakeBuildingMesh();
+        const ex::gfx::SceneMeshData vehicleMesh =
+            ex::gfx::MakeVehiclePlaceholderMesh();
+        const ex::gfx::SceneMeshData treeMesh = ex::gfx::MakeTreeMesh(0);
+
+        struct MeshRange {
+            uint32_t indexOffset = 0;
+            uint32_t indexCount = 0;
+        };
+        std::vector<ex::gfx::SceneMeshVertex> allVertices;
+        std::vector<uint32_t> allIndices;
+        auto appendMesh = [&](const ex::gfx::SceneMeshData& mesh) {
+            const uint32_t baseVertex = uint32_t(allVertices.size());
+            const uint32_t indexOffset = uint32_t(allIndices.size());
+            allVertices.insert(allVertices.end(), mesh.vertices.begin(),
+                               mesh.vertices.end());
+            for (uint32_t index : mesh.indices) {
+                allIndices.push_back(baseVertex + index);
+            }
+            return MeshRange{indexOffset, uint32_t(mesh.indices.size())};
+        };
+        const MeshRange buildingRange = appendMesh(buildingMesh);
+        const MeshRange vehicleRange = appendMesh(vehicleMesh);
+        const MeshRange treeRange = appendMesh(treeMesh);
 
         ex::rhi::BufferDesc vertexDesc{};
-        vertexDesc.size = buildingMesh.vertices.size() *
-                          sizeof(ex::gfx::SceneMeshVertex);
+        vertexDesc.size =
+            allVertices.size() * sizeof(ex::gfx::SceneMeshVertex);
         vertexDesc.usage = ex::rhi::BufferUsage::Vertex;
-        vertexDesc.initialData = buildingMesh.vertices.data();
+        vertexDesc.initialData = allVertices.data();
         sceneVertexBuffer = device->CreateBuffer(vertexDesc);
 
         ex::rhi::BufferDesc indexDesc{};
-        indexDesc.size = buildingMesh.indices.size() * sizeof(uint32_t);
+        indexDesc.size = allIndices.size() * sizeof(uint32_t);
         indexDesc.usage = ex::rhi::BufferUsage::Index;
-        indexDesc.initialData = buildingMesh.indices.data();
+        indexDesc.initialData = allIndices.data();
         sceneIndexBuffer = device->CreateBuffer(indexDesc);
 
         struct SceneInstance {
@@ -1053,7 +1081,9 @@ int main(int argc, char** argv) {
             float textureOrigin[4];
             float textureScale[4];
         };
-        std::vector<SceneInstance> instances;
+        std::vector<SceneInstance> buildingInstances;
+        std::vector<SceneInstance> vehicleInstances;
+        std::vector<SceneInstance> treeInstances;
         if (options.city) {
             ex::sim::BlastModel blast;
             blast.Configure({}, {});
@@ -1066,12 +1096,33 @@ int main(int argc, char** argv) {
             scene.Generate(settings, blast);
             for (const ex::scene::SceneObject& object : scene.Objects()) {
                 SceneInstance item{};
-                const DirectX::XMMATRIX world =
-                    DirectX::XMMatrixScaling(object.size.x, object.size.y,
-                                             object.size.z) *
-                    DirectX::XMMatrixTranslation(object.position.x,
-                                                 object.position.y,
-                                                 object.position.z);
+                DirectX::XMMATRIX world;
+                if (object.type == ex::scene::SceneObjectType::Tree) {
+                    world = DirectX::XMMatrixScaling(
+                                object.size.x * 2.0f, object.size.y,
+                                object.size.x * 2.0f) *
+                            DirectX::XMMatrixTranslation(
+                                object.position.x, 0.0f, object.position.z);
+                    item.params[3] = 2.0f;
+                    item.textureScale[3] = 2.0f;
+                } else if (object.type ==
+                           ex::scene::SceneObjectType::Vehicle) {
+                    const float uniform =
+                        object.size.z > 1e-4f ? object.size.z / 2.8f : 1.0f;
+                    world = DirectX::XMMatrixScaling(uniform, uniform, uniform) *
+                            DirectX::XMMatrixTranslation(
+                                object.position.x, 0.0f, object.position.z);
+                    item.params[3] = 1.0f;
+                    item.textureScale[3] = 0.0f;
+                } else {
+                    world = DirectX::XMMatrixScaling(
+                                object.size.x, object.size.y, object.size.z) *
+                            DirectX::XMMatrixTranslation(
+                                object.position.x, object.position.y,
+                                object.position.z);
+                    item.params[3] = 0.0f;
+                    item.textureScale[3] = 0.0f;
+                }
                 DirectX::XMFLOAT4X4 matrix{};
                 DirectX::XMStoreFloat4x4(&matrix, world);
                 std::memcpy(item.transform, &matrix, sizeof(matrix));
@@ -1079,14 +1130,19 @@ int main(int argc, char** argv) {
                 item.color[1] = object.color.y;
                 item.color[2] = object.color.z;
                 item.color[3] = object.color.w;
-                item.params[3] = float(object.type);
                 item.textureOrigin[0] = object.position.x;
                 item.textureOrigin[2] = object.position.z;
                 item.textureScale[0] = object.size.x;
                 item.textureScale[1] = object.size.y;
                 item.textureScale[2] = object.size.z;
-                item.textureScale[3] = float(object.type);
-                instances.push_back(item);
+                if (object.type == ex::scene::SceneObjectType::Tree) {
+                    treeInstances.push_back(item);
+                } else if (object.type ==
+                           ex::scene::SceneObjectType::Vehicle) {
+                    vehicleInstances.push_back(item);
+                } else {
+                    buildingInstances.push_back(item);
+                }
             }
         } else {
             SceneInstance instance{};
@@ -1102,26 +1158,31 @@ int main(int argc, char** argv) {
             instance.textureScale[1] = 1.0f;
             instance.textureScale[2] = 1.0f;
             instance.textureScale[3] = 0.0f;
-            instances.push_back(instance);
+            buildingInstances.push_back(instance);
         }
-        sceneInstanceCount = uint32_t(instances.size());
 
-        ex::rhi::BufferDesc instanceDesc{};
-        instanceDesc.size = instances.size() * sizeof(SceneInstance);
-        instanceDesc.usage = ex::rhi::BufferUsage::Storage |
-                             ex::rhi::BufferUsage::ShaderRead |
-                             ex::rhi::BufferUsage::Dynamic;
-        instanceDesc.structureStride = sizeof(SceneInstance);
-        instanceDesc.initialData = instances.data();
-        sceneInstanceBuffer = device->CreateBuffer(instanceDesc);
-        if (sceneInstanceBuffer) {
-            void* mapped = sceneInstanceBuffer->Map();
-            if (mapped) {
-                std::memcpy(mapped, instances.data(),
-                            instances.size() * sizeof(SceneInstance));
-                sceneInstanceBuffer->Unmap();
+        auto makeInstanceBuffer = [&](const std::vector<SceneInstance>& data) {
+            ex::rhi::BufferDesc desc{};
+            desc.size = std::max<size_t>(1, data.size()) * sizeof(SceneInstance);
+            desc.usage = ex::rhi::BufferUsage::Storage |
+                         ex::rhi::BufferUsage::ShaderRead |
+                         ex::rhi::BufferUsage::Dynamic;
+            desc.structureStride = sizeof(SceneInstance);
+            desc.initialData = data.empty() ? nullptr : data.data();
+            auto buffer = device->CreateBuffer(desc);
+            if (buffer && !data.empty()) {
+                void* mapped = buffer->Map();
+                if (mapped) {
+                    std::memcpy(mapped, data.data(),
+                                data.size() * sizeof(SceneInstance));
+                    buffer->Unmap();
+                }
             }
-        }
+            return buffer;
+        };
+        auto buildingInstanceBuffer = makeInstanceBuffer(buildingInstances);
+        auto vehicleInstanceBuffer = makeInstanceBuffer(vehicleInstances);
+        auto treeInstanceBuffer = makeInstanceBuffer(treeInstances);
 
         float cascade[16] = {};
         cascade[0] = 1.0f;
@@ -1213,34 +1274,54 @@ int main(int argc, char** argv) {
         pipelineDesc.depthCompare = ex::rhi::CompareOp::LessEqual;
         pipelineDesc.cullMode = ex::rhi::CullMode::None;
         scenePipeline = device->CreatePipeline(pipelineDesc);
-        if (scenePipeline) {
-            sceneSet = device->CreateDescriptorSet(scenePipeline.get());
-        }
-        if (sceneSet) {
-            sceneSet->SetBuffer(0, groundUniformBuffer.get(), 0,
-                                groundUniformBuffer->Size());
-            sceneSet->SetBuffer(2, groundShadowBuffer.get(), 0,
-                                groundShadowBuffer->Size());
-            sceneSet->SetBuffer(3, sceneShadowCascadeBuffer.get(), 0,
-                                sizeof(cascade));
-            sceneSet->SetBuffer(8, sceneInstanceBuffer.get(), 0,
-                                sceneInstanceBuffer->Size());
-            sceneSet->SetBuffer(9, sceneInstanceBuffer.get(), 0,
-                                sceneInstanceBuffer->Size());
-            for (int i = 0; i < 4; ++i) {
-                sceneSet->SetImage(uint32_t(10 + i),
-                                   groundShadowTextures[i].get());
+        auto makeSceneSet = [&](ex::rhi::Buffer* instanceBuffer) {
+            auto set = device->CreateDescriptorSet(scenePipeline.get());
+            if (!set) {
+                return set;
             }
-            sceneSet->SetImage(14, sceneSurfaceTexture.get());
-            sceneSet->SetImage(15, groundVolumeTexture.get());
-            sceneSet->SetSampler(18, groundShadowSampler.get());
-            sceneSet->SetSampler(19, groundVolumeSampler.get());
-            sceneSet->SetSampler(20, groundVolumeSampler.get());
-        }
-        if (!sceneVertexBuffer || !sceneIndexBuffer || !sceneInstanceBuffer ||
+            set->SetBuffer(0, groundUniformBuffer.get(), 0,
+                           groundUniformBuffer->Size());
+            set->SetBuffer(2, groundShadowBuffer.get(), 0,
+                           groundShadowBuffer->Size());
+            set->SetBuffer(3, sceneShadowCascadeBuffer.get(), 0,
+                           sizeof(cascade));
+            set->SetBuffer(8, instanceBuffer, 0, instanceBuffer->Size());
+            set->SetBuffer(9, instanceBuffer, 0, instanceBuffer->Size());
+            for (int i = 0; i < 4; ++i) {
+                set->SetImage(uint32_t(10 + i),
+                              groundShadowTextures[i].get());
+            }
+            set->SetImage(14, sceneSurfaceTexture.get());
+            set->SetImage(15, groundVolumeTexture.get());
+            set->SetSampler(18, groundShadowSampler.get());
+            set->SetSampler(19, groundVolumeSampler.get());
+            set->SetSampler(20, groundVolumeSampler.get());
+            return set;
+        };
+
+        auto addSceneDraw = [&](const MeshRange& range,
+                                const std::vector<SceneInstance>& data,
+                                std::unique_ptr<ex::rhi::Buffer>& buffer) {
+            if (data.empty() || !buffer || !scenePipeline) {
+                return;
+            }
+            SceneDraw draw;
+            draw.indexOffset = range.indexOffset;
+            draw.indexCount = range.indexCount;
+            draw.instanceCount = uint32_t(data.size());
+            draw.instanceBuffer = std::move(buffer);
+            draw.set = makeSceneSet(draw.instanceBuffer.get());
+            if (draw.set) {
+                sceneDraws.push_back(std::move(draw));
+            }
+        };
+        addSceneDraw(buildingRange, buildingInstances, buildingInstanceBuffer);
+        addSceneDraw(vehicleRange, vehicleInstances, vehicleInstanceBuffer);
+        addSceneDraw(treeRange, treeInstances, treeInstanceBuffer);
+
+        if (!sceneVertexBuffer || !sceneIndexBuffer || sceneDraws.empty() ||
             !sceneShadowCascadeBuffer || !sceneSurfaceTexture ||
-            !sceneVertexShader || !scenePixelShader || !scenePipeline ||
-            !sceneSet) {
+            !sceneVertexShader || !scenePixelShader || !scenePipeline) {
             std::fprintf(stderr, "Vulkan scene resources failed.\n");
             return 1;
         }
@@ -1794,10 +1875,14 @@ int main(int argc, char** argv) {
             device->Draw(3);
 
             device->BindPipeline(scenePipeline.get());
-            device->BindDescriptorSet(sceneSet.get());
             device->BindVertexBuffer(sceneVertexBuffer.get());
             device->BindIndexBuffer(sceneIndexBuffer.get());
-            device->DrawIndexedInstanced(36, sceneInstanceCount);
+            for (const SceneDraw& draw : sceneDraws) {
+                device->BindDescriptorSet(draw.set.get());
+                device->DrawIndexedInstanced(draw.indexCount,
+                                             draw.instanceCount,
+                                             draw.indexOffset);
+            }
             device->EndFrame(false);
 
             device->BeginFrameTexture(bloomDownTarget.get(), 0.0f, 0.0f, 0.0f,
@@ -1913,10 +1998,14 @@ int main(int argc, char** argv) {
                 device->DrawInstanced(6, 1);
             } else if (scenePipeline) {
                 device->BindPipeline(scenePipeline.get());
-                device->BindDescriptorSet(sceneSet.get());
                 device->BindVertexBuffer(sceneVertexBuffer.get());
                 device->BindIndexBuffer(sceneIndexBuffer.get());
-                device->DrawIndexedInstanced(36, sceneInstanceCount);
+                for (const SceneDraw& draw : sceneDraws) {
+                    device->BindDescriptorSet(draw.set.get());
+                    device->DrawIndexedInstanced(draw.indexCount,
+                                                 draw.instanceCount,
+                                                 draw.indexOffset);
+                }
             } else if (groundPipeline) {
                 device->BindPipeline(groundPipeline.get());
                 device->BindDescriptorSet(groundSet.get());
@@ -1979,13 +2068,16 @@ int main(int argc, char** argv) {
     shockSampler.reset();
     shockSceneDepth.reset();
     shockSceneColor.reset();
-    sceneSet.reset();
+    for (SceneDraw& draw : sceneDraws) {
+        draw.set.reset();
+        draw.instanceBuffer.reset();
+    }
+    sceneDraws.clear();
     scenePipeline.reset();
     scenePixelShader.reset();
     sceneVertexShader.reset();
     sceneSurfaceTexture.reset();
     sceneShadowCascadeBuffer.reset();
-    sceneInstanceBuffer.reset();
     sceneIndexBuffer.reset();
     sceneVertexBuffer.reset();
     bloomCompositeSet.reset();
