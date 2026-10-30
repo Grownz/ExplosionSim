@@ -13,6 +13,8 @@
 #include "ShockShaders.h"
 #include "VolumeShaders.h"
 #include "ParticleShaders.h"
+#include "scene/SceneTypes.h"
+#include "sim/BlastModel.h"
 
 #include <DirectXMath.h>
 
@@ -46,6 +48,7 @@ struct Options {
     bool particles = false;
     bool frame = false;
     bool sceneFrame = false;
+    bool city = false;
     std::string output = "vulkan_smoke.ppm";
 };
 
@@ -120,6 +123,10 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--scene-frame") == 0) {
             options.sceneFrame = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--city") == 0) {
+            options.city = true;
             continue;
         }
         if (std::strcmp(arg, "--width") == 0 && i + 1 < argc) {
@@ -221,7 +228,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Texture> frameDepthTarget;
     std::unique_ptr<ex::rhi::DescriptorSet> frameBloomDownSet;
     std::unique_ptr<ex::rhi::DescriptorSet> frameCompositeSet;
-    if (options.frame || options.sceneFrame) {
+    if (options.frame || options.sceneFrame || options.city) {
         ex::rhi::TextureDesc hdrDesc{};
         hdrDesc.format = ex::rhi::Format::B8G8R8A8_UNORM;
         hdrDesc.width = uint32_t(options.width);
@@ -233,7 +240,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "Vulkan frame target failed.\n");
             return 1;
         }
-        if (options.sceneFrame) {
+        if (options.sceneFrame || options.city) {
             ex::rhi::TextureDesc depthDesc{};
             depthDesc.format = ex::rhi::Format::D32_FLOAT;
             depthDesc.width = uint32_t(options.width);
@@ -417,7 +424,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> skyPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> skySet;
 
-    if (options.sky || options.frame || options.sceneFrame) {
+    if (options.sky || options.frame || options.sceneFrame || options.city) {
         // Layout must match FrameConstants in src/gfx/Renderer.h.
         float constants[112] = {};
         constants[0] = 1.0f;
@@ -507,7 +514,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> compositePipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> compositeSet;
 
-    if (options.composite || options.target || options.bloom || options.frame || options.sceneFrame) {
+    if (options.composite || options.target || options.bloom || options.frame || options.sceneFrame || options.city) {
         const uint8_t scenePixels[16] = {
             128, 64, 32, 255, 128, 64, 32, 255,
             128, 64, 32, 255, 128, 64, 32, 255,
@@ -614,11 +621,13 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Pipeline> groundPipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> groundSet;
 
-    if (options.ground || options.scene || options.particles || options.sceneFrame) {
+    if (options.ground || options.scene || options.particles || options.sceneFrame || options.city) {
         using namespace DirectX;
         float constants[112] = {};
+        const float cameraY = options.city ? 55.0f : 2.0f;
+        const float cameraZ = options.city ? -150.0f : -10.0f;
         const XMMATRIX view = XMMatrixLookAtLH(
-            XMVectorSet(0.0f, 2.0f, -10.0f, 0.0f),
+            XMVectorSet(0.0f, cameraY, cameraZ, 0.0f),
             XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f),
             XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
         const XMMATRIX projection = XMMatrixPerspectiveFovLH(
@@ -637,8 +646,8 @@ int main(int argc, char** argv) {
                     sizeof(inverseViewProjectionMatrix));
 
         constants[32] = 0.0f;
-        constants[33] = 2.0f;
-        constants[34] = -10.0f;
+        constants[33] = cameraY;
+        constants[34] = cameraZ;
         constants[35] = 0.0f;
         constants[36] = 0.3f;
         constants[37] = 0.8f;
@@ -879,7 +888,7 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::DescriptorSet> bloomUpSet;
     std::unique_ptr<ex::rhi::DescriptorSet> bloomCompositeSet;
 
-    if (options.bloom || options.frame || options.sceneFrame) {
+    if (options.bloom || options.frame || options.sceneFrame || options.city) {
         uint8_t sourcePixels[4 * 4 * 4] = {};
         for (int y = 1; y <= 2; ++y) {
             for (int x = 1; x <= 2; ++x) {
@@ -918,9 +927,9 @@ int main(int argc, char** argv) {
         samplerDesc.clamp = true;
         bloomSampler = device->CreateSampler(samplerDesc);
 
-        const float bloomSourceWidth = (options.frame || options.sceneFrame) ? float(options.width) : 4.0f;
+        const float bloomSourceWidth = (options.frame || options.sceneFrame || options.city) ? float(options.width) : 4.0f;
         const float bloomSourceHeight =
-            (options.frame || options.sceneFrame) ? float(options.height) : 4.0f;
+            (options.frame || options.sceneFrame || options.city) ? float(options.height) : 4.0f;
         float bloomConstants[8] = {
             1.0f / bloomSourceWidth, 1.0f / bloomSourceHeight,
             1.0f / bloomSourceWidth, 1.0f / bloomSourceHeight,
@@ -1016,8 +1025,9 @@ int main(int argc, char** argv) {
     std::unique_ptr<ex::rhi::Shader> scenePixelShader;
     std::unique_ptr<ex::rhi::Pipeline> scenePipeline;
     std::unique_ptr<ex::rhi::DescriptorSet> sceneSet;
+    uint32_t sceneInstanceCount = 1;
 
-    if (options.scene || options.sceneFrame) {
+    if (options.scene || options.sceneFrame || options.city) {
         struct SceneVertex {
             float position[3];
             float normal[3];
@@ -1081,27 +1091,75 @@ int main(int argc, char** argv) {
             float textureOrigin[4];
             float textureScale[4];
         };
-        SceneInstance instance{};
-        instance.transform[0] = 1.0f;
-        instance.transform[5] = 1.0f;
-        instance.transform[10] = 1.0f;
-        instance.transform[15] = 1.0f;
-        instance.color[0] = 1.0f;
-        instance.color[1] = 1.0f;
-        instance.color[2] = 1.0f;
-        instance.color[3] = 1.0f;
-        instance.textureScale[0] = 1.0f;
-        instance.textureScale[1] = 1.0f;
-        instance.textureScale[2] = 1.0f;
-        instance.textureScale[3] = 0.0f;
+        std::vector<SceneInstance> instances;
+        if (options.city) {
+            ex::sim::BlastModel blast;
+            blast.Configure({}, {});
+            ex::scene::SceneSettings settings{};
+            settings.seed = 42;
+            settings.density = 0.6f;
+            settings.quality = 1;
+            settings.voronoiChunks = false;
+            ex::scene::Scene scene;
+            scene.Generate(settings, blast);
+            for (const ex::scene::SceneObject& object : scene.Objects()) {
+                SceneInstance item{};
+                const DirectX::XMMATRIX world =
+                    DirectX::XMMatrixScaling(object.size.x, object.size.y,
+                                             object.size.z) *
+                    DirectX::XMMatrixTranslation(object.position.x,
+                                                 object.size.y * 0.5f,
+                                                 object.position.z);
+                DirectX::XMFLOAT4X4 matrix{};
+                DirectX::XMStoreFloat4x4(&matrix, world);
+                std::memcpy(item.transform, &matrix, sizeof(matrix));
+                item.color[0] = object.color.x;
+                item.color[1] = object.color.y;
+                item.color[2] = object.color.z;
+                item.color[3] = object.color.w;
+                item.params[3] = float(object.type);
+                item.textureOrigin[0] = object.position.x;
+                item.textureOrigin[2] = object.position.z;
+                item.textureScale[0] = object.size.x;
+                item.textureScale[1] = object.size.y;
+                item.textureScale[2] = object.size.z;
+                item.textureScale[3] = float(object.type);
+                instances.push_back(item);
+            }
+        } else {
+            SceneInstance instance{};
+            instance.transform[0] = 1.0f;
+            instance.transform[5] = 1.0f;
+            instance.transform[10] = 1.0f;
+            instance.transform[15] = 1.0f;
+            instance.color[0] = 1.0f;
+            instance.color[1] = 1.0f;
+            instance.color[2] = 1.0f;
+            instance.color[3] = 1.0f;
+            instance.textureScale[0] = 1.0f;
+            instance.textureScale[1] = 1.0f;
+            instance.textureScale[2] = 1.0f;
+            instance.textureScale[3] = 0.0f;
+            instances.push_back(instance);
+        }
+        sceneInstanceCount = uint32_t(instances.size());
 
         ex::rhi::BufferDesc instanceDesc{};
-        instanceDesc.size = sizeof(instance);
+        instanceDesc.size = instances.size() * sizeof(SceneInstance);
         instanceDesc.usage = ex::rhi::BufferUsage::Storage |
-                             ex::rhi::BufferUsage::ShaderRead;
+                             ex::rhi::BufferUsage::ShaderRead |
+                             ex::rhi::BufferUsage::Dynamic;
         instanceDesc.structureStride = sizeof(SceneInstance);
-        instanceDesc.initialData = &instance;
+        instanceDesc.initialData = instances.data();
         sceneInstanceBuffer = device->CreateBuffer(instanceDesc);
+        if (sceneInstanceBuffer) {
+            void* mapped = sceneInstanceBuffer->Map();
+            if (mapped) {
+                std::memcpy(mapped, instances.data(),
+                            instances.size() * sizeof(SceneInstance));
+                sceneInstanceBuffer->Unmap();
+            }
+        }
 
         float cascade[16] = {};
         cascade[0] = 1.0f;
@@ -1226,7 +1284,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    if (options.frame || options.sceneFrame) {
+    if (options.frame || options.sceneFrame || options.city) {
         if (bloomDownPipeline) {
             frameBloomDownSet =
                 device->CreateDescriptorSet(bloomDownPipeline.get());
@@ -1761,7 +1819,7 @@ int main(int argc, char** argv) {
             break;
         }
         const float t = float(frame % 120) / 120.0f;
-        if (options.sceneFrame) {
+        if (options.sceneFrame || options.city) {
             device->BeginFrameTexture(frameHdrTarget.get(),
                                       frameDepthTarget.get(), true, 0.02f,
                                       0.02f, 0.03f, 1.0f);
@@ -1777,7 +1835,7 @@ int main(int argc, char** argv) {
             device->BindDescriptorSet(sceneSet.get());
             device->BindVertexBuffer(sceneVertexBuffer.get());
             device->BindIndexBuffer(sceneIndexBuffer.get());
-            device->DrawIndexedInstanced(36, 1);
+            device->DrawIndexedInstanced(36, sceneInstanceCount);
             device->EndFrame(false);
 
             device->BeginFrameTexture(bloomDownTarget.get(), 0.0f, 0.0f, 0.0f,
@@ -1896,7 +1954,7 @@ int main(int argc, char** argv) {
                 device->BindDescriptorSet(sceneSet.get());
                 device->BindVertexBuffer(sceneVertexBuffer.get());
                 device->BindIndexBuffer(sceneIndexBuffer.get());
-                device->DrawIndexedInstanced(36, 1);
+                device->DrawIndexedInstanced(36, sceneInstanceCount);
             } else if (groundPipeline) {
                 device->BindPipeline(groundPipeline.get());
                 device->BindDescriptorSet(groundSet.get());

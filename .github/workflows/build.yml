@@ -69,6 +69,8 @@ jobs:
             --frames 2 --output /tmp/vulkan_frame.ppm
           ./build/vulkan_smoke --headless --scene-frame --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_scene_frame.ppm
+          ./build/vulkan_smoke --headless --city --width 320 --height 180 \
+            --frames 2 --output /tmp/vulkan_city.ppm
 
   windows:
     runs-on: windows-2022
