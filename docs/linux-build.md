@@ -13,8 +13,9 @@ the reduced-order renderer is ported into it next (milestones M2/M3 in
 - `core_tests`: portable smoke tests for the blast model, deterministic scene
   generation and the CPU volume bake.
 - `explosion_linux`: native SDL3 + Vulkan application shell. It opens a window,
-  handles resize, clears/presents through the RHI frame API and can render an
-  offscreen `--screenshot` as PNG or PPM. The renderer passes are wired in next.
+  handles resize and renders the reduced-order preview (sky, ground, procedural
+  scene, volumetric smoke, particles, shock refraction, bloom and composite)
+  through the RHI. It can write an offscreen `--screenshot` as PNG or PPM.
 - `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and
   (with a desktop) an SDL3 window with a swapchain. `--triangle` exercises
   vertex buffers, SPIR-V shader modules and a graphics pipeline; `--quad` adds
@@ -94,8 +95,12 @@ separate `explosion_linux` target whenever Vulkan and SDL3 are available.
 ./build/explosion_linux
 ```
 
-The shell currently clears and presents; the reduced-order renderer passes are
-ported into it next. `--screenshot` accepts `.png` and `.ppm`.
+The shell runs the full reduced-order preview through the Vulkan RHI: sky,
+ground, the generated town, volumetric smoke, an additive particle, the
+shock-front refraction, bloom and the tonemap composite. The preview currently
+uses a fixed generated scene, camera and placeholder volume/particle data; the
+next step is to drive it from `sim::Simulation` and the real volume bake.
+`--screenshot` accepts `.png` and `.ppm`.
 
 ## Vulkan smoke test
 

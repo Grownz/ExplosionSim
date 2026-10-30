@@ -331,10 +331,12 @@ endif()
 # ---------------------------------------------------------------------------
 if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
     add_executable(explosion_linux
-        src/app/LinuxApp.cpp)
+        src/app/LinuxApp.cpp
+        src/app/LinuxPreview.cpp)
     target_include_directories(explosion_linux PRIVATE
         src
-        ${CMAKE_BINARY_DIR}/generated)
+        ${CMAKE_BINARY_DIR}/generated
+        tools/vulkan_smoke)
     target_link_libraries(explosion_linux PRIVATE
         explosion_vulkan_rhi
         explosion_platform_sdl3

@@ -2,6 +2,7 @@
 // device; the reduced-order renderer is ported on top of this loop.
 
 #include "Version.h"
+#include "app/LinuxPreview.h"
 #include "core/Log.h"
 #include "gfx/rhi/Rhi.h"
 #include "platform/Platform.h"
@@ -291,6 +292,12 @@ int main(int argc, char** argv) {
         ex::LogError("Could not create the Vulkan device.");
         return 1;
     }
+
+    ex::app::LinuxPreview preview;
+    if (!preview.Initialize(device.get(), device->Width(), device->Height())) {
+        ex::LogError("Could not initialize the reduced-order preview.");
+        return 1;
+    }
     ex::LogInfo("Linux app ready: %dx%d, %s", device->Width(),
                 device->Height(), options.headless ? "offscreen" : "windowed");
 
@@ -316,11 +323,8 @@ int main(int argc, char** argv) {
         }
 
         const double time = NowSeconds() - start;
-        const float r = 0.02f + 0.01f * float(std::sin(time * 0.7));
-        const float g = 0.03f + 0.01f * float(std::sin(time * 0.5 + 1.3));
-        const float b = 0.06f + 0.02f * float(std::sin(time * 0.3 + 2.1));
-        device->BeginFrame(r, g, b, 1.0f);
-        device->EndFrame(options.vsync);
+        preview.Render(device.get(), device->Width(), device->Height(),
+                       float(time), options.vsync);
         ++rendered;
         if (frameLimit > 0 && rendered >= frameLimit) {
             running = false;

@@ -42,7 +42,8 @@ jobs:
         run: |
           ls -l /usr/share/vulkan/icd.d || true
           ./build/vulkan_smoke --headless --width 320 --height 180 \
-            --frames 2 --output /tmp/vulkan_smoke.ppm          ./build/vulkan_smoke --headless --triangle --width 320 --height 180 \
+            --frames 2 --output /tmp/vulkan_smoke.ppm
+          ./build/vulkan_smoke --headless --triangle --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_triangle.ppm
           ./build/vulkan_smoke --headless --quad --width 320 --height 180 \
             --frames 2 --output /tmp/vulkan_quad.ppm
