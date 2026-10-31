@@ -109,7 +109,7 @@ ctest --preset linux-release
 try to build the Win32/D3D11 application. The native Linux shell is built as the
 separate `explosion_linux` target whenever Vulkan and SDL3 are available.
 
-`ctest` runs four suites on Linux: `core`, `splash`, `physics` and
+`ctest` runs five suites on Linux: `core`, `splash`, `updater`, `physics` and
 `gpu_vulkan`. On Windows the suites are `core`, `splash`, `physics` and `gpu`
 (D3D11). The GPU suite is skipped only when no compatible device exists.
 
@@ -243,6 +243,18 @@ SDL_VIDEODRIVER=dummy ./build/explosion_linux --splash-test \
 video driver, checks that the title uses the shared TTF and samples a frame in
 the middle of a crossfade. It runs on Windows and Linux.
 
+### Update helper
+
+`explosion_updater` is built next to the application and packaged as
+`ExplosionSimUpdater`. It owns the GitHub API check, the asset download, the
+SHA-256 verification, the tar.gz extraction and the install swap, and it
+relaunches the application after the swap. HTTP/1.1 and TLS are implemented in
+the helper on top of a vendored mbedTLS, so the application keeps no network
+dependency. The helper only updates a writable per-user installation.
+
+`ctest` runs the `updater` suite, which covers SHA-256, URL validation, tar.gz
+extraction and the install swap including the relaunch of a stub executable.
+
 Settings are resolved in this order: `settings.ini` in the working directory,
 next to the executable, then the per-user path
 (`$XDG_CONFIG_HOME/explosionsim/settings.ini`, falling back to
@@ -266,9 +278,10 @@ cmake --build build --target package_linux
 
 This writes `build/ExplosionSim-linux-x86_64.tar.gz`. Extracting it and running
 `./ExplosionSim` from the extracted directory is a supported clean-directory
-install; the assets and `explosionsim.desktop`/`explosionsim.png` are included.
-Linux v1 updates by replacing the extracted directory with a newer GitHub
-release archive; there is no in-app self-updater.
+install; the assets, `ExplosionSimUpdater` and
+`explosionsim.desktop`/`explosionsim.png` are included. The application updates
+a per-user install in place through `ExplosionSimUpdater`; see
+[`linux-usage.md`](linux-usage.md#updating).
 
 For a capture comparison, render the same settings on both platforms and run:
 

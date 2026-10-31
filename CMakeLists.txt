@@ -255,9 +255,9 @@ FetchContent_Declare(jolt
     SOURCE_SUBDIR Build)
 FetchContent_MakeAvailable(jolt)
 
-if(EXPLOSION_BUILD_APP)
+if(EXPLOSION_BUILD_APP OR NOT WIN32)
     # nlohmann/json (MIT) parses the GitHub releases API response. It is
-    # header-only and only used by the update checker.
+    # header-only and only used by the update checker and the Linux helper.
     set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
     set(JSON_Install OFF CACHE BOOL "" FORCE)
     FetchContent_Declare(nlohmann_json
@@ -389,15 +389,32 @@ endif()
 # ---------------------------------------------------------------------------
 # Native Linux application shell (M2)
 # ---------------------------------------------------------------------------
+# miniz provides inflate for the updater's tar.gz extraction and zip support
+# for the Windows update helper. It is a small C library, so it is always
+# available to both.
+add_library(miniz STATIC
+    third_party/miniz/miniz.c
+    third_party/miniz/miniz_tinfl.c
+    third_party/miniz/miniz_zip.c)
+target_include_directories(miniz PUBLIC third_party/miniz)
+target_compile_definitions(miniz PRIVATE MINIZ_NO_DEFLATE_APIS MINIZ_NO_STDIO)
+if(MSVC)
+    target_compile_options(miniz PRIVATE /W3 /O1 /GL)
+else()
+    target_compile_options(miniz PRIVATE -w)
+endif()
+
 if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
     add_executable(explosion_linux
         src/app/LinuxApp.cpp
         src/app/LinuxPreview.cpp
         src/app/LinuxUi.cpp
+        src/app/LinuxUpdate.cpp
         src/app/SplashFont.cpp
         src/app/SplashSdl.cpp
         src/app/FontPaths.cpp
         src/app/SettingsPath.cpp
+        src/update/Version.cpp
         src/gfx/GpuVolumeBaker.cpp
         src/gfx/GpuParticleSystem.cpp
         src/gfx/RhiEulerSolver.cpp
@@ -411,8 +428,36 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         explosion_platform_sdl3
         explosion_core
         imgui_linux
+        nlohmann_json::nlohmann_json
         stb)
     ex_target_warnings(explosion_linux)
+
+    # The update helper owns all HTTP/TLS code, so the application keeps no
+    # network dependency. mbedTLS is vendored and statically linked.
+    set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+    set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+    set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(mbedtls
+        URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
+        URL_HASH SHA256=8b54fb9bcf4d5a7078028e0520acddefb7900b3e66fec7f7175bb5b7d85ccdca
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(mbedtls)
+
+    add_executable(explosion_updater
+        tools/updater-linux/main.cpp
+        src/update/HttpClient.cpp
+        src/update/Sha256Portable.cpp
+        src/update/TarGz.cpp)
+    target_include_directories(explosion_updater PRIVATE src)
+    target_link_libraries(explosion_updater PRIVATE
+        miniz
+        nlohmann_json::nlohmann_json
+        MbedTLS::mbedtls
+        MbedTLS::mbedx509
+        MbedTLS::mbedcrypto)
+    ex_target_warnings(explosion_updater)
 
     add_custom_command(TARGET explosion_linux POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -421,7 +466,10 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_SOURCE_DIR}/CHANGELOG.md
                 $<TARGET_FILE_DIR:explosion_linux>/CHANGELOG.md
-        COMMENT "Copying assets next to the Linux application")
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:explosion_updater>
+                $<TARGET_FILE_DIR:explosion_linux>/ExplosionSimUpdater
+        COMMENT "Copying assets and the update helper next to the Linux application")
 
     set(EXPLOSION_LINUX_PACKAGE_NAME ExplosionSim-linux-x86_64)
     set(EXPLOSION_LINUX_PACKAGE_DIR
@@ -435,6 +483,11 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         COMMAND ${CMAKE_COMMAND} -E copy
                 $<TARGET_FILE:explosion_linux>
                 ${EXPLOSION_LINUX_PACKAGE_DIR}/ExplosionSim
+        COMMAND ${CMAKE_COMMAND} -E copy
+                $<TARGET_FILE:explosion_updater>
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/ExplosionSimUpdater
+        COMMAND chmod +x ${EXPLOSION_LINUX_PACKAGE_DIR}/ExplosionSim
+        COMMAND chmod +x ${EXPLOSION_LINUX_PACKAGE_DIR}/ExplosionSimUpdater
         COMMAND ${CMAKE_COMMAND} -E copy_directory
                 ${CMAKE_SOURCE_DIR}/assets
                 ${EXPLOSION_LINUX_PACKAGE_DIR}/assets
@@ -464,7 +517,7 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
                 ${CMAKE_BINARY_DIR}/${EXPLOSION_LINUX_PACKAGE_NAME}.tar.gz
                 --format=gnutar ${EXPLOSION_LINUX_PACKAGE_NAME}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/package
-        DEPENDS explosion_linux
+        DEPENDS explosion_linux explosion_updater
         COMMENT "Packaging the Linux application")
 endif()
 
@@ -472,14 +525,6 @@ endif()
 # Update helper (standalone Win32 executable)
 # ---------------------------------------------------------------------------
 if(EXPLOSION_BUILD_APP)
-    add_library(miniz STATIC
-        third_party/miniz/miniz.c
-        third_party/miniz/miniz_tinfl.c
-        third_party/miniz/miniz_zip.c)
-    target_include_directories(miniz PUBLIC third_party/miniz)
-    target_compile_definitions(miniz PRIVATE MINIZ_NO_DEFLATE_APIS MINIZ_NO_STDIO)
-    target_compile_options(miniz PRIVATE /W3 /O1 /GL)
-
     add_executable(ExplosionSimUpdater WIN32
         tools/updater/main.cpp
         src/update/Sha256.cpp)
@@ -599,6 +644,28 @@ if(EXPLOSION_BUILD_TESTS)
                     $<TARGET_FILE_DIR:splash_render_test>/assets
             COMMENT "Copying assets next to the splash test")
         add_test(NAME splash COMMAND splash_render_test)
+    endif()
+
+    # Linux update helper: archive extraction, SHA-256, URL checks and the
+    # install swap, including a relaunch of a stub executable.
+    if(NOT WIN32 AND TARGET explosion_updater)
+        add_executable(updater_tests
+            tests/updater_tests.cpp
+            third_party/miniz/miniz_tdef.c
+            src/update/HttpClient.cpp
+            src/update/Sha256Portable.cpp
+            src/update/TarGz.cpp)
+        target_include_directories(updater_tests PRIVATE
+            src
+            third_party/miniz)
+        target_link_libraries(updater_tests PRIVATE
+            miniz
+            MbedTLS::mbedtls
+            MbedTLS::mbedx509
+            MbedTLS::mbedcrypto)
+        ex_target_warnings(updater_tests)
+        add_test(NAME updater
+            COMMAND updater_tests $<TARGET_FILE:explosion_updater>)
     endif()
 
     if(EXPLOSION_BUILD_APP)

@@ -128,9 +128,30 @@ native install with a real GPU driver.
 
 ## Updating
 
-Linux v1 has no in-app self-updater. Download the newer release archive and
-replace the extracted directory (or re-run `install.sh`). Settings in the XDG
-directory are preserved.
+The application checks the GitHub releases API once per day (and on demand from
+the Updates section of the panel). When a newer release is available it can
+download `ExplosionSim-linux-x86_64.tar.gz`, verify the SHA-256 digest published
+by GitHub, install it and restart itself.
+
+The install step is performed by `ExplosionSimUpdater`, a helper binary shipped
+next to the application. It waits for the application to exit, extracts the
+archive, moves the current install directory aside, swaps in the new one and
+relaunches the application; on failure it restores the previous directory. A
+portable `settings.ini` inside the install directory is preserved, and the XDG
+settings are never touched.
+
+The updater only manages a per-user installation (`~/.local/share/ExplosionSim`
+as created by `install.sh`). If the application is installed system-wide, run
+the update through the package manager instead; the in-app install will fail
+because the directory is not writable.
+
+`--no-update-check` disables the startup check for one run. The check can also
+be disabled in the panel; the skipped version and the last check time are stored
+in `settings.ini`.
+
+To update manually, download the newer archive, extract it and re-run
+`install.sh` (or replace the directory). Settings in the XDG directory are
+preserved.
 
 ## Tests
 

@@ -4,6 +4,7 @@
 #include "Version.h"
 #include "app/LinuxPreview.h"
 #include "app/LinuxUi.h"
+#include "app/LinuxUpdate.h"
 #include "app/SettingsPath.h"
 #include "app/SplashSdl.h"
 #include "core/Log.h"
@@ -17,6 +18,7 @@
 #include "gfx/rhi/vulkan/VulkanRhi.h"
 #include "platform/Platform.h"
 #include "sim/Simulation.h"
+#include "update/Version.h"
 #include "EulerInitShader.h"
 #include "EulerLightShader.h"
 #include "EulerReduceShader.h"
@@ -35,6 +37,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -103,6 +106,10 @@ struct Options {
     bool volumeEnabled = true;
     bool particlesEnabled = true;
     bool showGrid = true;
+    bool noUpdateCheck = false;
+    bool checkForUpdates = true;
+    std::string skippedVersion;
+    long long lastCheckUnix = 0;
 };
 
 void PrintUsage() {
@@ -144,6 +151,7 @@ void PrintUsage() {
     std::printf("  --no-ground          Disable the ground plane.\n");
     std::printf("  --no-volume          Disable volumetric smoke.\n");
     std::printf("  --no-particles       Disable particles.\n");
+    std::printf("  --no-update-check    Skip the startup update check for this run.\n");
     std::printf("  --headless           Use an offscreen target without a window.\n");
     std::printf("  --no-vsync           Disable vertical synchronisation.\n");
     std::printf("  --debug              Enable Vulkan validation layers.\n");
@@ -243,6 +251,10 @@ void LoadSettingsFile(const std::string& path, Options& options) {
         const auto it = values.find(key);
         return it == values.end() ? fallback : IniBool(it->second, fallback);
     };
+    auto longLong = [&](const char* key, long long fallback) {
+        const auto it = values.find(key);
+        return it == values.end() ? fallback : std::atoll(it->second.c_str());
+    };
 
     options.chargeMassKg = number("chargeMassKg", options.chargeMassKg);
     options.heightOfBurstM =
@@ -314,6 +326,14 @@ void LoadSettingsFile(const std::string& path, Options& options) {
                          8.0));
     options.gpuParticles = boolean("gpuParticles", options.gpuParticles);
     options.gpuVolumeBake = boolean("gpuVolumeBake", options.gpuVolumeBake);
+    options.checkForUpdates =
+        boolean("checkForUpdates", options.checkForUpdates);
+    const auto skipped = values.find("skippedVersion");
+    if (skipped != values.end()) {
+        options.skippedVersion = skipped->second;
+    }
+    options.lastCheckUnix =
+        longLong("lastCheckUnix", options.lastCheckUnix);
 }
 
 const char* IniBoolText(bool value) {
@@ -373,7 +393,11 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
     file << "showGrid=" << IniBoolText(options.showGrid) << "\n";
     file << "sunAzimuthDeg=" << options.sunAzimuth << "\n";
     file << "sunElevationDeg=" << options.sunElevation << "\n";
-    file << "particleScale=" << options.particleScale << "\n";
+    file << "particleScale=" << options.particleScale << "\n\n";
+    file << "[update]\n";
+    file << "checkForUpdates=" << IniBoolText(options.checkForUpdates) << "\n";
+    file << "skippedVersion=" << options.skippedVersion << "\n";
+    file << "lastCheckUnix=" << options.lastCheckUnix << "\n";
     return file.good();
 }
 
@@ -401,6 +425,7 @@ bool ParseOptions(int argc, char** argv, Options& options) {
             continue;
         }
         if (std::strcmp(arg, "--no-update-check") == 0) {
+            options.noUpdateCheck = true;
             continue;
         }
         if (std::strcmp(arg, "--solver-resolution") == 0 && i + 1 < argc) {
@@ -891,6 +916,18 @@ std::filesystem::path FindAssetDirectory(const char* argv0) {
         }
     }
     return {};
+}
+
+std::string CacheDirectory() {
+    const char* xdg = std::getenv("XDG_CACHE_HOME");
+    if (xdg && *xdg) {
+        return std::string(xdg) + "/explosionsim";
+    }
+    const char* home = std::getenv("HOME");
+    if (home && *home) {
+        return std::string(home) + "/.cache/explosionsim";
+    }
+    return "/tmp/explosionsim";
 }
 
 std::vector<std::string> SplashFrames(const std::filesystem::path& assets) {
@@ -1403,6 +1440,36 @@ int main(int argc, char** argv) {
             uiState.highFidelity = highFidelity;
             uiState.solverResolution = simulation.Settings().solverResolution;
             uiState.solverAvailable = solverReady;
+            uiState.updateCheckEnabled = options.checkForUpdates;
+        }
+    }
+
+    // The updater is a separate helper binary next to the application; it owns
+    // the network, archive and install work.
+    ex::app::LinuxUpdater updater;
+    if (uiReady) {
+        std::error_code ec;
+        const std::filesystem::path executable =
+            std::filesystem::canonical(argv[0], ec);
+        const std::filesystem::path installDirectory =
+            (ec ? std::filesystem::absolute(argv[0]) : executable)
+                .parent_path();
+        const std::filesystem::path helper =
+            installDirectory / "ExplosionSimUpdater";
+        if (std::filesystem::is_regular_file(helper, ec)) {
+            updater.Initialize(helper.string(), installDirectory.string(),
+                               "ExplosionSim", CacheDirectory());
+            if (!options.noUpdateCheck && options.checkForUpdates) {
+                const long long now =
+                    static_cast<long long>(std::time(nullptr));
+                if (now - options.lastCheckUnix >= 24 * 3600) {
+                    updater.CheckAsync();
+                    options.lastCheckUnix = now;
+                }
+            }
+        } else {
+            ex::LogWarn("Update helper not found; automatic updates are "
+                        "disabled.");
         }
     }
     FrameCamera(simulation, camera, options,
@@ -1453,6 +1520,58 @@ int main(int argc, char** argv) {
             if (uiReady) {
                 linuxUi.NewFrame();
                 linuxUi.Draw(uiState, simulation, frameMs);
+
+                updater.Poll();
+                const ex::app::LinuxUpdateSnapshot update = updater.Get();
+                uiState.updateStatus = update.status;
+                uiState.updateProgress = update.progress;
+                uiState.updateBusy =
+                    update.phase == ex::app::LinuxUpdatePhase::Checking ||
+                    update.phase == ex::app::LinuxUpdatePhase::Downloading;
+                uiState.updateReady =
+                    update.phase == ex::app::LinuxUpdatePhase::Downloaded;
+                uiState.updateFailed =
+                    update.phase == ex::app::LinuxUpdatePhase::Failed;
+                uiState.updateVersion = update.info.version;
+                uiState.updateNotes = update.info.notes;
+                bool newer = false;
+                if (update.phase == ex::app::LinuxUpdatePhase::Available ||
+                    update.phase == ex::app::LinuxUpdatePhase::Downloaded) {
+                    ex::update::SemanticVersion remote{};
+                    ex::update::SemanticVersion local{};
+                    newer =
+                        ex::update::ParseVersion(update.info.version, remote) &&
+                        ex::update::ParseVersion(EXPLOSION_VERSION_STRING,
+                                                 local) &&
+                        ex::update::CompareVersions(remote, local) > 0 &&
+                        update.info.version != options.skippedVersion;
+                }
+                uiState.updateAvailable = newer;
+                if (uiState.updateCheckRequested) {
+                    uiState.updateCheckRequested = false;
+                    options.lastCheckUnix =
+                        static_cast<long long>(std::time(nullptr));
+                    updater.CheckAsync();
+                }
+                if (uiState.updateCheckEnabled != options.checkForUpdates) {
+                    options.checkForUpdates = uiState.updateCheckEnabled;
+                }
+                if (uiState.updateDownloadRequested) {
+                    uiState.updateDownloadRequested = false;
+                    updater.DownloadAsync();
+                }
+                if (uiState.updateSkipRequested) {
+                    uiState.updateSkipRequested = false;
+                    options.skippedVersion = update.info.version;
+                    uiState.updateAvailable = false;
+                }
+                if (uiState.updateInstallRequested) {
+                    uiState.updateInstallRequested = false;
+                    if (updater.InstallAndRestart()) {
+                        running = false;
+                    }
+                }
+
                 if (uiState.quitRequested) {
                     running = false;
                 }
@@ -1587,6 +1706,12 @@ int main(int argc, char** argv) {
         ex::LogInfo("Average: %.2f ms/frame (%.1f fps)",
                     elapsed * 1000.0 / double(rendered),
                     double(rendered) / std::max(elapsed, 1e-9));
+    }
+
+    // Persist the update bookkeeping (skipped version, last check) the same
+    // way the Windows application does.
+    if (!settingsPath.empty() && !SaveSettingsFile(settingsPath, options)) {
+        ex::LogWarn("Could not save settings: %s", settingsPath.c_str());
     }
 
     if (options.headless && !options.screenshot.empty()) {

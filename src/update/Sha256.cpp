@@ -131,6 +131,21 @@ std::string Sha256FileHex(const std::wstring& path) {
     return hash.Finish();
 }
 
+std::string Sha256FileHex(const std::string& path) {
+    if (path.empty()) {
+        return {};
+    }
+    const int size =
+        MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, nullptr, 0);
+    if (size <= 0) {
+        return {};
+    }
+    std::wstring wide(size_t(size), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wide.data(), size);
+    wide.resize(size_t(size - 1));
+    return Sha256FileHex(wide);
+}
+
 std::string NormalizeSha256(const std::string& text) {
     std::string value = text;
 

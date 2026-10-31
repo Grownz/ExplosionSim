@@ -301,8 +301,9 @@ XDG path on Linux and `%LOCALAPPDATA%` on Windows while still preferring a
 portable `settings.ini` next to the executable. `--write-settings` round-trips
 the active profile exactly. `package_linux` produces a self-contained tar.gz
 with the binary, assets, desktop entry, icon and README; CI extracts it and runs
-a parity capture from the clean directory. The Linux v1 updater is the GitHub
-release archive (no self-updater).
+a parity capture from the clean directory. The Linux updater is the
+`ExplosionSimUpdater` helper: it checks GitHub, downloads the tar.gz, verifies
+the SHA-256 digest, swaps the per-user install and restarts the application.
 
 ### M6 — Parity, performance and hardening (10–20 days)
 
@@ -387,8 +388,8 @@ differences. The high-fidelity solver is the largest single risk.
 1. **Vulkan vs OpenGL** — recommendation: Vulkan for compute parity. OpenGL only if
    the reduced-order milestone must ship sooner and HF parity can wait.
 2. **SDL3 vs GLFW** — recommendation: SDL3 for splash, input, DPI and dialogs.
-3. **Linux updater** — recommendation: no self-updater in v1; GitHub releases plus
-   AppImage/tar.gz.
+3. **Linux updater** — decided: in-app updater with a separate helper binary,
+   GitHub SHA-256 and the tar.gz package (see `linux-usage.md`).
 4. **macOS** — out of scope for v1; revisit after Linux parity.
 5. **Minimum Linux GPU** — Vulkan 1.2, compute, 2 GB VRAM recommended; document the
    reduced-order fallback for weaker devices.

@@ -11,6 +11,8 @@ icons="$data_home/icons/hicolor/256x256/apps"
 
 mkdir -p "$prefix" "$apps" "$icons"
 cp "$here/ExplosionSim" "$prefix/"
+cp "$here/ExplosionSimUpdater" "$prefix/"
+chmod +x "$prefix/ExplosionSim" "$prefix/ExplosionSimUpdater"
 cp -r "$here/assets" "$prefix/"
 for file in README.md LICENSE CHANGELOG.md README-linux.txt; do
     if [ -f "$here/$file" ]; then

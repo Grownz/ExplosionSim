@@ -44,5 +44,7 @@ The desktop entry (explosionsim.desktop) and icon (explosionsim.png) are
 provided for system integration. Copy them to the appropriate XDG directories
 and adjust Exec if the binary is installed elsewhere.
 
-Updates: Linux v1 uses the GitHub release archive; there is no in-app
-self-updater. Replace this directory with the new release to update.
+Updates: the application checks GitHub once per day and can install a newer
+release itself. The install step uses ExplosionSimUpdater, which must stay next
+to the executable. Automatic updates only work for per-user installs; a
+system-wide install should be updated through the package manager.

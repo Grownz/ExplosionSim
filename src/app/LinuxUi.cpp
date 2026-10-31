@@ -216,6 +216,41 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
     ImGui::Checkbox("Bloom enabled", &state.enableBloom);
     ImGui::Checkbox("Grid", &state.showGrid);
 
+    ImGui::SeparatorText("Updates");
+    ImGui::Checkbox("Check on startup", &state.updateCheckEnabled);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(state.updateBusy);
+    if (ImGui::Button("Check now")) {
+        state.updateCheckRequested = true;
+    }
+    ImGui::EndDisabled();
+    if (!state.updateStatus.empty()) {
+        ImGui::TextWrapped("%s", state.updateStatus.c_str());
+    }
+    if (state.updateAvailable) {
+        if (state.updateReady) {
+            if (ImGui::Button("Install and restart")) {
+                state.updateInstallRequested = true;
+            }
+        } else {
+            ImGui::BeginDisabled(state.updateBusy);
+            if (ImGui::Button("Download update")) {
+                state.updateDownloadRequested = true;
+            }
+            ImGui::EndDisabled();
+            if (state.updateBusy) {
+                ImGui::ProgressBar(state.updateProgress, ImVec2(-1.0f, 0.0f));
+            }
+        }
+        if (ImGui::Button("Skip this version")) {
+            state.updateSkipRequested = true;
+        }
+        if (!state.updateNotes.empty() &&
+            ImGui::CollapsingHeader("Release notes")) {
+            ImGui::TextWrapped("%s", state.updateNotes.c_str());
+        }
+    }
+
     ImGui::Separator();
     ImGui::TextUnformatted("F1 toggles this panel");
     if (ImGui::Button("Quit")) {

@@ -83,7 +83,7 @@ green.
 | Area | Windows | Linux | Handling |
 |---|---|---|---|
 | Graphics API | D3D11 | Vulkan | Same RHI surface; parity via capture comparison |
-| Self-updater | in-app updater | none (replace the archive) | Documented in the changelog and `docs/linux-usage.md` |
+| Self-updater | in-app updater (WinHTTP helper) | in-app updater (`ExplosionSimUpdater`, mbedTLS) | Keep the UI and the check/download/install flow equivalent |
 | UI | ImGui (Win32/D3D11) | ImGui (SDL3/Vulkan, F1) | Keep the panels feature-equivalent |
 | Packaging | zip | tar.gz + `install.sh` | Both attached to each release |
 | Performance | D3D11 numbers | Vulkan numbers | Same-GPU-class comparison still pending |

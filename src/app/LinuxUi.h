@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace ex::sim {
 class Simulation;
@@ -45,6 +46,21 @@ struct LinuxUiState {
     double timeScale = 0.06;
     bool highFidelity = false;
     int solverResolution = 128;
+
+    // Update panel.
+    bool updateCheckEnabled = true;
+    bool updateCheckRequested = false;
+    bool updateDownloadRequested = false;
+    bool updateInstallRequested = false;
+    bool updateSkipRequested = false;
+    bool updateAvailable = false;
+    bool updateReady = false;
+    bool updateBusy = false;
+    bool updateFailed = false;
+    std::string updateVersion;
+    std::string updateNotes;
+    std::string updateStatus;
+    float updateProgress = 0.0f;
 };
 
 // Dear ImGui overlay for the native Linux shell. It is optional: the headless

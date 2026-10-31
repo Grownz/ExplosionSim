@@ -547,5 +547,7 @@ the SDL3 splash, portable stb image I/O, XDG settings paths and a self-contained
 tar.gz package. The shared physics suite and an offscreen Vulkan solver test run on
 Linux; the Windows app keeps the D3D11 backend and its physics/GPU suites. See
 [linux-build.md](linux-build.md) for the build, test, benchmark and packaging
-commands. The Windows self-updater remains Win32-only; Linux v1 updates by replacing
-the release archive.
+commands. Both platforms now ship an in-app updater: the Windows application uses
+the Win32 helper and the Linux application uses `ExplosionSimUpdater`, which
+checks GitHub, downloads the tar.gz, verifies the SHA-256 digest and swaps a
+per-user installation.

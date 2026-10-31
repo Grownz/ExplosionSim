@@ -27,8 +27,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Linux in-app updater** - `ExplosionSimUpdater` is a separate helper binary
+  shipped next to the application. It checks the GitHub releases API, downloads
+  the `linux-x86_64.tar.gz` with progress, verifies the GitHub SHA-256 digest,
+  extracts it, swaps the install directory atomically (with rollback) and
+  relaunches the application. The ImGui panel gained an Updates section with
+  check, download, install and "skip this version"; the daily check and the
+  skipped version are stored in `settings.ini`. The helper owns all HTTP/TLS
+  code (vendored mbedTLS), so the application itself has no network dependency.
+  Automatic updates only run for per-user installs; a system-wide install
+  should be updated through the package manager.
 - A headless `splash` test on Windows and Linux that checks the shared TTF text
   and samples a frame in the middle of a crossfade.
+- A Linux `updater` test covering SHA-256, URL validation, tar.gz extraction and
+  the install swap including the relaunch.
 - The Linux CI installs `fonts-dejavu-core` so the shared font is always
   available.
 

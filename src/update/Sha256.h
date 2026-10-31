@@ -11,6 +11,7 @@ namespace ex::update {
 std::string Sha256Hex(const void* data, size_t size);
 std::string Sha256Hex(const std::vector<uint8_t>& data);
 std::string Sha256FileHex(const std::wstring& path);
+std::string Sha256FileHex(const std::string& path);
 
 // Accepts "sha256:<hex>", a bare 64-character hex digest, or a checksum file
 // line ("<hex>  filename"). Returns the lower-case digest or an empty string.
