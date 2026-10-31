@@ -4,7 +4,20 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.2] - 2026-10-31
+
+0.12.2 is a packaging and update-dialog fix over 0.12.1. The Windows release
+now ships `CHANGELOG.md`, so fresh installs have the changelog and updates
+replace it; the Windows update panel also shows the new release's notes before
+installing.
+
+### Highlights
+
+- **Changelog in the Windows package** - the release zip and the update payload
+  now include `CHANGELOG.md`, so the in-app changelog no longer stays at the
+  old version after an update.
+- **Release notes before installing** - the Windows update panel shows the
+  available release's notes, matching the Linux panel.
 
 ### Fixed
 
