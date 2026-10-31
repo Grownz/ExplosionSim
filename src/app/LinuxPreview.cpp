@@ -4,6 +4,7 @@
 #include "gfx/Camera.h"
 #include "gfx/SceneMeshLibrary.h"
 #include "scene/SceneTypes.h"
+#include "scene/VehicleModels.h"
 #include "sim/Simulation.h"
 
 #include "BloomShaders.h"
@@ -771,7 +772,7 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
                     DirectX::XMMatrixTranslation(object.position.x, 0.0f,
                                                  object.position.z);
             item.params[3] = 2.0f;
-            item.textureScale[3] = 2.0f;
+            item.textureScale[3] = float(object.meshVariant & 3);
         } else if (object.type == ex::scene::SceneObjectType::Vehicle) {
             const float uniform =
                 object.size.z > 1e-4f ? object.size.z / 2.8f : 1.0f;
@@ -781,7 +782,8 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
                     DirectX::XMMatrixTranslation(object.position.x, 0.0f,
                                                  object.position.z);
             item.params[3] = 1.0f;
-            item.textureScale[3] = 0.0f;
+            item.textureScale[3] =
+                10.0f + float(object.meshVariant % ex::scene::kVehicleModelCount);
         } else {
             world = DirectX::XMMatrixScaling(object.size.x, object.size.y,
                                              object.size.z) *
@@ -791,7 +793,7 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
                                                  object.position.y,
                                                  object.position.z);
             item.params[3] = 0.0f;
-            item.textureScale[3] = 0.0f;
+            item.textureScale[3] = float(object.meshVariant & 3);
         }
         DirectX::XMFLOAT4X4 matrix{};
         DirectX::XMStoreFloat4x4(&matrix, world);
