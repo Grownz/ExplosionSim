@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gfx/EulerSolverTypes.h"
+#include "gfx/EulerObstacles.h"
 #include "gfx/rhi/Rhi.h"
 #include "sim/VolumeBaker.h"
 
@@ -45,6 +46,9 @@ public:
     void Shutdown();
 
     bool Reset(const EulerConfig& config);
+    // Solid boxes for the flow-around variant. The mask is rebuilt on the next
+    // Reset/Rescale and immediately when the domain is already valid.
+    void SetObstacles(const std::vector<ObstacleBox>& obstacles);
     void Step(int steps);
     void UpdateRenderVolume();
     // Precomputes the sun transmittance volume for the volume raymarcher.
@@ -119,6 +123,7 @@ private:
                         std::unique_ptr<ex::rhi::Shader>& shader,
                         std::unique_ptr<ex::rhi::Pipeline>& pipeline);
     bool CreateTextures(int resolution);
+    bool CreateSolidMask();
     void ReleaseVolumeResources();
     bool CreateDescriptorSets();
     void UpdateConstants(int direction, float dt);
@@ -174,6 +179,9 @@ private:
     std::unique_ptr<ex::rhi::Texture> stateB_[2];
     std::unique_ptr<ex::rhi::Texture> renderVolume_;
     std::unique_ptr<ex::rhi::Texture> lightVolume_;
+    std::unique_ptr<ex::rhi::Texture> solidMask_;
+    std::vector<ObstacleBox> obstacles_;
+    int solidMaskResolution_ = 0;
     int stateIndex_ = 0;
     int resolution_ = 0;
 

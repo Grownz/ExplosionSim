@@ -21,6 +21,7 @@ using ex::rhi::ShaderStage;
 
 const DescriptorBinding kInitBindings[] = {
     {0, DescriptorType::UniformBuffer, 1, ShaderStage::Compute, 4},
+    {11, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {21, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
     {22, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
 };
@@ -29,6 +30,7 @@ const DescriptorBinding kSweepBindings[] = {
     {0, DescriptorType::UniformBuffer, 1, ShaderStage::Compute, 4},
     {8, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {9, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
+    {11, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {21, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
     {22, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
 };
@@ -37,6 +39,7 @@ const DescriptorBinding kReduceBindings[] = {
     {0, DescriptorType::UniformBuffer, 1, ShaderStage::Compute, 4},
     {8, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {9, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
+    {11, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {23, DescriptorType::StorageBuffer, 1, ShaderStage::Compute, 4},
 };
 
@@ -44,12 +47,14 @@ const DescriptorBinding kRenderBindings[] = {
     {0, DescriptorType::UniformBuffer, 1, ShaderStage::Compute, 4},
     {8, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {9, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
+    {11, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {24, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
 };
 
 const DescriptorBinding kLightBindings[] = {
     {0, DescriptorType::UniformBuffer, 1, ShaderStage::Compute, 4},
     {10, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
+    {11, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {16, DescriptorType::Sampler, 1, ShaderStage::Compute, 4},
     {25, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
 };
@@ -58,6 +63,7 @@ const DescriptorBinding kRescaleBindings[] = {
     {0, DescriptorType::UniformBuffer, 1, ShaderStage::Compute, 4},
     {8, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {9, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
+    {11, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
     {16, DescriptorType::Sampler, 1, ShaderStage::Compute, 4},
     {21, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
     {22, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
@@ -107,26 +113,26 @@ bool RhiEulerSolver::Initialize(ex::rhi::Device* device, const Shaders& shaders)
         std::unique_ptr<ex::rhi::Pipeline>* pipeline;
     };
     const PassDesc passes[] = {
-        {&shaders.init, "CSInit", kInitBindings, 3, &initShader_, &initPipeline_},
-        {&shaders.sweepX, "CSSweepX", kSweepBindings, 5, &sweepShaders_[0],
+        {&shaders.init, "CSInit", kInitBindings, 4, &initShader_, &initPipeline_},
+        {&shaders.sweepX, "CSSweepX", kSweepBindings, 6, &sweepShaders_[0],
          &sweepPipelines_[0]},
-        {&shaders.sweepY, "CSSweepY", kSweepBindings, 5, &sweepShaders_[1],
+        {&shaders.sweepY, "CSSweepY", kSweepBindings, 6, &sweepShaders_[1],
          &sweepPipelines_[1]},
-        {&shaders.sweepZ, "CSSweepZ", kSweepBindings, 5, &sweepShaders_[2],
+        {&shaders.sweepZ, "CSSweepZ", kSweepBindings, 6, &sweepShaders_[2],
          &sweepPipelines_[2]},
-        {&shaders.sweepXSource, "CSSweepXSource", kSweepBindings, 5,
+        {&shaders.sweepXSource, "CSSweepXSource", kSweepBindings, 6,
          &sweepSourceShaders_[0], &sweepSourcePipelines_[0]},
-        {&shaders.sweepYSource, "CSSweepYSource", kSweepBindings, 5,
+        {&shaders.sweepYSource, "CSSweepYSource", kSweepBindings, 6,
          &sweepSourceShaders_[1], &sweepSourcePipelines_[1]},
-        {&shaders.sweepZSource, "CSSweepZSource", kSweepBindings, 5,
+        {&shaders.sweepZSource, "CSSweepZSource", kSweepBindings, 6,
          &sweepSourceShaders_[2], &sweepSourcePipelines_[2]},
-        {&shaders.reduce, "CSReduce", kReduceBindings, 4, &reduceShader_,
+        {&shaders.reduce, "CSReduce", kReduceBindings, 5, &reduceShader_,
          &reducePipeline_},
-        {&shaders.render, "CSRender", kRenderBindings, 4, &renderShader_,
+        {&shaders.render, "CSRender", kRenderBindings, 5, &renderShader_,
          &renderPipeline_},
-        {&shaders.light, "CSLight", kLightBindings, 4, &lightShader_,
+        {&shaders.light, "CSLight", kLightBindings, 5, &lightShader_,
          &lightPipeline_},
-        {&shaders.rescale, "CSRescale", kRescaleBindings, 6, &rescaleShader_,
+        {&shaders.rescale, "CSRescale", kRescaleBindings, 7, &rescaleShader_,
          &rescalePipeline_},
     };
     for (const PassDesc& pass : passes) {
@@ -234,6 +240,23 @@ bool RhiEulerSolver::CreateTextures(int resolution) {
         return false;
     }
 
+    if (!solidMask_) {
+        // Placeholder until Reset() builds the real mask from the bounds.
+        const float zero = 0.0f;
+        ex::rhi::TextureDesc desc{};
+        desc.format = ex::rhi::Format::R32_FLOAT;
+        desc.width = 1;
+        desc.height = 1;
+        desc.depth = 1;
+        desc.usage = ex::rhi::TextureUsage::Sampled;
+        desc.initialData = &zero;
+        solidMask_ = device_->CreateTexture(desc);
+        if (!solidMask_) {
+            LogError("High-fidelity solver: solid mask creation failed.");
+            return false;
+        }
+    }
+
     // The state textures are read and written by different passes, so keep
     // them in GENERAL for their whole lifetime. This lets the sampled and
     // storage descriptors alias the same image without per-pass transitions.
@@ -256,6 +279,38 @@ bool RhiEulerSolver::CreateTextures(int resolution) {
     return CreateDescriptorSets();
 }
 
+bool RhiEulerSolver::CreateSolidMask() {
+    // The mask uses a capped resolution: a 512^3 R32F volume would need 512 MB
+    // for a field that is only used as a binary obstacle test.
+    solidMaskResolution_ = std::clamp(std::min(resolution_, 128), 8, 128);
+    const std::vector<float> mask =
+        VoxelizeObstacles(obstacles_, bounds_, solidMaskResolution_);
+
+    ex::rhi::TextureDesc desc{};
+    desc.format = ex::rhi::Format::R32_FLOAT;
+    desc.width = uint32_t(solidMaskResolution_);
+    desc.height = uint32_t(solidMaskResolution_);
+    desc.depth = uint32_t(solidMaskResolution_);
+    desc.usage = ex::rhi::TextureUsage::Sampled;
+    desc.initialData = mask.data();
+    solidMask_ = device_->CreateTexture(desc);
+    if (!solidMask_) {
+        LogError("High-fidelity solver: solid mask creation failed.");
+        return false;
+    }
+    return true;
+}
+
+void RhiEulerSolver::SetObstacles(const std::vector<ObstacleBox>& obstacles) {
+    obstacles_ = obstacles;
+    if (!initialized_ || resolution_ == 0) {
+        return;
+    }
+    if (CreateSolidMask()) {
+        CreateDescriptorSets();
+    }
+}
+
 bool RhiEulerSolver::CreateDescriptorSets() {
     auto bindCommon = [&](ex::rhi::DescriptorSet* set) {
         set->SetBuffer(0, constantsBuffer_.get(), 0, sizeof(Constants));
@@ -266,6 +321,7 @@ bool RhiEulerSolver::CreateDescriptorSets() {
         return false;
     }
     bindCommon(initSet_.get());
+    initSet_->SetImage(11, solidMask_.get());
     initSet_->SetImage(21, stateA_[0].get());
     initSet_->SetImage(22, stateB_[0].get());
 
@@ -280,6 +336,7 @@ bool RhiEulerSolver::CreateDescriptorSets() {
                 bindCommon(set.get());
                 set->SetImage(8, stateA_[parity].get());
                 set->SetImage(9, stateB_[parity].get());
+                set->SetImage(11, solidMask_.get());
                 set->SetImage(21, stateA_[write].get());
                 set->SetImage(22, stateB_[write].get());
                 return set;
@@ -301,6 +358,7 @@ bool RhiEulerSolver::CreateDescriptorSets() {
             bindCommon(set.get());
             set->SetImage(8, stateA_[parity].get());
             set->SetImage(9, stateB_[parity].get());
+            set->SetImage(11, solidMask_.get());
             return set;
         };
         reduceSets_[parity] = makeReadSet(reducePipeline_.get());
@@ -320,6 +378,7 @@ bool RhiEulerSolver::CreateDescriptorSets() {
         bindCommon(rescaleSets_[parity].get());
         rescaleSets_[parity]->SetImage(8, stateA_[parity].get());
         rescaleSets_[parity]->SetImage(9, stateB_[parity].get());
+        rescaleSets_[parity]->SetImage(11, solidMask_.get());
         rescaleSets_[parity]->SetSampler(16, linearSampler_.get());
         rescaleSets_[parity]->SetImage(21, stateA_[write].get());
         rescaleSets_[parity]->SetImage(22, stateB_[write].get());
@@ -331,6 +390,7 @@ bool RhiEulerSolver::CreateDescriptorSets() {
     }
     bindCommon(lightSet_.get());
     lightSet_->SetImage(10, renderVolume_.get());
+    lightSet_->SetImage(11, solidMask_.get());
     lightSet_->SetSampler(16, linearSampler_.get());
     lightSet_->SetImage(25, lightVolume_.get());
     return true;
@@ -366,6 +426,8 @@ void RhiEulerSolver::ReleaseVolumeResources() {
     for (auto& texture : stateA_) {
         texture.reset();
     }
+    solidMask_.reset();
+    solidMaskResolution_ = 0;
     resolution_ = 0;
     hasVolume_ = false;
 }
@@ -543,6 +605,10 @@ bool RhiEulerSolver::Reset(const EulerConfig& config) {
     plumeTop_ = 0.0f;
     dragRadius_ = 0.0f;
     riseSpeed_ = 0.0f;
+
+    if (!CreateSolidMask() || !CreateDescriptorSets()) {
+        return false;
+    }
 
     const double chargeRadius =
         std::cbrt(3.0 * std::max(config.chargeMassKg, 1e-6) /
@@ -751,6 +817,10 @@ bool RhiEulerSolver::RescaleDomain(float factor) {
     bounds_.min = XMFLOAT3(centerX - newHalf, 0.0f, centerZ - newHalf);
     bounds_.max = XMFLOAT3(centerX + newHalf, newTop, centerZ + newHalf);
     dx_ = 2.0f * newHalf / float(resolution_);
+
+    if (!CreateSolidMask() || !CreateDescriptorSets()) {
+        return false;
+    }
 
     oldBounds_ = previous;
     oldDx_ = previousDx;

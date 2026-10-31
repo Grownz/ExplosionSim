@@ -278,6 +278,7 @@ add_library(explosion_core STATIC
     src/sim/BlastModel.cpp
     src/sim/ParticleSystem.cpp
     src/sim/Simulation.cpp
+    src/gfx/EulerObstacles.cpp
     src/sim/VolumeBaker.cpp
     src/scene/Scene.cpp
     src/scene/VoronoiFracture.cpp

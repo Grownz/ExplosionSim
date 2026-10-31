@@ -58,7 +58,8 @@ void CSReduce(uint3 id : SV_DispatchThreadID, uint3 groupThread : SV_GroupThread
     const float lowFloor = max(kGroundFadeVoxels * DomainMin.w, kLowLayerFraction * domainHeight);
     const float upperFloor = kRadiusHeightFraction * domainHeight;
 
-    if (all(id < (uint3)Grid.xyz) && IsActiveCell(int3(id)))
+    if (all(id < (uint3)Grid.xyz) && IsActiveCell(int3(id)) &&
+        !IsSolidCell(int3(id)))
     {
         float4 a = StateA.Load(int4(id, 0));
         float2 b = StateB.Load(int4(id, 0));

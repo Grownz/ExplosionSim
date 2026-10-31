@@ -44,6 +44,19 @@ void CSLight(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < steps; ++i)
     {
         const float3 position = world + sunDir * (range.x + stepSize * (float(i) + 0.5));
+        // Buildings block the sun: stop the ray at the first solid voxel.
+        const float3 maskUvw = (position - DomainMin.xyz) /
+                               max(DomainMax.xyz - DomainMin.xyz, 1e-4);
+        uint3 maskSize;
+        SolidMask.GetDimensions(maskSize.x, maskSize.y, maskSize.z);
+        const int3 maskCell = clamp(
+            int3(maskUvw * float3(maskSize)), int3(0, 0, 0),
+            int3(maskSize) - 1);
+        if (SolidMask.Load(int4(maskCell, 0)).r > 0.5)
+        {
+            LightVolume[id] = 0.0;
+            return;
+        }
         const float3 sampleUvw = (position - DomainMin.xyz) /
                                  max(DomainMax.xyz - DomainMin.xyz, 1e-4);
         const float density = RenderVolume.SampleLevel(LinearSampler, sampleUvw, 0).r;

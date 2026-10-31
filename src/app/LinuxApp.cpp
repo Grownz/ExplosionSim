@@ -854,6 +854,7 @@ struct HighFidelityRuntime {
                 ex::LogError("High-fidelity solver could not be initialised.");
                 return false;
             }
+            solver.SetObstacles(ex::gfx::SceneObstacles(simulation.Scene()));
             blastSerial = simulation.BlastSerial();
             capWarned = false;
         }

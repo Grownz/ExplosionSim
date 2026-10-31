@@ -253,6 +253,44 @@ bool GpuEulerSolver::CreateTextures(int resolution) {
     return true;
 }
 
+bool GpuEulerSolver::CreateSolidMask() {
+    solidMaskResolution_ = std::clamp(std::min(resolution_, 128), 8, 128);
+    const std::vector<float> mask =
+        VoxelizeObstacles(obstacles_, bounds_, solidMaskResolution_);
+
+    solidMask_.Reset();
+    D3D11_TEXTURE3D_DESC desc{};
+    desc.Width = UINT(solidMaskResolution_);
+    desc.Height = UINT(solidMaskResolution_);
+    desc.Depth = UINT(solidMaskResolution_);
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R32_FLOAT;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA data{};
+    data.pSysMem = mask.data();
+    data.SysMemPitch = UINT(solidMaskResolution_ * sizeof(float));
+    data.SysMemSlicePitch =
+        UINT(solidMaskResolution_ * solidMaskResolution_ * sizeof(float));
+    if (FAILED(device_->CreateTexture3D(&desc, &data, &solidMask_.texture))) {
+        LogError("High-fidelity solver: solid mask creation failed.");
+        return false;
+    }
+    if (FAILED(device_->CreateShaderResourceView(solidMask_.texture.Get(), nullptr,
+                                                 &solidMask_.srv))) {
+        LogError("High-fidelity solver: solid mask view creation failed.");
+        return false;
+    }
+    return true;
+}
+
+void GpuEulerSolver::SetObstacles(const std::vector<ObstacleBox>& obstacles) {
+    obstacles_ = obstacles;
+    if (hasVolume_) {
+        CreateSolidMask();
+    }
+}
+
 void GpuEulerSolver::ReleaseVolumeResources() {
     for (auto& set : stateA_) {
         set.Reset();
@@ -331,6 +369,8 @@ void GpuEulerSolver::UpdateConstants(int direction, float dt) {
 void GpuEulerSolver::BindStateSRV(int index) {
     ID3D11ShaderResourceView* views[2] = {stateA_[index].srv.Get(), stateB_[index].srv.Get()};
     context_->CSSetShaderResources(0, 2, views);
+    ID3D11ShaderResourceView* solid = solidMask_.srv.Get();
+    context_->CSSetShaderResources(3, 1, &solid);
 }
 
 void GpuEulerSolver::BindStateUAV(int index) {
@@ -344,8 +384,8 @@ void GpuEulerSolver::UnbindStateUAVs() {
 }
 
 void GpuEulerSolver::UnbindAll() {
-    ID3D11ShaderResourceView* nullViews[3] = {nullptr, nullptr, nullptr};
-    context_->CSSetShaderResources(0, 3, nullViews);
+    ID3D11ShaderResourceView* nullViews[4] = {nullptr, nullptr, nullptr, nullptr};
+    context_->CSSetShaderResources(0, 4, nullViews);
     ID3D11UnorderedAccessView* nullUAVs[3] = {nullptr, nullptr, nullptr};
     context_->CSSetUnorderedAccessViews(0, 3, nullUAVs, nullptr);
 }
@@ -621,6 +661,10 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     dragRadius_ = 0.0f;
     riseSpeed_ = 0.0f;
 
+    if (!CreateSolidMask()) {
+        return false;
+    }
+
     const double chargeRadius =
         std::cbrt(3.0 * std::max(config.chargeMassKg, 1e-6) / (4.0 * 3.14159265358979 * 1630.0));
     depositRadius_ = float(std::max(chargeRadius, 3.5 * double(dx_)));
@@ -644,6 +688,8 @@ bool GpuEulerSolver::Reset(const EulerConfig& config) {
     context_->CSSetShader(initShader_.Get(), nullptr, 0);
     UpdateConstants(0, 0.0f);
     BindStateUAV(0);
+    ID3D11ShaderResourceView* solidMask = solidMask_.srv.Get();
+    context_->CSSetShaderResources(3, 1, &solidMask);
     DispatchGrid();
     UnbindAll();
 
@@ -735,6 +781,8 @@ void GpuEulerSolver::UpdateLightVolume(const XMFLOAT3& sunDirection) {
 
     ID3D11ShaderResourceView* render = renderVolume_.srv.Get();
     context_->CSSetShaderResources(2, 1, &render);
+    ID3D11ShaderResourceView* solidMask = solidMask_.srv.Get();
+    context_->CSSetShaderResources(3, 1, &solidMask);
     ID3D11UnorderedAccessView* light = lightVolume_.uav.Get();
     context_->CSSetUnorderedAccessViews(2, 1, &light, nullptr);
 
@@ -759,6 +807,10 @@ bool GpuEulerSolver::RescaleDomain(float factor) {
     bounds_.min = XMFLOAT3(centerX - newHalf, 0.0f, centerZ - newHalf);
     bounds_.max = XMFLOAT3(centerX + newHalf, newTop, centerZ + newHalf);
     dx_ = 2.0f * newHalf / float(resolution_);
+
+    if (!CreateSolidMask()) {
+        return false;
+    }
 
     // The remap reads the old state and writes the other ping-pong set. The
     // constants carry both the old and the new domain.

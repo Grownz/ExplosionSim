@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gfx/EulerSolverTypes.h"
+#include "gfx/EulerObstacles.h"
 #include "gfx/GfxDevice.h"
 #include "sim/VolumeBaker.h"
 
@@ -24,6 +25,8 @@ public:
     void Shutdown();
 
     bool Reset(const EulerConfig& config);
+    // Solid boxes for the flow-around variant.
+    void SetObstacles(const std::vector<ObstacleBox>& obstacles);
     void Step(int steps);
     void UpdateRenderVolume();
     // Precomputes the sun transmittance volume for the volume raymarcher.
@@ -115,6 +118,7 @@ private:
 
     bool CreateComputeShaders();
     bool CreateTextures(int resolution);
+    bool CreateSolidMask();
     bool CreateAuxiliaryResources();
     void ReleaseVolumeResources();
     void UpdateConstants(int direction, float dt);
@@ -143,8 +147,7 @@ private:
     ID3D11DeviceContext* context_ = nullptr;
     uint64_t videoMemoryBytes_ = 0;
 
-    ComPtr<ID3D11ComputeShader> initShader_;
-    ComPtr<ID3D11ComputeShader> sweepShaders_[3];
+    ComPtr<ID3D11ComputeShader> initShader_;    ComPtr<ID3D11ComputeShader> sweepShaders_[3];
     // Source-fused variants, used for the last sweep of a step.
     ComPtr<ID3D11ComputeShader> sweepSourceShaders_[3];
     ComPtr<ID3D11ComputeShader> reduceShader_;
@@ -161,6 +164,9 @@ private:
     VolumeTexture stateB_[2];
     VolumeTexture renderVolume_;
     VolumeTexture lightVolume_;
+    VolumeTexture solidMask_;
+    std::vector<ObstacleBox> obstacles_;
+    int solidMaskResolution_ = 0;
     int stateIndex_ = 0;
     int resolution_ = 0;
 

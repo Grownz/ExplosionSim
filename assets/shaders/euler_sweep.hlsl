@@ -36,6 +36,33 @@ void SweepBody(uint3 id, int dir, bool applySource)
     Primitive wp1 = LoadPrimitive(cell + offset);
     Primitive wp2 = LoadPrimitive(cell + 2 * offset);
 
+    // Solid obstacles: keep solid cells at rest and replace the stencil across
+    // a solid face with a no-slip mirror, so no mass crosses the wall.
+    if (IsSolidCell(cell))
+    {
+        OutA[id] = center.a;
+        OutB[id] = center.b;
+        return;
+    }
+    if (IsSolidCell(cell + offset))
+    {
+        wp1 = MirrorWall(w0, float3(0.0, 0.0, 0.0));
+        wp2 = wp1;
+    }
+    else if (IsSolidCell(cell + 2 * offset))
+    {
+        wp2 = wp1;
+    }
+    if (IsSolidCell(cell - offset))
+    {
+        wm1 = MirrorWall(w0, float3(0.0, 0.0, 0.0));
+        wm2 = wm1;
+    }
+    else if (IsSolidCell(cell - 2 * offset))
+    {
+        wm2 = wm1;
+    }
+
     // Faces i-1/2 and i+1/2. The middle stencil (wm1, w0, wp1) feeds both
     // faces, so its MUSCL slope is computed once instead of twice.
     Primitive leftMinus = Reconstruct(wm2, wm1, w0, 1.0, wm1);

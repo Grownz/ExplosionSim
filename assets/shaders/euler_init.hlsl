@@ -16,6 +16,13 @@ void CSInit(uint3 id : SV_DispatchThreadID)
         return;
     }
 
+    if (IsSolidCell(int3(id)))
+    {
+        OutA[id] = float4(Ambient.x, 0.0, 0.0, 0.0);
+        OutB[id] = float2(Ambient.y / (Ambient.w - 1.0), 0.0);
+        return;
+    }
+
     float3 position = DomainMin.xyz + (float3(id) + 0.5) * DomainMin.w;
     float3 offset = position - float3(0.0, Charge.w, 0.0);
 

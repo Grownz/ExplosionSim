@@ -56,6 +56,9 @@ EX_VK_BINDING(16) SamplerState LinearSampler : register(s0);
 
 EX_VK_BINDING(8) Texture3D<float4> StateA : register(t0);
 EX_VK_BINDING(9) Texture3D<float2> StateB : register(t1);
+// Solid mask from the scene (1 = solid, 0 = fluid). Its resolution is
+// independent of the solver grid; cell indices are scaled in the shaders.
+EX_VK_BINDING(11) Texture3D<float> SolidMask : register(t3);
 
 EX_VK_BINDING(21) RWTexture3D<float4> OutA : register(u0);
 EX_VK_BINDING(22) RWTexture3D<float2> OutB : register(u1);
@@ -125,6 +128,38 @@ bool IsActiveCell(int3 p)
     }
     const float3 world = DomainMin.xyz + (float3(p) + 0.5) * DomainMin.w;
     return IsActiveWorld(world);
+}
+
+// --- Solid obstacles ----------------------------------------------------
+// The scene is voxelized into a mask that may use a lower resolution than the
+// solver grid, so a solver cell maps to the nearest mask cell.
+int3 SolidMaskCell(int3 p)
+{
+    uint3 size;
+    SolidMask.GetDimensions(size.x, size.y, size.z);
+    const float3 scale = float3(size) / float3(Grid.xyz);
+    return clamp(int3((float3(p) + 0.5) * scale), int3(0, 0, 0),
+                 int3(size) - 1);
+}
+
+bool IsSolidCell(int3 p)
+{
+    if (any(p < int3(0, 0, 0)) || any(p >= Grid.xyz))
+    {
+        return false;
+    }
+    return SolidMask.Load(int4(SolidMaskCell(p), 0)).r > 0.5;
+}
+
+// No-slip ghost state. The face velocity must equal the wall velocity, so the
+// ghost velocity mirrors the fluid velocity around it: u_ghost = 2 u_wall - u.
+Primitive MirrorWall(Primitive center, float3 wallVelocity)
+{
+    Primitive ghost = center;
+    ghost.u = 2.0 * wallVelocity.x - center.u;
+    ghost.v = 2.0 * wallVelocity.y - center.v;
+    ghost.w = 2.0 * wallVelocity.z - center.w;
+    return ghost;
 }
 
 // Ground (y = 0) is a reflecting wall: mirror the ghost cell and reverse the
