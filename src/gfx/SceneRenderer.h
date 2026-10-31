@@ -20,7 +20,23 @@ class SceneRenderer {
 public:
     using Vertex = SceneMeshVertex;
 
-    bool Initialize(rhi::Device* rhiDevice);
+    // Platform-supplied shader bytecode. Windows compiles scene.hlsl with
+    // D3DCompile at startup; Linux embeds the SPIR-V generated from the same
+    // source. Keeping the sources outside the renderer makes it buildable and
+    // usable on both backends.
+    struct ShaderSource {
+        const void* data = nullptr;
+        size_t size = 0;
+    };
+    struct Shaders {
+        ShaderSource sceneVertex;        // VSScene
+        ShaderSource scenePixel;         // PSScene
+        ShaderSource shadowVertex;       // VSShadow
+        ShaderSource chunkVertex;        // VSChunk
+        ShaderSource chunkShadowVertex;  // VSShadowChunk
+    };
+
+    bool Initialize(rhi::Device* rhiDevice, const Shaders& shaders);
     void Shutdown();
 
     // Camera data used for culling and level of detail.
@@ -122,7 +138,7 @@ private:
 
     bool CreateMesh(const std::vector<Vertex>& vertices,
                     const std::vector<uint32_t>& indices, Mesh& mesh);
-    bool LoadVehicleMesh(const wchar_t* asset, Mesh& mesh);
+    bool LoadVehicleMesh(const char* asset, Mesh& mesh);
     bool EnsureInstanceCapacity(Mesh& mesh, uint32_t capacity);
     void BuildMeshes();
 

@@ -421,7 +421,9 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         src/gfx/GpuVolumeBaker.cpp
         src/gfx/GpuParticleSystem.cpp
         src/gfx/RhiEulerSolver.cpp
-        src/gfx/ImageIO.cpp)
+        src/gfx/SceneRenderer.cpp
+        src/gfx/ImageIO.cpp
+        src/platform/PlatformPaths.cpp)
     target_include_directories(explosion_linux PRIVATE
         src
         ${CMAKE_BINARY_DIR}/generated
@@ -563,6 +565,7 @@ if(EXPLOSION_BUILD_APP)
         src/gfx/ImageIO.cpp
         src/gfx/GpuEulerSolver.cpp
         src/gfx/SceneRenderer.cpp
+        src/platform/PlatformPaths.cpp
         src/ui/Ui.cpp
         src/update/Sha256.cpp
         src/update/UpdateChecker.cpp

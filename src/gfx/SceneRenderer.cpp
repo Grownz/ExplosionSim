@@ -2,7 +2,7 @@
 
 #include "core/Log.h"
 #include "gfx/Frustum.h"
-#include "gfx/Shader.h"
+#include "platform/Platform.h"
 
 #include <algorithm>
 #include <cmath>
@@ -247,44 +247,41 @@ void AddCone(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
 
 } // namespace
 
-bool SceneRenderer::Initialize(rhi::Device* rhiDevice) {
+bool SceneRenderer::Initialize(rhi::Device* rhiDevice, const Shaders& shaders) {
     if (!rhiDevice) {
         return false;
     }
     rhiDevice_ = rhiDevice;
 
-    const std::wstring path = ResolveAssetPath(L"assets\\shaders\\scene.hlsl");
-    if (path.empty()) {
-        LogError("Scene shader not found.");
+    const auto valid = [](const ShaderSource& source) {
+        return source.data != nullptr && source.size >= 4;
+    };
+    if (!valid(shaders.sceneVertex) || !valid(shaders.scenePixel) ||
+        !valid(shaders.shadowVertex) || !valid(shaders.chunkVertex) ||
+        !valid(shaders.chunkShadowVertex)) {
+        LogError("Scene shaders are missing.");
         return false;
     }
 
-    std::string errors;
-    auto vertexBlob = CompileShaderFile(path, "VSScene", "vs_5_0", errors);
-    auto shadowBlob = CompileShaderFile(path, "VSShadow", "vs_5_0", errors);
-    auto chunkBlob = CompileShaderFile(path, "VSChunk", "vs_5_0", errors);
-    auto chunkShadowBlob =
-        CompileShaderFile(path, "VSShadowChunk", "vs_5_0", errors);
-    auto pixelBlob = CompileShaderFile(path, "PSScene", "ps_5_0", errors);
-    if (!vertexBlob || !shadowBlob || !chunkBlob || !chunkShadowBlob ||
-        !pixelBlob) {
-        LogError("Scene shaders failed to compile.");
-        return false;
-    }
-
-    auto makeShader = [this](rhi::ShaderStage stage, const ComPtr<ID3DBlob>& blob) {
+    auto makeShader = [this](rhi::ShaderStage stage,
+                             const ShaderSource& source) {
         rhi::ShaderDesc desc{};
         desc.stage = stage;
-        desc.data = blob->GetBufferPointer();
-        desc.size = blob->GetBufferSize();
+        desc.data = source.data;
+        desc.size = source.size;
         return rhiDevice_->CreateShader(desc);
     };
 
-    auto vertexShader = makeShader(rhi::ShaderStage::Vertex, vertexBlob);
-    auto shadowShader = makeShader(rhi::ShaderStage::Vertex, shadowBlob);
-    auto chunkShader = makeShader(rhi::ShaderStage::Vertex, chunkBlob);
-    auto chunkShadowShader = makeShader(rhi::ShaderStage::Vertex, chunkShadowBlob);
-    auto pixelShader = makeShader(rhi::ShaderStage::Pixel, pixelBlob);
+    auto vertexShader =
+        makeShader(rhi::ShaderStage::Vertex, shaders.sceneVertex);
+    auto shadowShader =
+        makeShader(rhi::ShaderStage::Vertex, shaders.shadowVertex);
+    auto chunkShader =
+        makeShader(rhi::ShaderStage::Vertex, shaders.chunkVertex);
+    auto chunkShadowShader =
+        makeShader(rhi::ShaderStage::Vertex, shaders.chunkShadowVertex);
+    auto pixelShader =
+        makeShader(rhi::ShaderStage::Pixel, shaders.scenePixel);
     if (!vertexShader || !shadowShader || !chunkShader || !chunkShadowShader ||
         !pixelShader) {
         LogError("Scene shader objects could not be created.");
@@ -304,29 +301,34 @@ bool SceneRenderer::Initialize(rhi::Device* rhiDevice) {
 
     auto makePipeline = [this](rhi::Shader* vs, rhi::Shader* ps,
                                const rhi::VertexAttribute* attributes,
-                               uint32_t attributeCount, const ComPtr<ID3DBlob>& bytecode) {
+                               uint32_t attributeCount,
+                               const ShaderSource& bytecode) {
         rhi::PipelineDesc desc{};
         desc.vertexShader = vs;
         desc.pixelShader = ps;
         desc.vertexAttributes = attributes;
         desc.vertexAttributeCount = attributeCount;
-        desc.vertexShaderBytecode = bytecode->GetBufferPointer();
-        desc.vertexShaderBytecodeSize = bytecode->GetBufferSize();
+        desc.vertexShaderBytecode = bytecode.data;
+        desc.vertexShaderBytecodeSize = bytecode.size;
         return rhiDevice_->CreatePipeline(desc);
     };
 
     sceneShadowPipeline_ =
         makePipeline(shadowShader.get(), nullptr, sceneAttributes,
-                     uint32_t(std::size(sceneAttributes)), shadowBlob);
+                     uint32_t(std::size(sceneAttributes)),
+                     shaders.shadowVertex);
     chunkShadowPipeline_ =
         makePipeline(chunkShadowShader.get(), nullptr, chunkAttributes,
-                     uint32_t(std::size(chunkAttributes)), chunkShadowBlob);
+                     uint32_t(std::size(chunkAttributes)),
+                     shaders.chunkShadowVertex);
     scenePipeline_ = makePipeline(vertexShader.get(), pixelShader.get(),
-                                  sceneAttributes, uint32_t(std::size(sceneAttributes)),
-                                  vertexBlob);
+                                  sceneAttributes,
+                                  uint32_t(std::size(sceneAttributes)),
+                                  shaders.sceneVertex);
     chunkPipeline_ = makePipeline(chunkShader.get(), pixelShader.get(),
-                                  chunkAttributes, uint32_t(std::size(chunkAttributes)),
-                                  chunkBlob);
+                                  chunkAttributes,
+                                  uint32_t(std::size(chunkAttributes)),
+                                  shaders.chunkVertex);
     if (!sceneShadowPipeline_ || !chunkShadowPipeline_ || !scenePipeline_ ||
         !chunkPipeline_) {
         LogError("Scene pipelines could not be created.");
@@ -590,20 +592,40 @@ bool SceneRenderer::EnsureInstanceCapacity(Mesh& mesh, uint32_t capacity) {
     return true;
 }
 
-bool SceneRenderer::LoadVehicleMesh(const wchar_t* asset, Mesh& mesh) {
+namespace {
+
+std::filesystem::path ResolveSceneAsset(const char* relative) {
+    std::error_code error;
+    const std::filesystem::path path(relative);
+    if (std::filesystem::exists(path, error)) {
+        return path;
+    }
+    const std::filesystem::path base = ex::platform::ExecutableDirectory();
+    if (!base.empty()) {
+        const std::filesystem::path candidate = base / path;
+        if (std::filesystem::exists(candidate, error)) {
+            return candidate;
+        }
+    }
+    return {};
+}
+
+} // namespace
+
+bool SceneRenderer::LoadVehicleMesh(const char* asset, Mesh& mesh) {
     static_assert(sizeof(Vertex) == 36, "ESV vertex layout");
     if (!rhiDevice_ || !asset) {
         return false;
     }
 
-    const std::wstring relative =
-        std::wstring(L"assets\\models\\vehicles\\") + asset;
-    const std::wstring path = ResolveAssetPath(relative.c_str());
+    std::string relative = "assets/models/vehicles/";
+    relative += asset;
+    const std::filesystem::path path = ResolveSceneAsset(relative.c_str());
     if (path.empty()) {
         return false;
     }
 
-    std::ifstream file(std::filesystem::path(path), std::ios::binary);
+    std::ifstream file(path, std::ios::binary);
     if (!file) {
         return false;
     }
@@ -622,7 +644,7 @@ bool SceneRenderer::LoadVehicleMesh(const wchar_t* asset, Mesh& mesh) {
     file.read(reinterpret_cast<char*>(&sizeZ), sizeof(sizeZ));
     if (!file || std::memcmp(magic, "ESV1", 4) != 0 || vertexCount == 0 ||
         indexCount == 0 || vertexCount > 200000 || indexCount > 600000) {
-        LogWarn("Invalid vehicle mesh: %ls", path.c_str());
+        LogWarn("Invalid vehicle mesh: %s", path.string().c_str());
         return false;
     }
 
@@ -633,7 +655,7 @@ bool SceneRenderer::LoadVehicleMesh(const wchar_t* asset, Mesh& mesh) {
     file.read(reinterpret_cast<char*>(indices.data()),
               std::streamsize(sizeof(uint32_t) * indexCount));
     if (!file) {
-        LogWarn("Truncated vehicle mesh: %ls", path.c_str());
+        LogWarn("Truncated vehicle mesh: %s", path.string().c_str());
         return false;
     }
 
@@ -660,7 +682,7 @@ void SceneRenderer::BuildMeshes() {
     for (int i = 0; i < scene::kVehicleModelCount; ++i) {
         Mesh& mesh = meshes_[kVehicleMeshFirst + i];
         if (!LoadVehicleMesh(scene::kVehicleModels[i].asset, mesh)) {
-            LogWarn("Vehicle model missing; using a placeholder: %ls",
+            LogWarn("Vehicle model missing; using a placeholder: %s",
                     scene::kVehicleModels[i].asset);
             std::vector<Vertex> vertices;
             std::vector<uint32_t> indices;

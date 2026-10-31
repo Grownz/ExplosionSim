@@ -398,6 +398,12 @@ python3 tools/embed_spirv.py src/app/VolumeBakeShader.h \
 Headers with several entry points take one `symbol=binary.spv` pair per entry
 point, for example `EulerSweepShader.h` with its six sweep entry points.
 
+The shared `SceneRenderer` takes shader bytecode instead of compiling HLSL
+itself. Windows compiles `scene.hlsl` at startup; the Vulkan side supplies the
+embedded `VSScene`, `PSScene`, `VSShadow` and `VSShadowChunk`
+(`tools/vulkan_smoke/SceneShaders.h`) plus `VSChunk`
+(`src/app/ChunkShaders.h`).
+
 The smoke test prints the selected adapter and exits. `--debug` enables the
 Vulkan validation layer when it is installed.
 

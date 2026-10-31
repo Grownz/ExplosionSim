@@ -148,10 +148,44 @@ bool Renderer::Initialize(GfxDevice& device) {
                             device_->DedicatedVideoMemory())) {
         LogWarn("High-fidelity GPU solver unavailable.");
     }
-    if (!sceneRenderer_.Initialize(device_->Rhi())) {
+    if (!InitializeSceneRenderer()) {
         LogWarn("Procedural scene renderer unavailable.");
     }
     return true;
+}
+
+bool Renderer::InitializeSceneRenderer() {
+    const std::wstring path = ResolveAssetPath(L"assets\\shaders\\scene.hlsl");
+    if (path.empty()) {
+        LogError("Scene shader not found.");
+        return false;
+    }
+    std::string errors;
+    auto vertexBlob = CompileShaderFile(path, "VSScene", "vs_5_0", errors);
+    auto pixelBlob = CompileShaderFile(path, "PSScene", "ps_5_0", errors);
+    auto shadowBlob = CompileShaderFile(path, "VSShadow", "vs_5_0", errors);
+    auto chunkBlob = CompileShaderFile(path, "VSChunk", "vs_5_0", errors);
+    auto chunkShadowBlob =
+        CompileShaderFile(path, "VSShadowChunk", "vs_5_0", errors);
+    if (!vertexBlob || !pixelBlob || !shadowBlob || !chunkBlob ||
+        !chunkShadowBlob) {
+        LogError("Scene shaders failed to compile.");
+        return false;
+    }
+
+    const auto source = [](const ComPtr<ID3DBlob>& blob) {
+        SceneRenderer::ShaderSource result;
+        result.data = blob->GetBufferPointer();
+        result.size = blob->GetBufferSize();
+        return result;
+    };
+    SceneRenderer::Shaders shaders{};
+    shaders.sceneVertex = source(vertexBlob);
+    shaders.scenePixel = source(pixelBlob);
+    shaders.shadowVertex = source(shadowBlob);
+    shaders.chunkVertex = source(chunkBlob);
+    shaders.chunkShadowVertex = source(chunkShadowBlob);
+    return sceneRenderer_.Initialize(device_->Rhi(), shaders);
 }
 
 void Renderer::Shutdown() {

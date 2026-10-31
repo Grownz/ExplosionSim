@@ -186,6 +186,7 @@ private:
     bool CreatePipeline();
     bool CreateStates();
     bool CreateNoiseTexture();
+    bool InitializeSceneRenderer();
     bool EnsureTargets(int width, int height);
     bool CreateTarget(Target& target, int width, int height);
     EulerConfig MakeEulerConfig(const sim::Simulation& simulation) const;

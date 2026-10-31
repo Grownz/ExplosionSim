@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 
 namespace ex::platform {
@@ -44,5 +45,10 @@ public:
 };
 
 std::unique_ptr<Window> CreatePlatformWindow(const WindowDesc& desc);
+
+// Directory that contains the running executable (with a trailing separator),
+// or an empty path when it cannot be determined. Used to resolve assets that
+// ship next to the binary.
+std::filesystem::path ExecutableDirectory();
 
 } // namespace ex::platform

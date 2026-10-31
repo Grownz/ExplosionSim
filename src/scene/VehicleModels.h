@@ -7,23 +7,23 @@
 namespace ex::scene {
 
 struct VehicleModelInfo {
-    const wchar_t* asset;
+    const char* asset;
     float width;
     float height;
     float length;
 };
 
 inline constexpr VehicleModelInfo kVehicleModels[] = {
-    {L"sedan.esv", 1.50f, 1.30f, 2.55f},
-    {L"sedan-sports.esv", 1.30f, 1.10f, 2.55f},
-    {L"hatchback-sports.esv", 1.30f, 1.10f, 2.85f},
-    {L"suv.esv", 1.50f, 1.30f, 2.70f},
-    {L"suv-luxury.esv", 1.50f, 1.30f, 2.85f},
-    {L"van.esv", 1.50f, 1.35f, 2.75f},
-    {L"taxi.esv", 1.50f, 1.50f, 2.75f},
-    {L"police.esv", 1.50f, 1.30f, 3.10f},
-    {L"truck.esv", 1.50f, 1.30f, 2.95f},
-    {L"truck-flat.esv", 1.50f, 1.30f, 2.75f},
+    {"sedan.esv", 1.50f, 1.30f, 2.55f},
+    {"sedan-sports.esv", 1.30f, 1.10f, 2.55f},
+    {"hatchback-sports.esv", 1.30f, 1.10f, 2.85f},
+    {"suv.esv", 1.50f, 1.30f, 2.70f},
+    {"suv-luxury.esv", 1.50f, 1.30f, 2.85f},
+    {"van.esv", 1.50f, 1.35f, 2.75f},
+    {"taxi.esv", 1.50f, 1.50f, 2.75f},
+    {"police.esv", 1.50f, 1.30f, 3.10f},
+    {"truck.esv", 1.50f, 1.30f, 2.95f},
+    {"truck-flat.esv", 1.50f, 1.30f, 2.75f},
 };
 
 inline constexpr int kVehicleModelCount =
