@@ -4,6 +4,64 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-10-31
+
+0.13.0 couples the high-fidelity flow to the scene and the debris. Obstacle walls
+now move with the rigid bodies, and the solver feeds aerodynamic drag back into
+the physics, on both D3D11 and Vulkan.
+
+### Highlights
+
+- **Moving walls** - the solver mask is RGBA16F (wall velocity in rgb, solid flag
+  in alpha), and the no-slip mirror accounts for the wall velocity, so a tumbling
+  chunk drags the flow with it.
+- **4C debris drag** - the solver samples `rho` and `u,v,w` at every dynamic body
+  centre and the app applies `F = ½·rho·C_d·A·|u−v|·(u−v)` through
+  `PhysicsWorld::AddImpulse`.
+- **Per-frame obstacle updates** - the mask is rebuilt from the scene plus the
+  physics bodies every other frame and uploaded through the new
+  `Texture::Update` (Vulkan staging, D3D11 dynamic texture).
+
+### Added
+
+- **Moving solid mask** - `ObstacleBox` carries a velocity;
+  `VoxelizeObstacleVelocityMask` writes RGBA16F, and `euler_common.hlsli` mirrors
+  the flow around `SolidWallVelocity`. Both solver backends cap the mask at 64³
+  and skip the upload when the obstacle set is unchanged.
+- **Physics obstacles** - `PhysicsObstacles` collects the rigid bodies that
+  overlap the solver domain (debris, shoved objects and the remaining structure),
+  including their linear velocity. The static scene boxes remain the first layer;
+  moving bodies overwrite them.
+- **4C drag path** - `euler_bodyflow.hlsl` samples the state at the body centres
+  through a structured buffer; the CPU reads the samples back and applies the
+  projected-area drag as an impulse. Bodies below 1 m/s relative speed are
+  skipped and a sleeping body only wakes for an impulse above 5 % of its weight.
+- **Settings and UI** - `solverBodyDrag` (default on), *Debris drag* in both ImGui
+  panels, and `--body-drag` / `--no-body-drag` on Linux.
+- **Tests** - the core suite covers the velocity mask, physics obstacle filtering,
+  the drag impulse and the projected area; the D3D11 and Vulkan solver tests
+  sample the flow at a body and check the readback.
+
+### Fixed
+
+- **Vulkan texture uploads** - `TextureDesc::initialData` was ignored for textures
+  (only explicit subresources were uploaded), so the solid masks, the GPU particle
+  seed state and other initialised textures started undefined on Vulkan. Created
+  textures now take the staging upload path for tightly packed initial data, and
+  `Texture::Update` replaces them in place.
+- **Linux flow-around toggle** - toggling the checkbox only updated the solver for
+  the current run; it now writes `solverFlowAround` into the simulation settings,
+  so a later solver reset keeps the choice.
+
+### Changed
+
+- **RHI textures** - the D3D11 backend keeps initialised textures as `DEFAULT`
+  resources and uploads through `UpdateSubresource`, so `Texture::Update` works;
+  the Vulkan backend reuses a staging buffer per update and transitions the image
+  back to `SHADER_READ`.
+- **Shader tooling** - `tools/embed_spirv.py` now embeds several entry points into
+  one header, which the six Euler sweep shaders need.
+
 ## [0.12.3] - 2026-10-31
 
 0.12.3 makes the blast and the smoke obstacle-aware. The high-fidelity Euler
