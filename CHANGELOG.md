@@ -9,12 +9,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - **Frame profile** - setting `EXPLOSION_FRAME_PROFILE=1` logs one line per second
-  with the average milliseconds per phase: simulation, physics, obstacle
+  with the average CPU milliseconds per phase: simulation, physics, obstacle
   collection, static and cascade shadow passes, chunk instance updates, scene,
-  volume, particles, bloom and composite. Both applications report the same
-  phases. `--benchmark-sim` (Linux) keeps the simulation running inside the
-  benchmark, so the measurement covers a moving scene with debris instead of a
-  frozen frame.
+  volume, particles, bloom and composite. (GPU time is not included; a drop in
+  frame rate without a matching CPU phase points at the GPU.) Both applications
+  report the same phases. `--benchmark-sim` keeps the simulation running inside
+  the benchmark, so the measurement covers a moving scene with debris instead of
+  a frozen frame, on both platforms.
 
 ### Changed
 

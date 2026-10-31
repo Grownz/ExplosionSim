@@ -29,6 +29,9 @@ struct LaunchOptions {
     bool debugLayer = false;
     bool benchmark = false;
     int benchmarkFrames = 120;
+    // Steps the simulation inside the benchmark loop so the measured frame
+    // includes physics and debris instead of a frozen scene.
+    bool benchmarkSim = false;
     bool solverBenchmark = false;
     bool noUpdateCheck = false;
     bool checkUpdatesNow = false;

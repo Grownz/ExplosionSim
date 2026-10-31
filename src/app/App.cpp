@@ -954,6 +954,9 @@ int App::RunHeadless() {
         ex::core::FrameProfiler::Get().Reset();
         const double start = clock.Now();
         for (int frame = 0; frame < frames; ++frame) {
+            if (options_.benchmarkSim) {
+                simulation_.Update(1.0f / 60.0f);
+            }
             renderer_.Render(simulation_, camera_, settings_.render);
             graphics_.Present(false);
             graphics_.Context()->Flush();

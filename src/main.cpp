@@ -37,6 +37,7 @@ void PrintUsage() {
     LogInfo("  --elevation <degrees> Camera elevation for headless captures.");
     LogInfo("  --distance-scale <x>  Multiplier for the framing distance.");
     LogInfo("  --benchmark           Render frames offscreen and print timing.");
+    LogInfo("  --benchmark-sim       Like --benchmark, but steps the simulation each frame.");
     LogInfo("  --frames <count>      Number of benchmark frames (default 120).");
     LogInfo("  --solver-benchmark    Step the GPU solver only and print per-pass GPU timings.");
     LogInfo("  --no-update-check     Skip the GitHub update check for this run.");
@@ -138,6 +139,12 @@ ParsedArguments ParseCommandLine() {
             parseFloat(result.options.distanceScale);
         } else if (argument == L"--benchmark") {
             result.options.benchmark = true;
+            result.options.headless = true;
+        } else if (argument == L"--benchmark-sim") {
+            // Keeps the simulation running inside the benchmark loop so the
+            // measurement covers physics and debris, not just a frozen frame.
+            result.options.benchmark = true;
+            result.options.benchmarkSim = true;
             result.options.headless = true;
         } else if (argument == L"--frames") {
             parseInt(result.options.benchmarkFrames);
