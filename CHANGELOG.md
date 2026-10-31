@@ -4,40 +4,20 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Changed
-
-- **Shared scene and shadows on Linux** - the Linux shell renders the procedural
-  scene, the Voronoi rubble and the cascaded/static shadow maps through
-  `SceneRenderer`, using the same cascades, instancing, LOD and static shadow
-  cache as the Windows renderer. The preview's own scene and chunk pipelines
-  stay as a fallback. Headless capture parity against the Windows reference
-  improves from 15.01 % to 13.79 % of pixels for the reduced-order frame and
-  from 38.57 % to 17.45 % for the high-fidelity frame; the Windows captures are
-  unchanged.
-
-### Fixed
-
-- **Vulkan depth-only passes** - `BeginRenderPass` rejected a null colour target,
-  so the shadow passes never ran and the ground sampled undefined depth maps.
-  Depth-only passes use the existing depth-only render passes, and `ClearDepth`
-  records one so a disabled scene clears the shadow maps instead of keeping stale
-  contents.
-- **Vulkan immediate bindings** - the command list cached one descriptor set per
-  pipeline. Vulkan resolves descriptor sets at submit time, so every draw after
-  the first binding change saw the last value written; all scene meshes were
-  drawn with the final mesh's instance buffer. Bindings are now snapshotted per
-  draw and the sets are recycled at pass boundaries.
-
 ## [0.13.0] - 2026-10-31
 
-0.13.0 couples the high-fidelity flow to the scene and the debris. Obstacle walls
-now move with the rigid bodies, and the solver feeds aerodynamic drag back into
-the physics, on both D3D11 and Vulkan.
+0.13.0 makes the blast obstacle-aware end to end. The high-fidelity flow treats
+the scene as solid walls and flows around them, the walls move with the rigid
+bodies, and the debris feels the aerodynamic drag of the flow. The Linux build
+now draws the scene and its shadow maps through the same scene renderer as
+Windows.
 
 ### Highlights
 
+- **Flow around objects** - the high-fidelity solver voxelizes the intact
+  buildings and vehicles into a solid mask and uses no-slip walls, so the shock
+  and the smoke are deflected around the scene instead of passing through it. The
+  reduced-order bake clips its analytic field inside the same solids.
 - **Moving walls** - the solver mask is RGBA16F (wall velocity in rgb, solid flag
   in alpha), and the no-slip mirror accounts for the wall velocity, so a tumbling
   chunk drags the flow with it.
@@ -45,11 +25,29 @@ the physics, on both D3D11 and Vulkan.
   centre and the app applies `F = ½·rho·C_d·A·|u−v|·(u−v)` through
   `PhysicsWorld::AddImpulse`.
 - **Per-frame obstacle updates** - the mask is rebuilt from the scene plus the
-  physics bodies every other frame and uploaded through the new
-  `Texture::Update` (Vulkan staging, D3D11 dynamic texture).
+  physics bodies every other frame and uploaded through the new `Texture::Update`
+  (Vulkan staging, D3D11 dynamic texture).
+- **Shared scene and shadows on Linux** - the Linux shell renders the procedural
+  scene, the Voronoi rubble and the cascaded/static shadow maps through
+  `SceneRenderer`, using the same cascades, instancing, LOD and static shadow
+  cache as Windows. Headless capture parity against the Windows reference
+  improves from 15.01 % to 13.79 % of pixels for the reduced-order frame and from
+  38.57 % to 17.45 % for the high-fidelity frame; the Windows captures stay
+  bit-identical.
 
 ### Added
 
+- **Flow-around obstacle mask** - `ObstacleBox`, `VoxelizeObstacles` and
+  `SceneObstacles` live in `src/sim/Obstacles.*` and feed both the D3D11
+  (`GpuEulerSolver`) and Vulkan (`RhiEulerSolver`) solvers. Solid cells keep their
+  state, a face between a fluid and a solid cell mirrors the velocity, and the
+  init, render, light and reduce passes skip solids. Destroyed and collapsed
+  objects stop being obstacles; trees are excluded.
+- **Reduced-order solids** - `VolumeBaker` caches a solid mask over a world-space
+  box that contains the current volume box (capped at 32³) and rebuilds it only
+  when the scene obstacles change or the volume box grows past the coverage. The
+  CPU bake, the D3D11 GPU bake and the Vulkan GPU bake read the same mask, so the
+  reduced-order chain matches across platforms and backends.
 - **Moving solid mask** - `ObstacleBox` carries a velocity;
   `VoxelizeObstacleVelocityMask` writes RGBA16F, and `euler_common.hlsli` mirrors
   the flow around `SolidWallVelocity`. Both solver backends cap the mask at 64³
@@ -60,16 +58,24 @@ the physics, on both D3D11 and Vulkan.
   moving bodies overwrite them.
 - **4C drag path** - `euler_bodyflow.hlsl` samples the state at the body centres
   through a structured buffer; the CPU reads the samples back and applies the
-  projected-area drag as an impulse. Bodies below 1 m/s relative speed are
-  skipped and a sleeping body only wakes for an impulse above 5 % of its weight.
-- **Settings and UI** - `solverBodyDrag` (default on), *Debris drag* in both ImGui
-  panels, and `--body-drag` / `--no-body-drag` on Linux.
-- **Tests** - the core suite covers the velocity mask, physics obstacle filtering,
-  the drag impulse and the projected area; the D3D11 and Vulkan solver tests
-  sample the flow at a body and check the readback.
+  projected-area drag as an impulse. Bodies below 1 m/s relative speed are skipped
+  and a sleeping body only wakes for an impulse above 5 % of its weight.
+- **Settings and UI** - the new `solverFlowAround` setting (default on) appears as
+  *Flow around objects*, `solverBodyDrag` (default on) as *Debris drag*, in both
+  ImGui panels, with `--flow-around` / `--no-flow-around` and `--body-drag` /
+  `--no-body-drag` on Linux. Toggling flow-around rebuilds the mask immediately.
+- **Tests** - `core_tests` covers box voxelization (including rotation and empty
+  input), the mask cache, the CPU bake clipping every solid voxel to zero, the
+  velocity mask, physics obstacle filtering, the drag impulse and the projected
+  area; the D3D11 and Vulkan solver tests sample the flow at a body and check the
+  readback.
 
 ### Fixed
 
+- **Vulkan solid mask layout** - the `R32F` mask is explicitly transitioned to
+  `ShaderRead` after creation, including the 1³ placeholder, so the Vulkan
+  validation layers no longer report it as `UNDEFINED` when the compute passes
+  sample it.
 - **Vulkan texture uploads** - `TextureDesc::initialData` was ignored for textures
   (only explicit subresources were uploaded), so the solid masks, the GPU particle
   seed state and other initialised textures started undefined on Vulkan. Created
@@ -78,69 +84,34 @@ the physics, on both D3D11 and Vulkan.
 - **Linux flow-around toggle** - toggling the checkbox only updated the solver for
   the current run; it now writes `solverFlowAround` into the simulation settings,
   so a later solver reset keeps the choice.
-
-### Changed
-
-- **RHI textures** - the D3D11 backend keeps initialised textures as `DEFAULT`
-  resources and uploads through `UpdateSubresource`, so `Texture::Update` works;
-  the Vulkan backend reuses a staging buffer per update and transitions the image
-  back to `SHADER_READ`.
-- **Shader tooling** - `tools/embed_spirv.py` now embeds several entry points into
-  one header, which the six Euler sweep shaders need.
-
-## [0.12.3] - 2026-10-31
-
-0.12.3 makes the blast and the smoke obstacle-aware. The high-fidelity Euler
-solver now treats the scene's buildings and vehicles as solid walls and flows
-around them, and the reduced-order bake clips its analytic field inside them.
-Both platforms get the same behaviour.
-
-### Highlights
-
-- **Flow around objects** - the high-fidelity solver voxelizes the intact
-  buildings and vehicles into a solid mask and uses no-slip walls, so the shock
-  and the smoke are deflected around the scene instead of passing through it.
-- **Reduced-order clipping** - the analytic volume bake uses the same
-  voxelization and writes empty voxels inside solids, so the smoke and its
-  shadows no longer appear inside buildings.
-- **Tests and docs** - a unit test covers the voxelization and the mask
-  application, and the capture-parity references still match on Windows.
-
-### Added
-
-- **Flow-around obstacle mask** - `ObstacleBox`, `VoxelizeObstacles` and
-  `SceneObstacles` live in `src/sim/Obstacles.*` and feed both the D3D11
-  (`GpuEulerSolver`) and Vulkan (`RhiEulerSolver`) solvers. Solid cells keep
-  their state, a face between a fluid and a solid cell mirrors the velocity,
-  and the init, render, light and reduce passes skip solids. Destroyed and
-  collapsed objects stop being obstacles; trees are excluded.
-- **Runtime toggle** - the new `solverFlowAround` setting (default on) is
-  exposed as *Flow around objects* in the Windows and Linux ImGui panels and as
-  `--flow-around` / `--no-flow-around` on Linux. Toggling it rebuilds the mask
-  immediately.
-- **Reduced-order solids** - `VolumeBaker` caches a solid mask over a world-space
-  box that contains the current volume box (capped at 32³) and rebuilds it only
-  when the scene obstacles change or the volume box grows past the coverage. The
-  CPU bake, the D3D11 GPU bake and the Vulkan GPU bake read the same mask, so the
-  reduced-order chain matches across platforms and backends.
-- **Tests** - `core_tests` covers box voxelization (including rotation and empty
-  input), the mask cache and the CPU bake clipping every solid voxel to zero.
-
-### Fixed
-
-- **Vulkan solid mask layout** - the `R32F` mask is explicitly transitioned to
-  `ShaderRead` after creation, including the 1³ placeholder, so the Vulkan
-  validation layers no longer report it as `UNDEFINED` when the compute passes
-  sample it.
+- **Vulkan depth-only passes** - `BeginRenderPass` rejected a null colour target,
+  so the shared shadow passes never ran and the ground sampled undefined depth
+  maps. Depth-only passes use the existing depth-only render passes, and
+  `ClearDepth` records one so a disabled scene clears the shadow maps instead of
+  keeping stale contents.
+- **Vulkan immediate bindings** - the command list cached one descriptor set per
+  pipeline. Vulkan resolves descriptor sets at submit time, so every draw after
+  the first binding change saw the last value written and all scene meshes were
+  drawn with the final mesh's instance buffer. Bindings are now snapshotted per
+  draw and the sets are recycled at pass boundaries.
+- **Linux facade and vehicle style tags** - the preview passed a constant texture
+  style tag for every building and vehicle, while Windows derives the facade
+  pattern and the procedural paint from `object.meshVariant`; the preview now uses
+  the same tags.
 
 ### Changed
 
 - **Shared obstacle source** - the obstacle types moved from `src/gfx` to
-  `src/sim` so the platform-independent volume bake can use the same
-  voxelization as the GPU solvers without a `gfx` dependency.
-- **Shader regeneration** - `tools/embed_spirv.py` regenerates an embedded
-  Vulkan compute shader header from a SPIR-V binary; `VolumeBakeShader.h` was
-  rebuilt from the updated `volume_bake.hlsl`.
+  `src/sim` so the platform-independent volume bake can use the same voxelization
+  as the GPU solvers without a `gfx` dependency.
+- **Shader regeneration** - `tools/embed_spirv.py` regenerates an embedded Vulkan
+  compute shader header from a SPIR-V binary and embeds several entry points into
+  one header; `VolumeBakeShader.h` was rebuilt from the updated
+  `volume_bake.hlsl`, and the six Euler sweep shaders share one header.
+- **RHI textures** - the D3D11 backend keeps initialised textures as `DEFAULT`
+  resources and uploads through `UpdateSubresource`, so `Texture::Update` works;
+  the Vulkan backend reuses a staging buffer per update and transitions the image
+  back to `SHADER_READ`.
 
 ## [0.12.2] - 2026-10-31
 
@@ -1092,7 +1063,12 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.10.5...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.13.0
+[0.12.2]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.12.2
+[0.12.1]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.12.1
+[0.12.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.12.0
+[0.11.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.11.0
 [0.10.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.10.5
 [0.10.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.10.0
 [0.9.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.9.0
