@@ -946,9 +946,11 @@ std::vector<std::string> SplashFrames(const std::filesystem::path& assets) {
 int main(int argc, char** argv) {
     Options options{};
     std::string settingsPath;
+    bool settingsExplicit = false;
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::strcmp(argv[i], "--settings") == 0) {
             settingsPath = argv[i + 1];
+            settingsExplicit = true;
             break;
         }
     }
@@ -1709,8 +1711,10 @@ int main(int argc, char** argv) {
     }
 
     // Persist the update bookkeeping (skipped version, last check) the same
-    // way the Windows application does.
-    if (!settingsPath.empty() && !SaveSettingsFile(settingsPath, options)) {
+    // way the Windows application does. A profile passed with --settings is a
+    // read-only input and is never rewritten.
+    if (!settingsPath.empty() && !settingsExplicit &&
+        !SaveSettingsFile(settingsPath, options)) {
         ex::LogWarn("Could not save settings: %s", settingsPath.c_str());
     }
 
