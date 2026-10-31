@@ -97,10 +97,23 @@ public:
         for (double& value : accumMs_) {
             value = 0.0;
         }
+        for (double& value : gpuAccumMs_) {
+            value = 0.0;
+        }
+        for (bool& touched : gpuTouched_) {
+            touched = false;
+        }
     }
 
     void Add(ProfilePhase phase, double milliseconds) {
         accumMs_[int(phase)] += milliseconds;
+    }
+
+    // GPU timings are collected separately so the log can show which phase is
+    // CPU bound and which one runs on the GPU.
+    void AddGpu(ProfilePhase phase, double milliseconds) {
+        gpuAccumMs_[int(phase)] += milliseconds;
+        gpuTouched_[int(phase)] = true;
     }
 
     // Called once per rendered frame by the application loop.
@@ -142,10 +155,37 @@ private:
         }
         LogInfo("%s", line);
 
+        bool anyGpu = false;
+        for (bool touched : gpuTouched_) {
+            anyGpu = anyGpu || touched;
+        }
+        if (anyGpu) {
+            char gpuLine[512];
+            int gpuLength = std::snprintf(gpuLine, sizeof(gpuLine),
+                                          "Frame profile GPU:");
+            for (int i = 0; i < int(ProfilePhase::Count); ++i) {
+                if (!gpuTouched_[i] || gpuLength <= 0 ||
+                    size_t(gpuLength) >= sizeof(gpuLine)) {
+                    continue;
+                }
+                gpuLength += std::snprintf(
+                    gpuLine + gpuLength, sizeof(gpuLine) - size_t(gpuLength),
+                    " %s=%.2f", ProfilePhaseName(ProfilePhase(i)),
+                    gpuAccumMs_[i] / double(frames_));
+            }
+            LogInfo("%s", gpuLine);
+        }
+
         frames_ = 0;
         windowStart_ = now;
         for (double& value : accumMs_) {
             value = 0.0;
+        }
+        for (double& value : gpuAccumMs_) {
+            value = 0.0;
+        }
+        for (bool& touched : gpuTouched_) {
+            touched = false;
         }
     }
 
@@ -157,6 +197,8 @@ private:
     int frames_ = 0;
     Clock::time_point windowStart_{};
     double accumMs_[int(ProfilePhase::Count)]{};
+    double gpuAccumMs_[int(ProfilePhase::Count)]{};
+    bool gpuTouched_[int(ProfilePhase::Count)]{};
 };
 
 // RAII scope for one phase. Usage: `ProfileScope profile(ProfilePhase::Scene);`

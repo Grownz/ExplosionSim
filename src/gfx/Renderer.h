@@ -245,6 +245,8 @@ private:
 
     GpuEulerSolver solver_;
     SceneRenderer sceneRenderer_;
+    // Per-pass GPU timestamps (only allocated when the frame profiler is on).
+    GpuPassTimer gpuTimer_;
     uint64_t solverBlastSerial_ = ~uint64_t(0);
     bool solverPrepared_ = false;
     bool solverCapWarned_ = false;

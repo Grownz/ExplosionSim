@@ -113,6 +113,8 @@ private:
     // scene and chunk path, so both platforms use the same instancing, LOD and
     // shadow logic.
     ex::gfx::SceneRenderer sceneRenderer_;
+    // Per-pass GPU timestamps (only allocated when the frame profiler is on).
+    ex::gfx::GpuPassTimer gpuTimer_;
     bool sceneRendererReady_ = false;
     std::unique_ptr<ex::rhi::Texture> hdrTarget_;
     std::unique_ptr<ex::rhi::Texture> depthTarget_;

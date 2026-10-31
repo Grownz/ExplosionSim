@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "gfx/rhi/Rhi.h"
+#include "gfx/GpuPassTimer.h"
 #include "gfx/SceneMeshLibrary.h"
 #include "scene/SceneTypes.h"
 #include "scene/VehicleModels.h"
@@ -38,6 +39,10 @@ public:
 
     bool Initialize(rhi::Device* rhiDevice, const Shaders& shaders);
     void Shutdown();
+
+    // Optional GPU timestamp collector; when set, the scene passes record
+    // per-pass timestamps into it.
+    void SetGpuTimer(GpuPassTimer* timer) { gpuTimer_ = timer; }
 
     static constexpr int kShadowCascades = 3;
     static int ShadowSize(int cascade) {
@@ -213,6 +218,8 @@ private:
     std::unique_ptr<rhi::Texture> shadowTexture_[kShadowCascades];
     std::unique_ptr<rhi::Buffer> shadowCascadeBuffer_;
     std::unique_ptr<rhi::Sampler> shadowSampler_;
+    // Optional per-pass GPU timestamps (profiling builds only).
+    GpuPassTimer* gpuTimer_ = nullptr;
     // Resources bound by RenderScene and re-bound after a pipeline switch.
     FrameResources frameResources_{};
     rhi::Sampler* frameSurfaceSampler_ = nullptr;

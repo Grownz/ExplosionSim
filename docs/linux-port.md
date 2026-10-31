@@ -338,8 +338,10 @@ The 10 % same-GPU-class performance target still needs a hardware comparison
 run; the lavapipe numbers are documented as a functional baseline, not a
 hardware-parity claim. Both applications share a per-phase frame profiler
 (`EXPLOSION_FRAME_PROFILE=1`) that reports simulation, physics, obstacle,
-shadow, scene, volume and post-processing milliseconds, which is the input for
-the remaining performance work.
+shadow, scene, volume and post-processing milliseconds; `EXPLOSION_GPU_PROFILE=1`
+adds per-pass GPU timestamps (double buffered, so the previous frame is read
+while the next one records), which is the input for the remaining performance
+work.
 
 - Run the full test matrix on Windows and Linux, hardware and lavapipe.
 - Profile and tune Vulkan barriers, descriptor updates and pipeline caches.

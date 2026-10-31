@@ -16,6 +16,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   report the same phases. `--benchmark-sim` keeps the simulation running inside
   the benchmark, so the measurement covers a moving scene with debris instead of
   a frozen frame, on both platforms.
+- **GPU pass profile** - `EXPLOSION_GPU_PROFILE=1` (together with
+  `EXPLOSION_FRAME_PROFILE=1`) records per-pass GPU timestamps for the static
+  and cascade shadow passes, the scene and the volume, and logs them next to the
+  CPU phases. The pools are double buffered so the previous frame is read while
+  the next one records; reading timestamps still costs synchronisation, so the
+  frame total is not comparable while GPU profiling is on.
 
 ### Changed
 
@@ -26,6 +32,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Chunk instance updates** - only collapsed objects rebuild their chunk
   transforms now; intact buildings are skipped. The buffer is uploaded once per
   frame (a partial map is not portable across the backends).
+- **Physics transform sync** - `PhysicsWorld::Step` only copies transforms for
+  bodies that are awake (or just fell asleep); static structure and sleeping
+  debris are skipped instead of costing four Jolt queries per body per substep.
 
 ### Fixed
 

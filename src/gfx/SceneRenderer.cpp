@@ -1252,7 +1252,13 @@ void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     commandList->BeginRenderPass(nullptr, staticShadowTexture_.get(), false,
                                  true, clearColor);
+    if (gpuTimer_) {
+        gpuTimer_->BeginPass(commandList, core::ProfilePhase::StaticShadow);
+    }
     if (!scene.Settings().enabled || scene.Empty()) {
+        if (gpuTimer_) {
+            gpuTimer_->EndPass(commandList, core::ProfilePhase::StaticShadow);
+        }
         commandList->EndRenderPass();
         return;
     }
@@ -1273,12 +1279,18 @@ void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
     }
     if (instances.empty() ||
         !EnsureStaticInstanceCapacity(uint32_t(instances.size()))) {
+        if (gpuTimer_) {
+            gpuTimer_->EndPass(commandList, core::ProfilePhase::StaticShadow);
+        }
         commandList->EndRenderPass();
         return;
     }
 
     void* mapped = staticInstanceBuffer_->Map();
     if (!mapped) {
+        if (gpuTimer_) {
+            gpuTimer_->EndPass(commandList, core::ProfilePhase::StaticShadow);
+        }
         commandList->EndRenderPass();
         return;
     }
@@ -1307,6 +1319,9 @@ void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
                                         rhi::ShaderStage::Vertex, 0);
         commandList->DrawIndexedInstanced(mesh.indexCount,
                                           uint32_t(instances.size()));
+    }
+    if (gpuTimer_) {
+        gpuTimer_->EndPass(commandList, core::ProfilePhase::StaticShadow);
     }
     commandList->EndRenderPass();
 }
@@ -1556,6 +1571,10 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
         commandList->BeginRenderPass(nullptr, shadowTexture_[cascade].get(),
                                      false, true, clearColor);
+        if (gpuTimer_) {
+            gpuTimer_->BeginPass(commandList,
+                                 core::ProfilePhase::CascadeShadow);
+        }
         // A render pass resets the device bindings, so the pipeline is bound
         // inside each cascade (the Windows backend ignores the repeat).
         commandList->BindPipeline(sceneShadowPipeline_.get());
@@ -1594,6 +1613,9 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
         // Voronoi rubble (phase B chunks) with the chunk shadow shader.
         DrawChunks(commandList, scene, true);
         commandList->BindPipeline(sceneShadowPipeline_.get());
+        if (gpuTimer_) {
+            gpuTimer_->EndPass(commandList, core::ProfilePhase::CascadeShadow);
+        }
         commandList->EndRenderPass();
     }
 }
@@ -1618,6 +1640,9 @@ void SceneRenderer::RenderScene(rhi::CommandList* commandList,
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     commandList->BeginRenderPass(hdrTarget, depthTarget, false, false,
                                  clearColor);
+    if (gpuTimer_) {
+        gpuTimer_->BeginPass(commandList, core::ProfilePhase::Scene);
+    }
     commandList->BindPipeline(scenePipeline_.get());
     BindSceneResources(commandList);
 
@@ -1635,6 +1660,9 @@ void SceneRenderer::RenderScene(rhi::CommandList* commandList,
 
     // Voronoi rubble with the chunk vertex shader and the shared pixel shader.
     DrawChunks(commandList, scene, false);
+    if (gpuTimer_) {
+        gpuTimer_->EndPass(commandList, core::ProfilePhase::Scene);
+    }
     commandList->EndRenderPass();
 }
 

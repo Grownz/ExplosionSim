@@ -186,6 +186,9 @@ bool LinuxPreview::Initialize(ex::rhi::Device* device, int width, int height) {
     if (!sceneRendererReady_) {
         ex::LogWarn("Shared scene renderer unavailable; using the preview path.");
     }
+    // Allocates a timestamp pool only when the frame profiler is enabled.
+    gpuTimer_.Initialize(device);
+    sceneRenderer_.SetGpuTimer(gpuTimer_.enabled() ? &gpuTimer_ : nullptr);
 
     if (!CreateSky(device) || !CreateGround(device) || !CreateScene(device) ||
         !CreateVolume(device) || !CreateParticles(device) ||
@@ -196,6 +199,8 @@ bool LinuxPreview::Initialize(ex::rhi::Device* device, int width, int height) {
 }
 
 void LinuxPreview::Shutdown() {
+    sceneRenderer_.SetGpuTimer(nullptr);
+    gpuTimer_.Shutdown();
     sceneRenderer_.Shutdown();
     sceneRendererReady_ = false;
     compositeSet_.reset();
@@ -1711,6 +1716,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     if (!device || !commandList_ || !hdrTarget_ || !depthTarget_) {
         return;
     }
+    gpuTimer_.BeginFrame();
     uint64_t sceneKey = simulation.Scene().GenerationHash();
     uint64_t collapsed = 0;
     for (const ex::scene::SceneObject& object : simulation.Scene().Objects()) {
@@ -1916,9 +1922,11 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         commandList_->BeginRenderPass(hdrTarget_.get(),
                                       volumeDepthTarget_.get(), false, false,
                                       clear);
+        gpuTimer_.BeginPass(commandList_.get(), ex::core::ProfilePhase::Volume);
         commandList_->BindPipeline(volumePipeline_.get());
         commandList_->BindDescriptorSet(volumeSet_.get());
         commandList_->Draw(3);
+        gpuTimer_.EndPass(commandList_.get(), ex::core::ProfilePhase::Volume);
         commandList_->EndRenderPass();
     }
     if (settings_.enableParticles && gpuParticleIndirect_ &&

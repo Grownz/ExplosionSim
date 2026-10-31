@@ -186,10 +186,16 @@ bool Renderer::InitializeSceneRenderer() {
     shaders.shadowVertex = source(shadowBlob);
     shaders.chunkVertex = source(chunkBlob);
     shaders.chunkShadowVertex = source(chunkShadowBlob);
-    return sceneRenderer_.Initialize(device_->Rhi(), shaders);
+    const bool ready = sceneRenderer_.Initialize(device_->Rhi(), shaders);
+    // Allocates a timestamp pool only when the frame profiler is enabled.
+    gpuTimer_.Initialize(device_->Rhi());
+    sceneRenderer_.SetGpuTimer(gpuTimer_.enabled() ? &gpuTimer_ : nullptr);
+    return ready;
 }
 
 void Renderer::Shutdown() {
+    sceneRenderer_.SetGpuTimer(nullptr);
+    gpuTimer_.Shutdown();
     sceneRenderer_.Shutdown();
     solver_.Shutdown();
     shadowConstantBuffer_.Reset();
@@ -1772,6 +1778,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     if (!EnsureTargets(device_->Width(), device_->Height())) {
         return;
     }
+    gpuTimer_.BeginFrame();
 
     // --- Volume source -----------------------------------------------------
     const bool highFidelity =
@@ -2165,7 +2172,13 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
         context->OMSetBlendState(blendPremultiplied_.Get(), nullptr, 0xffffffff);
         context->PSSetShader(volumePS_.Get(), nullptr, 0);
+        if (commandList) {
+            gpuTimer_.BeginPass(commandList.get(), core::ProfilePhase::Volume);
+        }
         context->Draw(3, 0);
+        if (commandList) {
+            gpuTimer_.EndPass(commandList.get(), core::ProfilePhase::Volume);
+        }
 
         ID3D11ShaderResourceView* nullSRVs[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
         context->PSSetShaderResources(0, 5, nullSRVs);

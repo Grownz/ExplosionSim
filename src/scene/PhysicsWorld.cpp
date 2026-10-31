@@ -334,8 +334,19 @@ void PhysicsWorld::Step(float dt) {
 
     const JPH::BodyInterface& bodyInterface = impl_->system.GetBodyInterface();
     for (size_t i = 0; i < impl_->ids.size() && i < bodies_.size(); ++i) {
+        RigidBody& body = bodies_[i];
+        // Static structure never moves, and a sleeping body keeps its pose.
+        // Both used to cost four Jolt queries per body and physics step, which
+        // dominated the frame once thousands of chunks existed.
+        if (body.isStatic) {
+            continue;
+        }
         const JPH::BodyID id = impl_->ids[i];
         if (id.IsInvalid()) {
+            continue;
+        }
+        const bool active = bodyInterface.IsActive(id);
+        if (!active && body.sleeping) {
             continue;
         }
         JPH::RVec3 position;
@@ -345,13 +356,13 @@ void PhysicsWorld::Step(float dt) {
         JPH::Vec3 angularVelocity;
         bodyInterface.GetLinearAndAngularVelocity(id, linearVelocity,
                                                   angularVelocity);
-        RigidBody& body = bodies_[i];
         body.position = FromJolt(position);
         body.orientation = FromJolt(orientation);
         body.velocity = FromJolt(linearVelocity);
         body.angularVelocity = FromJoltAngular(angularVelocity);
-        body.isStatic = bodyInterface.GetMotionType(id) == JPH::EMotionType::Static;
-        body.sleeping = body.isStatic ? false : !bodyInterface.IsActive(id);
+        // Copy once on the frame the body falls asleep, then skip it until it
+        // is woken again.
+        body.sleeping = !active;
     }
     contactEvents_ = impl_->contactCollector.Take();
 }
