@@ -173,17 +173,36 @@ jobs:
 
       - name: Vulkan validation layers (lavapipe)
         run: |
+          set +e
           ./build/explosion_linux --settings tools/capture_settings.ini --debug \
             --headless --width 320 --height 180 --frames 1 --time 0.1 \
             --charge 0.2 --distance-scale 0.55 \
-            --screenshot /tmp/validation.png 2>&1 | tee /tmp/validation.log
+            --screenshot /tmp/validation.png > /tmp/validation.log 2>&1
+          reduced_order=$?
           ./build/explosion_linux --settings tools/capture_settings.ini --debug \
             --high-fidelity --solver-resolution 32 --no-solver-auto-scale \
             --headless --width 320 --height 180 --frames 1 --time 0.01 \
             --charge 0.2 --distance-scale 0.55 \
-            --screenshot /tmp/validation_hf.png 2>&1 | tee -a /tmp/validation.log
-          ! grep -q "validation layer is not available" /tmp/validation.log
-          ! grep -q "\[error\] Vulkan:" /tmp/validation.log
+            --screenshot /tmp/validation_hf.png >> /tmp/validation.log 2>&1
+          high_fidelity=$?
+          set -e
+          tail -n 120 /tmp/validation.log
+          # Report the failure reason as an annotation; the raw log is only
+          # readable by users with repository access.
+          if [ "$reduced_order" -ne 0 ] || [ "$high_fidelity" -ne 0 ]; then
+            echo "::error::explosion_linux exited with $reduced_order (reduced-order) and $high_fidelity (high-fidelity)"
+            exit 1
+          fi
+          if grep -q "validation layer is not available" /tmp/validation.log; then
+            echo "::error::Vulkan validation layer is not available"
+            exit 1
+          fi
+          if grep -q "\[error\] Vulkan:" /tmp/validation.log; then
+            grep "\[error\] Vulkan:" /tmp/validation.log | head -n 5 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+            exit 1
+          fi
 
       - name: Upload Linux package
         uses: actions/upload-artifact@v6
