@@ -378,11 +378,13 @@ plausibility rather than code compliance.
 - Positive-phase duration is a first-order estimate.
 - Thermal and blast radii assume an unobstructed free-air burst.
 
-For a first-principles treatment the natural next step is an axisymmetric compressible
-Euler solver with an HLLC Riemann solver and soot advection, used to fill the same volume
-texture. Such a solver is significantly more expensive and is not interactive at the
-resolution required for a convincing fireball, which is why the reduced-order model is
-the default.
+For a first-principles treatment the natural next step is a compressible Euler solver
+with an HLLC Riemann solver and soot advection, used to fill the same volume texture.
+Such a solver is significantly more expensive and is not interactive at the resolution
+required for a convincing fireball, which is why the reduced-order model is the default.
+The optional high-fidelity path now implements a 3D GPU version (`GpuEulerSolver` on
+D3D11, `RhiEulerSolver` on Vulkan); see [linux-port.md](linux-port.md) for the pass
+structure and the benchmark.
 
 ## References
 

@@ -559,5 +559,36 @@ if(EXPLOSION_BUILD_TESTS)
                     $<TARGET_FILE_DIR:gpu_tests>/assets
             COMMENT "Copying assets next to the GPU test")
         add_test(NAME gpu COMMAND gpu_tests)
+    elseif(NOT WIN32)
+        # The physics suite is shared with Windows; the settings, changelog,
+        # version and SHA-256 sections are guarded in the source because the
+        # settings serializer pulls in the Win32 renderer on Windows.
+        add_executable(physics_tests
+            tests/physics_tests.cpp
+            src/app/Changelog.cpp
+            src/update/Version.cpp)
+        target_include_directories(physics_tests PRIVATE
+            src
+            ${CMAKE_BINARY_DIR}/generated)
+        target_link_libraries(physics_tests PRIVATE explosion_core)
+        ex_target_warnings(physics_tests)
+        add_test(NAME physics COMMAND physics_tests)
+    endif()
+
+    if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
+        # Vulkan variant of the GPU solver test. It uses the same RHI solver as
+        # the Linux application and is skipped when no Vulkan device exists.
+        add_executable(gpu_vulkan_tests
+            tests/gpu_vulkan_tests.cpp
+            src/gfx/RhiEulerSolver.cpp)
+        target_include_directories(gpu_vulkan_tests PRIVATE
+            src
+            ${CMAKE_BINARY_DIR}/generated)
+        target_link_libraries(gpu_vulkan_tests PRIVATE
+            explosion_vulkan_rhi
+            explosion_core
+            directxmath)
+        ex_target_warnings(gpu_vulkan_tests)
+        add_test(NAME gpu_vulkan COMMAND gpu_vulkan_tests)
     endif()
 endif()

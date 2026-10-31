@@ -87,6 +87,7 @@ struct Options {
     bool solverBenchmark = false;
     long long solverStepCount = 0;
     bool splashTest = false;
+    bool benchmark = false;
     std::string splashScreenshot;
     std::string writeSettings;
     int raymarchSteps = 128;
@@ -128,6 +129,7 @@ void PrintUsage() {
     std::printf("  --solver-benchmark   Run the high-fidelity solver benchmark and exit.\n");
     std::printf("  --solver-step-count <n>  Measured solver steps for the benchmark.\n");
     std::printf("  --splash-test        Show the SDL3 splash briefly and exit.\n");
+    std::printf("  --benchmark          Render a fixed frame count and report the average.\n");
     std::printf("  --write-settings <path>  Write the active settings and exit.\n");
     std::printf("  --no-solver-auto-scale  Disable high-fidelity domain auto-scale.\n");
     std::printf("  --raymarch-steps <n>     Volume raymarch steps (default 128).\n");
@@ -433,6 +435,11 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--splash-test") == 0) {
             options.splashTest = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--benchmark") == 0) {
+            options.benchmark = true;
+            options.headless = true;
             continue;
         }
         if (std::strcmp(arg, "--splash-screenshot") == 0 && i + 1 < argc) {
@@ -1034,6 +1041,10 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (options.benchmark && options.frames <= 0) {
+        options.frames = 60;
+    }
+
     if (!options.writeSettings.empty()) {
         if (!SaveSettingsFile(options.writeSettings, options)) {
             ex::LogError("Could not write settings: %s",
@@ -1443,6 +1454,7 @@ int main(int argc, char** argv) {
         options.headless ? std::max(1, options.frames) : options.frames;
     int rendered = 0;
     double lastTime = NowSeconds();
+    const double benchmarkStart = NowSeconds();
     bool running = true;
     while (running) {
         if (window) {
@@ -1460,6 +1472,14 @@ int main(int argc, char** argv) {
                     camera.SetViewport(width, height);
                 }
             }
+        }
+
+        if (window && window->Minimized()) {
+            // Skip rendering while minimized; keep the frame clock in sync so
+            // restoring the window does not produce a large dt.
+            lastTime = NowSeconds();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            continue;
         }
 
         if (!options.headless) {
@@ -1542,6 +1562,15 @@ int main(int argc, char** argv) {
         if (frameLimit > 0 && rendered >= frameLimit) {
             running = false;
         }
+    }
+
+    if (options.benchmark && rendered > 0) {
+        const double elapsed = NowSeconds() - benchmarkStart;
+        ex::LogInfo("Benchmark: %d frames at %dx%d in %.3f s", rendered,
+                    device->Width(), device->Height(), elapsed);
+        ex::LogInfo("Average: %.2f ms/frame (%.1f fps)",
+                    elapsed * 1000.0 / double(rendered),
+                    double(rendered) / std::max(elapsed, 1e-9));
     }
 
     if (options.headless && !options.screenshot.empty()) {

@@ -50,6 +50,12 @@ public:
             switch (event.type) {
             case SDL_EVENT_QUIT:
                 return false;
+            case SDL_EVENT_WINDOW_MINIMIZED:
+                minimized_ = true;
+                break;
+            case SDL_EVENT_WINDOW_RESTORED:
+                minimized_ = false;
+                break;
             case SDL_EVENT_KEY_DOWN:
                 if (event.key.key == SDLK_ESCAPE) {
                     return false;
@@ -76,6 +82,8 @@ public:
         }
     }
 
+    bool Minimized() const override { return minimized_; }
+
     const char* const* VulkanInstanceExtensions(uint32_t& count) const override {
         count = 0;
         return SDL_Vulkan_GetInstanceExtensions(&count);
@@ -97,6 +105,7 @@ public:
 
 private:
     SDL_Window* window_ = nullptr;
+    bool minimized_ = false;
 };
 
 } // namespace

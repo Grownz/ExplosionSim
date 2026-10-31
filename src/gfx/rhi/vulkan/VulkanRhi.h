@@ -116,6 +116,7 @@ private:
     VkCommandPool commandPool_ = VK_NULL_HANDLE;
     VkCommandBuffer commandBuffer_ = VK_NULL_HANDLE;
     VkFence fence_ = VK_NULL_HANDLE;
+    VkPipelineCache pipelineCache_ = VK_NULL_HANDLE;
     VkSemaphore imageAvailable_ = VK_NULL_HANDLE;
     VkSemaphore renderFinished_ = VK_NULL_HANDLE;
 

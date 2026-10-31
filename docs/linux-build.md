@@ -12,6 +12,13 @@ into it (milestones M2-M4 in [`linux-port.md`](linux-port.md)).
   generation, Voronoi fracture, Jolt physics, thread pool.
 - `core_tests`: portable smoke tests for the blast model, deterministic scene
   generation and the CPU volume bake.
+- `physics_tests`: the shared physics suite (blast model, volume baker, scene,
+  Voronoi fracture, Jolt physics, thread pool) on Linux. The settings,
+  changelog, version and SHA-256 sections are Windows-only in the source
+  because the settings serializer pulls in the Win32 renderer.
+- `gpu_vulkan_tests`: offscreen Vulkan variant of the GPU solver test. It runs
+  the RHI Euler solver through reset, steps, render/light volumes, timestamps
+  and rescale; it is skipped when no Vulkan device exists.
 - `explosion_linux`: native SDL3 + Vulkan application shell. It drives
   `sim::Simulation`, frames the blast with `gfx::Camera` and renders the
   reduced-order chain (sky, ground, procedural scene, volume bake, particles,
@@ -88,6 +95,39 @@ ctest --test-dir build --output-on-failure
 `EXPLOSION_BUILD_APP` defaults to `OFF` on Linux, so the configure step does not
 try to build the Win32/D3D11 application. The native Linux shell is built as the
 separate `explosion_linux` target whenever Vulkan and SDL3 are available.
+
+`ctest` runs three suites on Linux: `core`, `physics` and `gpu_vulkan`. On
+Windows the suites are `core`, `physics` and `gpu` (D3D11). The GPU suite is
+skipped only when no compatible device exists.
+
+### Benchmarks and hardening
+
+```sh
+# Frame timing (render-only, deterministic scene):
+./build/explosion_linux --settings tools/capture_settings.ini \
+  --benchmark --frames 60 --width 320 --height 180
+
+# Solver-only timing with per-pass GPU timestamps:
+./build/explosion_linux --settings tools/capture_settings.ini \
+  --solver-benchmark --solver-resolution 32 --no-solver-auto-scale \
+  --solver-step-count 64 --solver-steps 16
+```
+
+The benchmark prints `Benchmark: ...` and `Average: ... ms/frame (fps)`.
+Lavapipe at 320x180 measures about 18 ms/frame for the reduced-order capture
+profile; the solver benchmark reports the GPU total plus the X/Y/Z sweep,
+reduce and render passes. These are functional baselines, not a hardware
+parity claim: the 10 % same-GPU-class target needs a hardware run.
+
+Hardening in M6:
+
+- Minimized windows stop rendering and keep the frame clock in sync.
+- The swapchain uses `SDL_GetWindowSizeInPixels`, so high-DPI windows render at
+  the pixel resolution.
+- Settings, asset and screenshot paths use `std::filesystem`/UTF-8; CI renders
+  from a non-ASCII settings path.
+- Volume texture descriptor rewrites are cached until the texture changes, and
+  the Vulkan device uses a pipeline cache.
 
 ## Linux application shell
 

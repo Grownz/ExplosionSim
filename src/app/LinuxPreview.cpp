@@ -1306,11 +1306,15 @@ void LinuxPreview::SetGpuVolume(ex::rhi::Texture* texture,
     if (!texture) {
         return;
     }
+    const bool textureChanged = texture != gpuVolumeTexture_;
     gpuVolumeTexture_ = texture;
     gpuVolumeBounds_ = bounds;
     gpuVolumeExtinction_ = extinction;
     gpuVolumeValid_ = true;
     volumeVersion_ = version;
+    if (!textureChanged) {
+        return;
+    }
     if (groundSet_) {
         groundSet_->SetImage(14, texture);
     }
@@ -1332,10 +1336,11 @@ void LinuxPreview::SetGpuLightVolume(ex::rhi::Texture* texture,
     if (!texture) {
         return;
     }
+    const bool textureChanged = texture != gpuLightVolume_;
     gpuLightVolume_ = texture;
     gpuLightBounds_ = bounds;
     gpuLightValid_ = true;
-    if (volumeSet_) {
+    if (textureChanged && volumeSet_) {
         volumeSet_->SetImage(12, texture);
     }
 }

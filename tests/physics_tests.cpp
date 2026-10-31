@@ -3,16 +3,22 @@
 
 #include "core/ThreadPool.h"
 #include "app/Changelog.h"
+#ifdef _WIN32
 #include "app/Settings.h"
+#endif
 #include "gfx/Frustum.h"
+#ifdef _WIN32
 #include "gfx/Shader.h"
+#endif
 #include "scene/PhysicsWorld.h"
 #include "scene/SceneTypes.h"
 #include "scene/VoronoiFracture.h"
 #include "sim/BlastModel.h"
 #include "sim/Simulation.h"
 #include "sim/VolumeBaker.h"
+#ifdef _WIN32
 #include "update/Sha256.h"
+#endif
 #include "update/Version.h"
 
 #include <DirectXPackedVector.h>
@@ -21,10 +27,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 #include <thread>
 #include <vector>
 
+#ifdef _WIN32
 // The settings serializer only needs this symbol for DefaultSettingsPath; the
 // round-trip test passes an explicit path.
 namespace ex::gfx {
@@ -32,6 +40,7 @@ std::wstring ResolveAssetPath(const std::wstring&) {
     return {};
 }
 } // namespace ex::gfx
+#endif
 
 namespace {
 
@@ -597,6 +606,7 @@ void TestSceneFire() {
     CHECK(!scene.ConsumeFireSpawns().empty());
 }
 
+#ifdef _WIN32
 void TestSettingsRoundTrip() {
     ex::app::AppSettings original{};
     original.simulation.chargeMassKg = 12.5;
@@ -705,6 +715,8 @@ void TestSettingsRoundTrip() {
     CHECK(loaded.maxFps == 30);
     CHECK_NEAR(loaded.observerDistanceM, 42.0, 1e-4);
 }
+
+#endif
 
 void TestFuseAndDetonation() {
     ex::core::ThreadPool pool(2);
@@ -1413,6 +1425,7 @@ void TestChangelogParsing() {
           std::string::npos);
 }
 
+#ifdef _WIN32
 void TestSha256() {
     using ex::update::IsSha256Hex;
     using ex::update::NormalizeSha256;
@@ -1434,6 +1447,8 @@ void TestSha256() {
     CHECK(NormalizeSha256("not a digest").empty());
     CHECK(NormalizeSha256(digest.substr(1)).empty());
 }
+
+#endif
 
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1473,10 +1488,14 @@ int main() {
     RUN(TestSceneLayoutPreview);
     RUN(TestParallelSceneGeneration);
     RUN(TestSceneReuse);
+#ifdef _WIN32
     RUN(TestSettingsRoundTrip);
+#endif
     RUN(TestVersionComparison);
     RUN(TestChangelogParsing);
+#ifdef _WIN32
     RUN(TestSha256);
+#endif
     RUN(TestFuseAndDetonation);
     RUN(TestRearmHoldsFuse);
 #undef RUN

@@ -539,7 +539,13 @@ dust into the same buffer; the renderer and the rest of the application stay unc
 The native Linux port and the multi-platform render-hardware-interface (RHI) plan are
 described in [linux-port.md](linux-port.md). It covers the D3D11-to-Vulkan backend
 split, the SDL3 platform layer, the HLSL-to-SPIR-V pipeline, milestones, acceptance
-criteria and effort estimates. The portable core and its tests build on Linux, and
-the Vulkan device/swapchain bring-up (`vulkan_smoke`) runs on Windows and Linux; see
-[linux-build.md](linux-build.md). The graphical application remains Windows x64 only
-until the renderer integration lands.
+criteria and effort estimates.
+
+The Linux application (`explosion_linux`) now renders the reduced-order chain and the
+high-fidelity GPU Euler solver through Vulkan, with GPU volume bake, GPU particles,
+the SDL3 splash, portable stb image I/O, XDG settings paths and a self-contained
+tar.gz package. The shared physics suite and an offscreen Vulkan solver test run on
+Linux; the Windows app keeps the D3D11 backend and its physics/GPU suites. See
+[linux-build.md](linux-build.md) for the build, test, benchmark and packaging
+commands. The Windows self-updater remains Win32-only; Linux v1 updates by replacing
+the release archive.

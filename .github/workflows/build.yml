@@ -113,6 +113,13 @@ jobs:
           grep -q "GPU total" /tmp/solver_benchmark.log
           grep -q "sweeps" /tmp/solver_benchmark.log
 
+      - name: Frame benchmark (lavapipe)
+        run: |
+          ./build/explosion_linux --settings tools/capture_settings.ini \
+            --benchmark --frames 30 --width 320 --height 180 \
+            2>&1 | tee /tmp/frame_benchmark.log
+          grep -q "Average:" /tmp/frame_benchmark.log
+
       - name: Settings round-trip (lavapipe)
         run: |
           ./build/explosion_linux --settings tools/capture_settings.ini \
@@ -123,6 +130,17 @@ jobs:
             --screenshot /tmp/roundtrip.png
           python3 tools/compare_png.py tools/reference/win_capture.png \
             /tmp/roundtrip.png --tolerance 20 --max-fraction 0.20
+
+      - name: Non-ASCII settings path (lavapipe)
+        run: |
+          mkdir -p "/tmp/äöü"
+          cp tools/capture_settings.ini "/tmp/äöü/settings.ini"
+          ./build/explosion_linux --settings "/tmp/äöü/settings.ini" \
+            --headless --width 320 --height 180 --frames 1 --time 0.1 \
+            --charge 0.2 --distance-scale 0.55 \
+            --screenshot /tmp/unicode_settings.png
+          python3 tools/compare_png.py tools/reference/win_capture.png \
+            /tmp/unicode_settings.png --tolerance 20 --max-fraction 0.20
 
       - name: Splash render (dummy video, software renderer)
         run: |

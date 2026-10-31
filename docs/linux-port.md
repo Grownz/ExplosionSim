@@ -1,6 +1,6 @@
 # Linux port and multi-platform RHI plan
 
-Status: **M0-M5 done.** The portable simulation core builds and passes
+Status: **M0-M6 done.** The portable simulation core builds and passes
 `core_tests` natively on Linux (Ubuntu 24.04 CI job). The backend-neutral RHI
 interfaces, D3D11 and Vulkan backends, `SceneRenderer`, command lists, compute
 pipelines and the native Linux app are in place. The app drives
@@ -9,7 +9,10 @@ GPU particle integration (with CPU fallbacks), renders Voronoi chunks, runs the
 reduced-order chain through the RHI, and runs the high-fidelity GPU Euler solver
 (`--high-fidelity`) with its render and light volumes. M5 adds portable
 stb-based image I/O, an SDL3 Linux splash, XDG/`%LOCALAPPDATA%` settings paths
-and a self-contained Linux tar.gz package.
+and a self-contained Linux tar.gz package. M6 adds the Linux physics/Vulkan GPU
+test matrix, frame and solver benchmarks, descriptor and pipeline-cache tuning,
+minimized-window and non-ASCII path hardening, and CI artifacts for both
+platforms.
 
 M2 now has an SDL3 window layer, a Vulkan 1.2 device with an offscreen target,
 swapchain, clear, present and readback (`vulkan_smoke`), and the native
@@ -302,6 +305,19 @@ its threaded animation; its image decoding now goes through stb. The Linux v1
 updater is the GitHub release archive (no self-updater).
 
 ### M6 — Parity, performance and hardening (10–20 days)
+
+Status: **done (code); same-GPU performance comparison pending.** Linux
+`ctest` now runs `core`, `physics` and `gpu_vulkan`; Windows runs `core`,
+`physics` and `gpu`. The Vulkan GPU test creates an offscreen device, runs the
+RHI Euler solver through reset/step/render/light/rescale and checks the
+timestamps. The Linux shell has `--benchmark` (frame timing) and the solver
+benchmark (per-pass GPU timestamps). Descriptor rewrites are cached when the
+volume texture is unchanged, and the Vulkan device uses a pipeline cache.
+Minimized windows skip rendering, the swapchain uses pixel sizes for high-DPI
+windows, and CI renders from a non-ASCII settings path. The Windows and Linux
+CI jobs upload release artifacts. The 10 % same-GPU-class performance target
+still needs a hardware comparison run; the lavapipe numbers are documented as a
+functional baseline, not a hardware-parity claim.
 
 - Run the full test matrix on Windows and Linux, hardware and lavapipe.
 - Profile and tune Vulkan barriers, descriptor updates and pipeline caches.

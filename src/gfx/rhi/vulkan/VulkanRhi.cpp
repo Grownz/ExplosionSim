@@ -997,6 +997,10 @@ void Device::Shutdown() {
             vkDestroyCommandPool(device_, commandPool_, nullptr);
             commandPool_ = VK_NULL_HANDLE;
         }
+        if (pipelineCache_) {
+            vkDestroyPipelineCache(device_, pipelineCache_, nullptr);
+            pipelineCache_ = VK_NULL_HANDLE;
+        }
         vkDestroyDevice(device_, nullptr);
         device_ = VK_NULL_HANDLE;
     }
@@ -1234,6 +1238,13 @@ bool Device::CreateDevice() {
         return false;
     }
     vkGetDeviceQueue(device_, queueFamily_, 0, &queue_);
+
+    VkPipelineCacheCreateInfo cacheInfo{};
+    cacheInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+    if (vkCreatePipelineCache(device_, &cacheInfo, nullptr, &pipelineCache_) !=
+        VK_SUCCESS) {
+        pipelineCache_ = VK_NULL_HANDLE;
+    }
     return true;
 }
 
@@ -2492,7 +2503,7 @@ std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
         info.stage = stage;
         info.layout = layout;
         VkPipeline pipeline = VK_NULL_HANDLE;
-        if (vkCreateComputePipelines(device_, VK_NULL_HANDLE, 1, &info,
+        if (vkCreateComputePipelines(device_, pipelineCache_, 1, &info,
                                      nullptr, &pipeline) != VK_SUCCESS) {
             vkDestroyPipelineLayout(device_, layout, nullptr);
             vkDestroyDescriptorSetLayout(device_, descriptorLayout, nullptr);
@@ -2686,7 +2697,7 @@ std::unique_ptr<Pipeline> Device::CreatePipeline(const PipelineDesc& desc) {
     pipelineInfo.subpass = 0;
 
     VkPipeline pipeline = VK_NULL_HANDLE;
-    if (vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pipelineInfo,
+    if (vkCreateGraphicsPipelines(device_, pipelineCache_, 1, &pipelineInfo,
                                   nullptr, &pipeline) != VK_SUCCESS) {
         vkDestroyPipelineLayout(device_, layout, nullptr);
         vkDestroyDescriptorSetLayout(device_, descriptorLayout, nullptr);

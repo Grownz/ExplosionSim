@@ -26,6 +26,8 @@ public:
 
     virtual void GetSize(int& width, int& height) const = 0;
     virtual void SetTitle(const char* title) = 0;
+    // True while the window is minimized; the application can skip rendering.
+    virtual bool Minimized() const = 0;
 
     virtual const char* const* VulkanInstanceExtensions(
         uint32_t& count) const = 0;
