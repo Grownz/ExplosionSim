@@ -61,6 +61,8 @@ public:
               float frameMs);
     // Must be called inside the swapchain render pass.
     void Render(void* commandBuffer);
+    // Notifies the backend after a swapchain recreation.
+    void SetMinImageCount(uint32_t count);
 
 private:
     bool initialized_ = false;

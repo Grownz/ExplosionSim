@@ -1420,6 +1420,10 @@ int main(int argc, char** argv) {
                     ex::LogWarn("Swapchain resize failed.");
                 } else {
                     camera.SetViewport(width, height);
+                    if (uiReady) {
+                        linuxUi.SetMinImageCount(
+                            vkDevice->SwapchainImageCount());
+                    }
                 }
             }
         }

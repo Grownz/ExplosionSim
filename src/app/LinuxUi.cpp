@@ -216,4 +216,10 @@ void LinuxUi::Render(void* commandBuffer) {
         reinterpret_cast<VkCommandBuffer>(commandBuffer));
 }
 
+void LinuxUi::SetMinImageCount(uint32_t count) {
+    if (initialized_ && count > 0) {
+        ImGui_ImplVulkan_SetMinImageCount(count);
+    }
+}
+
 } // namespace ex::app
