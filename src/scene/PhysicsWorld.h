@@ -28,6 +28,9 @@ struct RigidBody {
     float sleepTimer = 0.0f;
     bool isStatic = false;
     bool sleeping = false;
+    // Settled debris is frozen (static) once it has been quiet while resting on
+    // static geometry; an impact wakes it again.
+    bool frozen = false;
     // Body-local collision hull (only used while the body is created); empty
     // means the box described by halfExtents is used.
     std::vector<DirectX::XMFLOAT3> hullPoints;
@@ -67,6 +70,7 @@ public:
     struct SleepStats {
         int dynamic = 0;
         int awake = 0;
+        int frozen = 0;
         int belowThreshold = 0; // awake but slower than the sleep threshold
         int above1m = 0;        // awake and faster than 1 m/s
         int above5m = 0;        // awake and faster than 5 m/s
@@ -82,6 +86,11 @@ public:
     // Converts a static structure body into a dynamic one (chunk detachment).
     void SetBodyDynamic(int index, float mass, const DirectX::XMFLOAT3& velocity,
                         const DirectX::XMFLOAT3& angularVelocity);
+    // Freezes a settled body into static geometry and wakes it again.
+    void FreezeBody(int index);
+    void WakeBody(int index);
+    bool IsFrozenIndex(int index) const;
+    bool HasStaticSupport(int index) const;
     // Applies an impulse to a dynamic body (blast wave loading).
     void AddImpulse(int index, const DirectX::XMFLOAT3& impulse);
     const std::vector<ContactEvent>& ContactEvents() const { return contactEvents_; }

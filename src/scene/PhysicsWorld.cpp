@@ -7,7 +7,10 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/EstimateCollisionResponse.h>
+#include <Jolt/Physics/Collision/NarrowPhaseQuery.h>
+#include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -23,6 +26,18 @@
 
 namespace ex::scene {
 namespace {
+
+// Settle thresholds: a body that stays this calm for long enough while resting
+// on static geometry is frozen into a static collider.
+constexpr float kSettleSpeed = 0.08f;   // m/s
+constexpr float kSettleSpin = 0.5f;     // rad/s
+constexpr float kSettleSeconds = 1.5f;
+constexpr float kWakeSpeed = 0.5f; // impactor speed that wakes frozen debris
+
+float Length(const DirectX::XMFLOAT3& value) {
+    return std::sqrt(value.x * value.x + value.y * value.y +
+                     value.z * value.z);
+}
 
 // The scene uses DirectX's left-handed world. Jolt is right-handed, so every
 // state crossing the boundary is mirrored on Z. Rotations are axial vectors and
@@ -338,7 +353,7 @@ int PhysicsWorld::AddBody(const RigidBody& body) {
     settings.mAllowSleeping = !copy.isStatic;
     // Standing structure bodies are created static and switched to dynamic when
     // their joints fail; Jolt requires motion properties for that transition.
-    settings.mAllowDynamicOrKinematic = copy.isStatic;
+    settings.mAllowDynamicOrKinematic = true;
     settings.mUserData = uint64_t(index);
     if (!copy.isStatic) {
         settings.mOverrideMassProperties =
@@ -392,7 +407,48 @@ void PhysicsWorld::Step(float dt) {
         // is woken again.
         body.sleeping = !active;
     }
+
+    // Settle: Jolt only sleeps whole islands, and a debris pile is one island,
+    // so a few moving chunks kept thousands of resting ones simulated. Bodies
+    // that have been quiet for a while and rest on static geometry are frozen
+    // into static colliders; an impact wakes them again below.
+    for (size_t i = 0; i < bodies_.size(); ++i) {
+        RigidBody& body = bodies_[i];
+        if (body.isStatic) {
+            continue;
+        }
+        const float speed = Length(body.velocity);
+        const float spin = Length(body.angularVelocity);
+        if (speed < kSettleSpeed && spin < kSettleSpin) {
+            body.sleepTimer += dt;
+        } else {
+            body.sleepTimer = 0.0f;
+        }
+        if (body.sleepTimer >= kSettleSeconds && HasStaticSupport(int(i))) {
+            FreezeBody(int(i));
+        }
+    }
+
     contactEvents_ = impl_->contactCollector.Take();
+
+    // Moving debris that hits a frozen piece wakes it so it can be pushed.
+    for (const ContactEvent& event : contactEvents_) {
+        int frozenIndex = -1;
+        int other = -1;
+        if (IsFrozenIndex(event.bodyA)) {
+            frozenIndex = event.bodyA;
+            other = event.bodyB;
+        } else if (IsFrozenIndex(event.bodyB)) {
+            frozenIndex = event.bodyB;
+            other = event.bodyA;
+        }
+        if (frozenIndex < 0 || other < 0 || other >= int(bodies_.size())) {
+            continue;
+        }
+        if (Length(bodies_[other].velocity) > kWakeSpeed) {
+            WakeBody(frozenIndex);
+        }
+    }
 }
 
 int PhysicsWorld::AwakeCount() const {
@@ -410,6 +466,9 @@ PhysicsWorld::SleepStats PhysicsWorld::CollectSleepStats(float threshold) const 
     double speedSum = 0.0;
     bool haveY = false;
     for (const RigidBody& body : bodies_) {
+        if (body.frozen) {
+            ++stats.frozen;
+        }
         if (body.isStatic) {
             continue;
         }
@@ -492,6 +551,67 @@ void PhysicsWorld::SetBodyDynamic(int index, float mass,
     bodyInterface.SetLinearAndAngularVelocity(id, ToJolt(velocity),
                                               ToJoltAngular(angularVelocity));
     bodyInterface.ActivateBody(id);
+}
+
+bool PhysicsWorld::IsFrozenIndex(int index) const {
+    return index >= 0 && index < int(bodies_.size()) && bodies_[index].frozen;
+}
+
+bool PhysicsWorld::HasStaticSupport(int index) const {
+    if (!impl_ || index < 0 || index >= int(bodies_.size())) {
+        return false;
+    }
+    const RigidBody& body = bodies_[index];
+    // A short downward ray against the non-moving layer (ground, structure and
+    // already frozen debris). Casting here means a piece only freezes once it
+    // really rests on something that cannot move away underneath it.
+    const float reach = std::max(body.boundingRadius, 0.1f) + 0.15f;
+    const JPH::RRayCast ray{ToJolt(body.position),
+                            JPH::Vec3(0.0f, -reach, 0.0f)};
+    JPH::RayCastResult hit;
+    const JPH::SpecifiedObjectLayerFilter layerFilter(Layers::NON_MOVING);
+    return impl_->system.GetNarrowPhaseQuery().CastRay(ray, hit, {},
+                                                       layerFilter);
+}
+
+void PhysicsWorld::FreezeBody(int index) {
+    if (!impl_ || index < 0 || index >= int(bodies_.size()) ||
+        index >= int(impl_->ids.size())) {
+        return;
+    }
+    RigidBody& body = bodies_[index];
+    if (body.isStatic) {
+        return;
+    }
+    const JPH::BodyID id = impl_->ids[index];
+    JPH::BodyInterface& bodyInterface = impl_->system.GetBodyInterface();
+    bodyInterface.SetLinearAndAngularVelocity(id, JPH::Vec3::sZero(),
+                                              JPH::Vec3::sZero());
+    // Frozen debris joins the non-moving layer so the support ray and the
+    // contact filters treat it like ground.
+    bodyInterface.SetObjectLayer(id, Layers::NON_MOVING);
+    bodyInterface.SetMotionType(id, JPH::EMotionType::Static,
+                                JPH::EActivation::DontActivate);
+    body.isStatic = true;
+    body.frozen = true;
+    body.sleeping = false;
+    body.sleepTimer = 0.0f;
+    body.velocity = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
+    body.angularVelocity = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
+}
+
+void PhysicsWorld::WakeBody(int index) {
+    if (!impl_ || index < 0 || index >= int(bodies_.size())) {
+        return;
+    }
+    RigidBody& body = bodies_[index];
+    if (!body.frozen) {
+        return;
+    }
+    body.frozen = false;
+    body.sleepTimer = 0.0f;
+    SetBodyDynamic(index, body.mass, DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f),
+                   DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f));
 }
 
 void PhysicsWorld::AddImpulse(int index, const DirectX::XMFLOAT3& impulse) {

@@ -497,7 +497,8 @@ void TestPhysicsWorld() {
     // The split-impulse solver allows a contact slop of a few millimetres.
     CHECK(settled.position.y >= 0.5f - 0.01f);
     CHECK(settled.position.y < 1.0f);
-    CHECK(settled.sleeping);
+    // Settled debris is either asleep or frozen into a static collider.
+    CHECK(settled.sleeping || settled.frozen);
 }
 
 void TestSceneDamage() {
@@ -866,7 +867,7 @@ void TestBroadphaseManyBodies() {
         CHECK(std::isfinite(body.position.x));
         CHECK(std::isfinite(body.position.y));
         CHECK(body.position.y > 0.4f);
-        if (body.sleeping) {
+        if (body.sleeping || body.frozen) {
             ++settled;
         }
     }

@@ -52,6 +52,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   At t = 10 s with a 5 t charge (7457 bodies, identical scene): physics
   12.46 ms -> 7.84 ms per frame (-37 %), frame 14.09 ms -> 10.02 ms. Most bodies
   are still awake (~6270), so a per-body settle remains the next lever.
+- **Settled debris is frozen** - Jolt sleeps whole islands, and a debris pile is
+  one island, so one moving chunk kept thousands of resting ones simulated.
+  A body that stays below 0.08 m/s and 0.5 rad/s for 1.5 s *while resting on
+  static geometry* (checked with a downward ray) is converted into a static
+  collider; a moving chunk that hits a frozen piece wakes it again. The support
+  check keeps pieces from freezing in mid-air.
+
+  Same scene as above: physics 7.84 ms -> 3.88 ms and the frame 10.02 ms ->
+  5.63 ms, with 5528 of 6319 dynamic bodies frozen at t = 10 s.
 
 ### Fixed
 
