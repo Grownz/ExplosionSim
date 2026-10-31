@@ -109,6 +109,7 @@ private:
     bool CreateRenderPass();
     bool CreateTextureRenderPass();
     bool CreateTextureLoadRenderPass();
+    bool CreateTextureDepthOnlyRenderPass(bool load);
     bool CreateFramebuffers();
     bool CreateOffscreenTarget();
     void DestroySwapchain();
@@ -148,6 +149,10 @@ private:
     VkRenderPass renderPass_ = VK_NULL_HANDLE;
     VkRenderPass textureRenderPass_ = VK_NULL_HANDLE;
     VkRenderPass textureLoadRenderPass_ = VK_NULL_HANDLE;
+    VkRenderPass textureDepthOnlyRenderPass_ = VK_NULL_HANDLE;
+    VkRenderPass textureDepthOnlyLoadRenderPass_ = VK_NULL_HANDLE;
+    bool depthOnlyFrame_ = false;
+    rhi::Texture* frameDepthOnlyTexture_ = nullptr;
     VkImage colorImage_ = VK_NULL_HANDLE;
     VkDeviceMemory colorMemory_ = VK_NULL_HANDLE;
     VkImageView colorView_ = VK_NULL_HANDLE;

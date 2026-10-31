@@ -263,25 +263,27 @@ bool SceneRenderer::Initialize(rhi::Device* rhiDevice, const Shaders& shaders) {
         return false;
     }
 
-    auto makeShader = [this](rhi::ShaderStage stage,
+    auto makeShader = [this](rhi::ShaderStage stage, const char* entry,
                              const ShaderSource& source) {
         rhi::ShaderDesc desc{};
         desc.stage = stage;
         desc.data = source.data;
         desc.size = source.size;
+        desc.name = entry;
         return rhiDevice_->CreateShader(desc);
     };
 
-    auto vertexShader =
-        makeShader(rhi::ShaderStage::Vertex, shaders.sceneVertex);
-    auto shadowShader =
-        makeShader(rhi::ShaderStage::Vertex, shaders.shadowVertex);
-    auto chunkShader =
-        makeShader(rhi::ShaderStage::Vertex, shaders.chunkVertex);
+    auto vertexShader = makeShader(rhi::ShaderStage::Vertex, "VSScene",
+                                   shaders.sceneVertex);
+    auto shadowShader = makeShader(rhi::ShaderStage::Vertex, "VSShadow",
+                                   shaders.shadowVertex);
+    auto chunkShader = makeShader(rhi::ShaderStage::Vertex, "VSChunk",
+                                  shaders.chunkVertex);
     auto chunkShadowShader =
-        makeShader(rhi::ShaderStage::Vertex, shaders.chunkShadowVertex);
-    auto pixelShader =
-        makeShader(rhi::ShaderStage::Pixel, shaders.scenePixel);
+        makeShader(rhi::ShaderStage::Vertex, "VSShadowChunk",
+                   shaders.chunkShadowVertex);
+    auto pixelShader = makeShader(rhi::ShaderStage::Pixel, "PSScene",
+                                  shaders.scenePixel);
     if (!vertexShader || !shadowShader || !chunkShader || !chunkShadowShader ||
         !pixelShader) {
         LogError("Scene shader objects could not be created.");
@@ -299,15 +301,58 @@ bool SceneRenderer::Initialize(rhi::Device* rhiDevice, const Shaders& shaders) {
         {"CHUNKID", 0, rhi::VertexFormat::UInt, 24, 0},
     };
 
+    // Vulkan needs an explicit descriptor layout. The slots mirror the D3D
+    // registers the immediate binding API uses (t0 -> 8, s0 -> 16).
+    const rhi::DescriptorBinding sceneBindings[] = {
+        {0, rhi::DescriptorType::UniformBuffer, 1,
+         rhi::ShaderStage::Vertex, 3},
+        {2, rhi::DescriptorType::UniformBuffer, 1, rhi::ShaderStage::Pixel,
+         2},
+        {3, rhi::DescriptorType::UniformBuffer, 1, rhi::ShaderStage::Vertex,
+         1},
+        {8, rhi::DescriptorType::StorageBuffer, 1, rhi::ShaderStage::Vertex,
+         1},
+        {9, rhi::DescriptorType::StorageBuffer, 1, rhi::ShaderStage::Vertex,
+         1},
+        {10, rhi::DescriptorType::SampledImage, 1, rhi::ShaderStage::Pixel,
+         2},
+        {11, rhi::DescriptorType::SampledImage, 1, rhi::ShaderStage::Pixel,
+         2},
+        {12, rhi::DescriptorType::SampledImage, 1, rhi::ShaderStage::Pixel,
+         2},
+        {13, rhi::DescriptorType::SampledImage, 1, rhi::ShaderStage::Pixel,
+         2},
+        {14, rhi::DescriptorType::SampledImage, 1, rhi::ShaderStage::Pixel,
+         2},
+        {15, rhi::DescriptorType::SampledImage, 1, rhi::ShaderStage::Pixel,
+         2},
+        {18, rhi::DescriptorType::Sampler, 1, rhi::ShaderStage::Pixel, 2},
+        {19, rhi::DescriptorType::Sampler, 1, rhi::ShaderStage::Pixel, 2},
+        {20, rhi::DescriptorType::Sampler, 1, rhi::ShaderStage::Pixel, 2},
+    };
+    const rhi::DescriptorBinding shadowBindings[] = {
+        {3, rhi::DescriptorType::UniformBuffer, 1, rhi::ShaderStage::Vertex,
+         1},
+        {8, rhi::DescriptorType::StorageBuffer, 1, rhi::ShaderStage::Vertex,
+         1},
+        {9, rhi::DescriptorType::StorageBuffer, 1, rhi::ShaderStage::Vertex,
+         1},
+    };
+
     auto makePipeline = [this](rhi::Shader* vs, rhi::Shader* ps,
                                const rhi::VertexAttribute* attributes,
                                uint32_t attributeCount,
+                               const rhi::DescriptorBinding* bindings,
+                               uint32_t bindingCount, bool depthOnly,
                                const ShaderSource& bytecode) {
         rhi::PipelineDesc desc{};
         desc.vertexShader = vs;
         desc.pixelShader = ps;
+        desc.depthOnly = depthOnly;
         desc.vertexAttributes = attributes;
         desc.vertexAttributeCount = attributeCount;
+        desc.descriptorBindings = bindings;
+        desc.descriptorBindingCount = bindingCount;
         desc.vertexShaderBytecode = bytecode.data;
         desc.vertexShaderBytecodeSize = bytecode.size;
         return rhiDevice_->CreatePipeline(desc);
@@ -315,23 +360,40 @@ bool SceneRenderer::Initialize(rhi::Device* rhiDevice, const Shaders& shaders) {
 
     sceneShadowPipeline_ =
         makePipeline(shadowShader.get(), nullptr, sceneAttributes,
-                     uint32_t(std::size(sceneAttributes)),
+                     uint32_t(std::size(sceneAttributes)), shadowBindings,
+                     uint32_t(std::size(shadowBindings)), true,
                      shaders.shadowVertex);
     chunkShadowPipeline_ =
         makePipeline(chunkShadowShader.get(), nullptr, chunkAttributes,
-                     uint32_t(std::size(chunkAttributes)),
+                     uint32_t(std::size(chunkAttributes)), shadowBindings,
+                     uint32_t(std::size(shadowBindings)), true,
                      shaders.chunkShadowVertex);
     scenePipeline_ = makePipeline(vertexShader.get(), pixelShader.get(),
                                   sceneAttributes,
                                   uint32_t(std::size(sceneAttributes)),
+                                  sceneBindings,
+                                  uint32_t(std::size(sceneBindings)), false,
                                   shaders.sceneVertex);
     chunkPipeline_ = makePipeline(chunkShader.get(), pixelShader.get(),
                                   chunkAttributes,
                                   uint32_t(std::size(chunkAttributes)),
+                                  sceneBindings,
+                                  uint32_t(std::size(sceneBindings)), false,
                                   shaders.chunkVertex);
     if (!sceneShadowPipeline_ || !chunkShadowPipeline_ || !scenePipeline_ ||
         !chunkPipeline_) {
-        LogError("Scene pipelines could not be created.");
+        if (!sceneShadowPipeline_) {
+            LogError("Scene shadow pipeline could not be created.");
+        }
+        if (!chunkShadowPipeline_) {
+            LogError("Chunk shadow pipeline could not be created.");
+        }
+        if (!scenePipeline_) {
+            LogError("Scene pipeline could not be created.");
+        }
+        if (!chunkPipeline_) {
+            LogError("Chunk pipeline could not be created.");
+        }
         return false;
     }
 

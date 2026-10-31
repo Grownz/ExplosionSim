@@ -284,6 +284,9 @@ struct PipelineDesc {
     Shader* vertexShader = nullptr;
     Shader* pixelShader = nullptr;
     Shader* computeShader = nullptr;
+    // Depth-only graphics pipeline (shadow passes). The backend uses the
+    // matching depth-only render pass; a pixel shader is omitted.
+    bool depthOnly = false;
     const VertexAttribute* vertexAttributes = nullptr;
     uint32_t vertexAttributeCount = 0;
     uint32_t vertexStride = 0; // Vulkan vertex binding stride; 0 = derive

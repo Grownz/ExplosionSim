@@ -11,8 +11,11 @@
 #include "app/EulerRenderShader.h"
 #include "app/EulerRescaleShader.h"
 #include "app/EulerSweepShader.h"
+#include "app/ChunkShaders.h"
 #include "gfx/RhiEulerSolver.h"
+#include "gfx/SceneRenderer.h"
 #include "gfx/rhi/Rhi.h"
+#include "SceneShaders.h"
 
 #include <DirectXMath.h>
 
@@ -146,6 +149,23 @@ int main() {
     } else {
         CHECK(solver.Bounds().max.y > oldTop);
         CHECK(solver.Stats().expansions == 1);
+    }
+
+    // Shared scene renderer smoke test: the embedded SPIR-V must build the
+    // scene/chunk/shadow pipelines and the shadow resources on Vulkan.
+    ex::gfx::SceneRenderer sceneRenderer;
+    const ex::gfx::SceneRenderer::Shaders sceneShaders{
+        {kSceneVS, kSceneVSSize},
+        {kScenePS, kScenePSSize},
+        {kSceneVSShadow, kSceneVSShadowSize},
+        {kSceneVSChunk, kSceneVSChunkSize},
+        {kSceneVSShadowChunk, kSceneVSShadowChunkSize},
+    };
+    if (!sceneRenderer.Initialize(device.get(), sceneShaders)) {
+        std::printf("FAILED: scene renderer initialisation (shaders or resources)\n");
+        ++g_failures;
+    } else {
+        sceneRenderer.Shutdown();
     }
 
     solver.Shutdown();

@@ -724,14 +724,18 @@ if(EXPLOSION_BUILD_TESTS)
         # the Linux application and is skipped when no Vulkan device exists.
         add_executable(gpu_vulkan_tests
             tests/gpu_vulkan_tests.cpp
-            src/gfx/RhiEulerSolver.cpp)
+            src/gfx/RhiEulerSolver.cpp
+            src/gfx/SceneRenderer.cpp
+            src/platform/PlatformPaths.cpp)
         target_include_directories(gpu_vulkan_tests PRIVATE
             src
+            tools/vulkan_smoke
             ${CMAKE_BINARY_DIR}/generated)
         target_link_libraries(gpu_vulkan_tests PRIVATE
             explosion_vulkan_rhi
             explosion_core
-            directxmath)
+            directxmath
+            ${EXPLOSION_SDL3_TARGET})
         ex_target_warnings(gpu_vulkan_tests)
         add_test(NAME gpu_vulkan COMMAND gpu_vulkan_tests)
     endif()
