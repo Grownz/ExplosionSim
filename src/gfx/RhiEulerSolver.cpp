@@ -255,6 +255,10 @@ bool RhiEulerSolver::CreateTextures(int resolution) {
             LogError("High-fidelity solver: solid mask creation failed.");
             return false;
         }
+        commandList_->BeginCompute();
+        commandList_->TransitionTexture(solidMask_.get(),
+                                        ex::rhi::TextureState::ShaderRead);
+        commandList_->EndCompute();
     }
 
     // The state textures are read and written by different passes, so keep
@@ -298,6 +302,10 @@ bool RhiEulerSolver::CreateSolidMask() {
         LogError("High-fidelity solver: solid mask creation failed.");
         return false;
     }
+    commandList_->BeginCompute();
+    commandList_->TransitionTexture(solidMask_.get(),
+                                    ex::rhi::TextureState::ShaderRead);
+    commandList_->EndCompute();
     return true;
 }
 
