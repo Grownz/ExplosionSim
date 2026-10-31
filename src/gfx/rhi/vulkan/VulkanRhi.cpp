@@ -332,27 +332,6 @@ public:
         }
     }
 
-    bool Update(const void* data, uint64_t offset, uint64_t size) override {
-        if (!hostVisible_ || !data || size == 0 || offset + size > size_) {
-            return false;
-        }
-        if (!mapped_) {
-            if (vkMapMemory(device_, memory_, 0, VK_WHOLE_SIZE, 0, &mapped_) !=
-                VK_SUCCESS) {
-                mapped_ = nullptr;
-                return false;
-            }
-            std::memcpy(static_cast<uint8_t*>(mapped_) + offset, data,
-                        size_t(size));
-            vkUnmapMemory(device_, memory_);
-            mapped_ = nullptr;
-            return true;
-        }
-        std::memcpy(static_cast<uint8_t*>(mapped_) + offset, data,
-                    size_t(size));
-        return true;
-    }
-
     void* NativeHandle() const override {
         return reinterpret_cast<void*>(uintptr_t(buffer_));
     }

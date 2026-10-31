@@ -1010,9 +1010,11 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
     // Give the buffer defined contents once; afterwards only the collapsed
     // objects' ranges are rewritten each frame.
     if (chunkInstanceBuffer_ && chunkInstanceCount_ > 0) {
-        chunkInstanceBuffer_->Update(
-            chunkInstances_.data(), 0,
-            uint64_t(chunkInstanceCount_) * sizeof(Instance));
+        if (void* mapped = chunkInstanceBuffer_->Map()) {
+            std::memcpy(mapped, chunkInstances_.data(),
+                        size_t(chunkInstanceCount_) * sizeof(Instance));
+            chunkInstanceBuffer_->Unmap();
+        }
     }
     return true;
 }
@@ -1046,6 +1048,7 @@ void SceneRenderer::UpdateChunkInstances(const scene::Scene& scene) {
     ex::core::ProfileScope profile(ex::core::ProfilePhase::ChunkInstances);
     const auto& bodies = scene.Physics().Bodies();
     const auto& objects = scene.Objects();
+    bool wroteAny = false;
     for (const ChunkDraw& draw : chunkDraws_) {
         if (draw.objectIndex < 0 || draw.objectIndex >= int(objects.size()) ||
             draw.instanceCount == 0) {
@@ -1097,14 +1100,23 @@ void SceneRenderer::UpdateChunkInstances(const scene::Scene& scene) {
             instance.textureScale = XMFLOAT4(1.0f, 1.0f, 1.0f,
                                              float(object.meshVariant & 3));
         }
-        const uint32_t written = index - draw.instanceFirst;
-        if (written > 0) {
-            chunkInstanceBuffer_->Update(
-                &chunkInstances_[draw.instanceFirst],
-                uint64_t(draw.instanceFirst) * sizeof(Instance),
-                uint64_t(written) * sizeof(Instance));
+        if (index > draw.instanceFirst) {
+            wroteAny = true;
         }
     }
+    if (!wroteAny) {
+        return;
+    }
+    // Upload the whole buffer: a partial map is not portable (D3D11 dynamic
+    // buffers only take WRITE_DISCARD or WRITE_NO_OVERWRITE, and the latter is
+    // unsafe while the previous frame may still be reading).
+    void* mapped = chunkInstanceBuffer_->Map();
+    if (!mapped) {
+        return;
+    }
+    std::memcpy(mapped, chunkInstances_.data(),
+                chunkInstances_.size() * sizeof(Instance));
+    chunkInstanceBuffer_->Unmap();
 }
 
 void SceneRenderer::BindSceneResources(rhi::CommandList* commandList) {
@@ -1150,9 +1162,11 @@ void SceneRenderer::BindSceneResources(rhi::CommandList* commandList) {
 
 void SceneRenderer::DrawChunks(rhi::CommandList* commandList,
                                const scene::Scene& scene, bool shadowPass) {
+    // The instance buffer is bound through the RHI, so no native view is
+    // required here; the old D3D11-only check silently disabled the whole
+    // chunk pass on Vulkan.
     if (!commandList || chunkDraws_.empty() || !chunkVertexBuffer_ ||
-        !chunkIndexBuffer_ || !chunkInstanceBuffer_ ||
-        !chunkInstanceBuffer_->NativeShaderResourceView()) {
+        !chunkIndexBuffer_ || !chunkInstanceBuffer_) {
         return;
     }
     const auto& objects = scene.Objects();

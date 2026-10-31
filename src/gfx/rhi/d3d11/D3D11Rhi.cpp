@@ -176,27 +176,6 @@ public:
             mapped_ = false;
         }
     }
-    bool Update(const void* data, uint64_t offset, uint64_t size) override {
-        if (!buffer_ || !context_ || !data || size == 0) {
-            return false;
-        }
-        if (offset + size > Size()) {
-            return false;
-        }
-        // A full overwrite can discard the old contents; a partial one has to
-        // keep the rest of the buffer valid for the shader.
-        const D3D11_MAP mode = (offset == 0 && size >= Size())
-                                   ? D3D11_MAP_WRITE_DISCARD
-                                   : D3D11_MAP_WRITE;
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        if (FAILED(context_->Map(buffer_.Get(), 0, mode, 0, &mapped))) {
-            return false;
-        }
-        std::memcpy(static_cast<uint8_t*>(mapped.pData) + offset, data,
-                    size_t(size));
-        context_->Unmap(buffer_.Get(), 0);
-        return true;
-    }
     void* NativeHandle() const override { return buffer_.Get(); }
     void* NativeShaderResourceView() const override { return srv_.Get(); }
 

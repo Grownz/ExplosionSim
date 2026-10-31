@@ -23,10 +23,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   4096² static shadow map. Collapse-driven refreshes are limited to one every
   eight frames (frame based, so captures stay deterministic); scene and sun
   changes still apply immediately.
-- **Chunk instance updates** - only collapsed objects rebuild and upload their
-  chunk transforms, in one sub-range write per object. Intact buildings keep
-  their instances untouched, and the RHI gained `Buffer::Update` for sub-range
-  writes on both backends.
+- **Chunk instance updates** - only collapsed objects rebuild their chunk
+  transforms now; intact buildings are skipped. The buffer is uploaded once per
+  frame (a partial map is not portable across the backends).
+
+### Fixed
+
+- **Collapsed buildings disappearing on D3D11** - the per-object instance upload
+  used `D3D11_MAP_WRITE`, which dynamic buffers do not allow, so the write
+  failed and a building vanished the moment its chunks took over. The upload
+  maps the whole buffer again.
+- **Chunk rendering on Vulkan** - `DrawChunks` required a native
+  shader-resource view, which the Vulkan backend does not provide, so the rubble
+  was never drawn there. The instance buffer is bound through the RHI on both
+  backends now.
 
 ## [0.13.0] - 2026-10-31
 
