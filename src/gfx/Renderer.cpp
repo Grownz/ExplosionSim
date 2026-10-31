@@ -2060,7 +2060,8 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         sceneRenderer_.RenderScene(commandList.get(), simulation.Scene(),
                                    hdr_.texture.get(),
                                    device_->Rhi()->DepthTarget(),
-                                   surfaceSampler);
+                                   surfaceSampler,
+                                   SceneRenderer::FrameResources{}, &sceneView);
         ID3D11ShaderResourceView* nullSmoke = nullptr;
         context->PSSetShaderResources(7, 1, &nullSmoke);
         ID3D11SamplerState* nullSmokeSampler = nullptr;

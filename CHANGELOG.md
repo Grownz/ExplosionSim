@@ -29,6 +29,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   4096² static shadow map. Collapse-driven refreshes are limited to one every
   eight frames (frame based, so captures stay deterministic); scene and sun
   changes still apply immediately.
+- **Chunk draw culling** - the rubble pass now culls per chunk: the main pass
+  drops chunks outside the camera frustum, both passes drop chunks under half a
+  pixel (one pixel for shadows), and consecutive visible chunks are merged into
+  one draw so the index buffer stays contiguous.
+- **Obstacle mask refresh** - the high-fidelity solid mask is only rebuilt when a
+  body moved by more than half a mask voxel; otherwise the previous mask is kept
+  instead of re-voxelising and re-uploading it. Frozen debris no longer appears
+  in the drag body list, so the body-flow upload and readback shrink with it.
 - **Chunk instance updates** - only collapsed objects rebuild their chunk
   transforms now; intact buildings are skipped. The buffer is uploaded once per
   frame (a partial map is not portable across the backends).
@@ -54,7 +62,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   are still awake (~6270), so a per-body settle remains the next lever.
 - **Settled debris is frozen** - Jolt sleeps whole islands, and a debris pile is
   one island, so one moving chunk kept thousands of resting ones simulated.
-  A body that stays below 0.08 m/s and 0.5 rad/s for 1.5 s *while resting on
+  A body that stays below 0.08 m/s and 0.5 rad/s for 2 s *while resting on
   static geometry* (checked with a downward ray) is converted into a static
   collider; a moving chunk that hits a frozen piece wakes it again. The support
   check keeps pieces from freezing in mid-air.

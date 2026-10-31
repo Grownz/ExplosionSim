@@ -1753,6 +1753,13 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     }
     UpdateFrameConstants(simulation, camera, width, height);
 
+    ex::gfx::SceneRenderer::ViewInfo sceneView{};
+    DirectX::XMStoreFloat4x4(&sceneView.viewProj,
+                             camera.ViewProjectionMatrix());
+    sceneView.eye = camera.Position();
+    sceneView.projScale =
+        float(height) / (2.0f * std::tan(camera.FovY() * 0.5f));
+
     // Shared cascades: compute the same light matrices as the Windows renderer
     // and fill the shadow maps before the ground samples them.
     if (sceneRendererReady_) {
@@ -1786,12 +1793,6 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
             uint64_t(int(std::lround(settings_.sunElevationDeg * 10.0f)))
             << 32;
 
-        ex::gfx::SceneRenderer::ViewInfo sceneView{};
-        DirectX::XMStoreFloat4x4(&sceneView.viewProj,
-                                 camera.ViewProjectionMatrix());
-        sceneView.eye = camera.Position();
-        sceneView.projScale =
-            float(height) / (2.0f * std::tan(camera.FovY() * 0.5f));
         const DirectX::XMFLOAT3 burstCenter(
             0.0f, float(simulation.Blast().GetCharge().heightOfBurstM), 0.0f);
 
@@ -1844,7 +1845,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         resources.volumeSampler = volumeSampler_.get();
         sceneRenderer_.RenderScene(commandList_.get(), simulation.Scene(),
                                    hdrTarget_.get(), depthTarget_.get(),
-                                   surfaceSampler_.get(), resources);
+                                   surfaceSampler_.get(), resources, &sceneView);
     } else {
         commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
                                       false, false, clear);

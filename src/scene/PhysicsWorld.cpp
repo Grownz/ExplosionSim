@@ -31,7 +31,7 @@ namespace {
 // on static geometry is frozen into a static collider.
 constexpr float kSettleSpeed = 0.08f;   // m/s
 constexpr float kSettleSpin = 0.5f;     // rad/s
-constexpr float kSettleSeconds = 1.5f;
+constexpr float kSettleSeconds = 2.0f;
 constexpr float kWakeSpeed = 0.5f; // impactor speed that wakes frozen debris
 
 float Length(const DirectX::XMFLOAT3& value) {

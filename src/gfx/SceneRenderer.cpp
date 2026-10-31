@@ -937,6 +937,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
     chunkDraws_.clear();
     chunkInstanceCount_ = 0;
     chunkInstances_.clear();
+    chunkRanges_.clear();
     chunkVertexBuffer_.reset();
     chunkIndexBuffer_.reset();
     if (!enabled || scene.Empty()) {
@@ -955,6 +956,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
         draw.indexOffset = uint32_t(indices.size());
         draw.objectIndex = int(objectIndex);
         draw.instanceFirst = chunkInstanceCount_;
+        draw.rangeFirst = uint32_t(chunkRanges_.size());
         for (const scene::SceneChunk& chunk : object.chunks) {
             if (chunk.hullPositions.empty() ||
                 chunk.hullNormals.size() != chunk.hullPositions.size()) {
@@ -966,12 +968,22 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
                 vertices.push_back(
                     {chunk.hullPositions[v], chunk.hullNormals[v], chunkId});
             }
+            const uint32_t firstIndex = uint32_t(indices.size());
             for (uint32_t index : chunk.hullIndices) {
                 indices.push_back(base + index);
             }
+            ChunkRange range;
+            range.indexOffset = firstIndex;
+            range.indexCount = uint32_t(indices.size()) - firstIndex;
+            range.instanceId = chunkId;
+            range.radius = std::sqrt(chunk.half.x * chunk.half.x +
+                                     chunk.half.y * chunk.half.y +
+                                     chunk.half.z * chunk.half.z);
+            chunkRanges_.push_back(range);
         }
         draw.indexCount = uint32_t(indices.size()) - draw.indexOffset;
         draw.instanceCount = chunkInstanceCount_ - draw.instanceFirst;
+        draw.rangeCount = uint32_t(chunkRanges_.size()) - draw.rangeFirst;
         if (draw.indexCount > 0) {
             chunkDraws_.push_back(draw);
         }
@@ -1160,6 +1172,37 @@ void SceneRenderer::BindSceneResources(rhi::CommandList* commandList) {
     }
 }
 
+void SceneRenderer::UpdateChunkVisibility(const ViewInfo& view) {
+    if (chunkRanges_.empty()) {
+        chunkVisibleMain_.clear();
+        chunkVisibleShadow_.clear();
+        return;
+    }
+    chunkVisibleMain_.assign(chunkRanges_.size(), 0);
+    chunkVisibleShadow_.assign(chunkRanges_.size(), 0);
+
+    FrustumPlanes frustum;
+    frustum.FromViewProj(view.viewProj);
+    const XMVECTOR eye = XMLoadFloat3(&view.eye);
+    for (size_t i = 0; i < chunkRanges_.size(); ++i) {
+        const ChunkRange& range = chunkRanges_[i];
+        const Instance& instance = chunkInstances_[range.instanceId];
+        const XMFLOAT3 center(instance.transform._41, instance.transform._42,
+                              instance.transform._43);
+        const float distance = XMVectorGetX(
+            XMVector3Length(XMLoadFloat3(&center) - eye));
+        const float pixels =
+            range.radius * view.projScale / std::max(distance, 0.01f);
+        // Shadows can reach into the view from outside it, so the shadow mask
+        // only applies the size test; the main pass also culls the frustum.
+        chunkVisibleShadow_[i] = pixels >= 1.0f ? 1u : 0u;
+        chunkVisibleMain_[i] =
+            (pixels >= 0.5f && frustum.ContainsSphere(center, range.radius))
+                ? 1u
+                : 0u;
+    }
+}
+
 void SceneRenderer::DrawChunks(rhi::CommandList* commandList,
                                const scene::Scene& scene, bool shadowPass) {
     // The instance buffer is bound through the RHI, so no native view is
@@ -1183,13 +1226,45 @@ void SceneRenderer::DrawChunks(rhi::CommandList* commandList,
     }
     commandList->BindShaderResource(chunkInstanceBuffer_.get(),
                                     rhi::ShaderStage::Vertex, 1);
+
+    const std::vector<uint8_t>& visible =
+        shadowPass ? chunkVisibleShadow_ : chunkVisibleMain_;
+    const bool haveMask = visible.size() == chunkRanges_.size() &&
+                          !chunkRanges_.empty();
+    const auto drawRun = [&](uint32_t first, uint32_t last) {
+        const ChunkRange& begin = chunkRanges_[first];
+        const ChunkRange& end = chunkRanges_[last];
+        const uint32_t count =
+            (end.indexOffset + end.indexCount) - begin.indexOffset;
+        if (count > 1) {
+            commandList->DrawIndexedInstanced(count, 1, begin.indexOffset);
+        }
+    };
+
     for (const ChunkDraw& draw : chunkDraws_) {
         if (draw.objectIndex < 0 || draw.objectIndex >= int(objects.size()) ||
-            !objects[draw.objectIndex].collapsed) {
+            !objects[draw.objectIndex].collapsed || draw.rangeCount == 0) {
             continue;
         }
-        commandList->DrawIndexedInstanced(draw.indexCount, 1,
-                                          draw.indexOffset);
+        uint32_t runFirst = 0;
+        bool inRun = false;
+        for (uint32_t i = 0; i < draw.rangeCount; ++i) {
+            const uint32_t rangeIndex = draw.rangeFirst + i;
+            const bool chunkVisible =
+                !haveMask || visible[rangeIndex] != 0;
+            if (chunkVisible) {
+                if (!inRun) {
+                    runFirst = rangeIndex;
+                    inRun = true;
+                }
+            } else if (inRun) {
+                drawRun(runFirst, rangeIndex - 1);
+                inRun = false;
+            }
+        }
+        if (inRun) {
+            drawRun(runFirst, draw.rangeFirst + draw.rangeCount - 1);
+        }
     }
 }
 
@@ -1566,6 +1641,9 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
 
     BuildChunkGeometry(scene);
     UpdateChunkInstances(scene);
+    // The camera does not change between the cascades and the scene pass, so
+    // the chunk visibility is computed once here.
+    UpdateChunkVisibility(view);
 
     // --- Shadow pass: one draw per cascade -------------------------------
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
@@ -1625,7 +1703,8 @@ void SceneRenderer::RenderScene(rhi::CommandList* commandList,
                                 rhi::Texture* hdrTarget,
                                 rhi::Texture* depthTarget,
                                 rhi::Sampler* surfaceSampler,
-                                const FrameResources& frameResources) {
+                                const FrameResources& frameResources,
+                                const ViewInfo* view) {
     if (!rhiDevice_ || !commandList || !hdrTarget || !depthTarget) {
         return;
     }
@@ -1636,6 +1715,11 @@ void SceneRenderer::RenderScene(rhi::CommandList* commandList,
 
     frameResources_ = frameResources;
     frameSurfaceSampler_ = surfaceSampler;
+    // RenderShadow normally computed the masks this frame; recompute only when
+    // it was skipped (e.g. a scene that was enabled right before the pass).
+    if (view && chunkVisibleMain_.size() != chunkRanges_.size()) {
+        UpdateChunkVisibility(*view);
+    }
 
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     commandList->BeginRenderPass(hdrTarget, depthTarget, false, false,

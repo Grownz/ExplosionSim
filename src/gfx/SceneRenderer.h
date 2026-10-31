@@ -123,12 +123,20 @@ public:
     void RenderScene(rhi::CommandList* commandList, const scene::Scene& scene,
                      rhi::Texture* hdrTarget, rhi::Texture* depthTarget,
                      rhi::Sampler* surfaceSampler,
-                     const FrameResources& frameResources);
+                     const FrameResources& frameResources,
+                     const ViewInfo* view);
+    void RenderScene(rhi::CommandList* commandList, const scene::Scene& scene,
+                     rhi::Texture* hdrTarget, rhi::Texture* depthTarget,
+                     rhi::Sampler* surfaceSampler,
+                     const FrameResources& frameResources) {
+        RenderScene(commandList, scene, hdrTarget, depthTarget, surfaceSampler,
+                    frameResources, nullptr);
+    }
     void RenderScene(rhi::CommandList* commandList, const scene::Scene& scene,
                      rhi::Texture* hdrTarget, rhi::Texture* depthTarget,
                      rhi::Sampler* surfaceSampler) {
         RenderScene(commandList, scene, hdrTarget, depthTarget, surfaceSampler,
-                    FrameResources{});
+                    FrameResources{}, nullptr);
     }
 
     // Shadow maps are exposed as RHI textures so both backends can bind them.
@@ -173,8 +181,19 @@ private:
         // the instances stay contiguous per object).
         uint32_t instanceFirst = 0;
         uint32_t instanceCount = 0;
+        // Slice of chunkRanges_ that belongs to this object.
+        uint32_t rangeFirst = 0;
+        uint32_t rangeCount = 0;
         int objectIndex = -1; // only drawn once the building is collapsing
 
+    };
+
+    // One chunk's slice of the shared index buffer plus its culling bounds.
+    struct ChunkRange {
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
+        uint32_t instanceId = 0;
+        float radius = 0.0f;
     };
 
     struct Mesh {
@@ -208,6 +227,9 @@ private:
     void UpdateChunkInstances(const scene::Scene& scene);
     void DrawChunks(rhi::CommandList* commandList, const scene::Scene& scene,
                     bool shadowPass);
+    // Per-frame chunk visibility for the main and the shadow passes; computed
+    // once because the three cascades and the scene share one camera.
+    void UpdateChunkVisibility(const ViewInfo& view);
     void BindSceneResources(rhi::CommandList* commandList);
     bool EnsureStaticInstanceCapacity(uint32_t capacity);
 
@@ -245,6 +267,9 @@ private:
     std::unique_ptr<rhi::Buffer> chunkIndexBuffer_;
     std::unique_ptr<rhi::Buffer> chunkInstanceBuffer_;
     std::vector<ChunkDraw> chunkDraws_;
+    std::vector<ChunkRange> chunkRanges_;
+    std::vector<uint8_t> chunkVisibleMain_;
+    std::vector<uint8_t> chunkVisibleShadow_;
     std::vector<Instance> chunkInstances_;
     uint32_t chunkInstanceCount_ = 0;
     uint32_t chunkInstanceCapacity_ = 0;

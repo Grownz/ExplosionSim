@@ -338,10 +338,31 @@ void RhiEulerSolver::SetObstacles(const std::vector<sim::ObstacleBox>& obstacles
     if (sim::SameObstacles(obstacles, obstacles_)) {
         return;
     }
-    obstacles_ = obstacles;
     if (!initialized_ || resolution_ == 0) {
+        obstacles_ = obstacles;
         return;
     }
+    // Rebuilding the solid mask costs a full voxelisation plus an upload. If
+    // the debris only crept by less than half a voxel, the mask would be
+    // identical, so the old one is kept.
+    if (solidMaskResolution_ > 0 && obstacles_.size() == obstacles.size()) {
+        const float voxel = (bounds_.max.x - bounds_.min.x) /
+                            float(std::max(solidMaskResolution_, 1));
+        float maxDelta = 0.0f;
+        for (size_t i = 0; i < obstacles.size(); ++i) {
+            const sim::ObstacleBox& a = obstacles[i];
+            const sim::ObstacleBox& b = obstacles_[i];
+            maxDelta = std::max(maxDelta,
+                                std::abs(a.center.x - b.center.x) +
+                                    std::abs(a.center.y - b.center.y) +
+                                    std::abs(a.center.z - b.center.z));
+        }
+        if (maxDelta < voxel * 0.5f) {
+            obstacles_ = obstacles;
+            return;
+        }
+    }
+    obstacles_ = obstacles;
     ex::rhi::Texture* before = solidMask_.get();
     if (CreateSolidMask()) {
         if (solidMask_.get() != before) {
