@@ -303,6 +303,14 @@ jobs:
           cd artifacts/windows
           zip -r ../../ExplosionSim-win64.zip .
 
+      - name: Extract release notes
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v header="## [$VERSION]" \
+            'index($0, header) == 1 {flag=1; next} /^## \[/ {flag=0} flag' \
+            CHANGELOG.md > release_notes.md
+          test -s release_notes.md
+
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -310,5 +318,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             ExplosionSim-win64.zip \
             artifacts/linux/ExplosionSim-linux-x86_64.tar.gz \
-            --title "Explosion Simulator $GITHUB_REF_NAME" \
-            --generate-notes
+            --title "Explosion Simulator ${GITHUB_REF_NAME#v}" \
+            --notes-file release_notes.md

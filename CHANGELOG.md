@@ -4,6 +4,60 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-10-31
+
+0.12.0 is the first public release of the native Linux port, building on the
+0.11.0 milestone. Windows and Linux are now released together: the Windows
+build keeps its Direct3D 11 path and the Linux build ships as a self-contained
+SDL3 + Vulkan tar.gz. The release also includes the final rendering and
+platform-parity work from the port.
+
+### Highlights
+
+- **Native Linux release** - `ExplosionSim-linux-x86_64.tar.gz` with the
+  reduced-order renderer, the high-fidelity GPU Euler solver, GPU volume bake
+  and particles, the SDL3 splash and the ImGui control panel.
+- **Windows and Linux artifacts** - the release workflow attaches
+  `ExplosionSim-win64.zip` and `ExplosionSim-linux-x86_64.tar.gz`.
+- **Real scene-depth occlusion** - the volume, particle and shock passes sample
+  the real scene depth and are occluded by buildings.
+- **SDL3 splash on both platforms** - Windows now runs the same SDL3 splash on
+  a worker thread; the GDI/WIC splash is gone.
+- **Linux ImGui UI** - an F1 panel for blast/solver/render settings,
+  pause/detonate/reset and camera framing.
+
+### Added
+
+- Real scene-depth sampling for the volume, particle and shock passes; the
+  ground pass keeps the far-depth proxy because it renders inside the depth
+  pass.
+- SDL3 splash on Windows (threaded) and Linux (cooperative), with the portable
+  stb image loader.
+- ImGui SDL3/Vulkan control panel on Linux, including live render settings and
+  blast reconfiguration.
+- `package_linux` tar.gz with `install.sh`, desktop entry and icon.
+- Tag-triggered release workflow that publishes both platform artifacts.
+- Vulkan validation-layer and ASan/UBSan CI jobs, plus the Linux `physics` and
+  `gpu_vulkan` test suites.
+
+### Changed
+
+- WIC replaced by stb_image/stb_image_write on both platforms.
+- Settings use XDG paths on Linux and `%LOCALAPPDATA%` on Windows, while
+  preferring a portable `settings.ini` next to the executable.
+- The Linux solver benchmark reports per-pass GPU timestamps.
+- Volume descriptor updates are cached and the Vulkan device uses a pipeline
+  cache.
+
+### Known limitations
+
+- Linux v1 has no in-app self-updater; replace the release archive to update.
+- The ground pass samples a far-depth proxy because it renders inside the main
+  depth pass; the volume, particle and shock passes sample the real scene depth
+  and are occluded by buildings.
+- The same-GPU-class performance comparison is pending; lavapipe benchmarks are
+  functional baselines only.
+
 ## [0.11.0] - 2026-10-31
 
 0.11.0 is the native Linux port milestone. The same simulation core, scene
