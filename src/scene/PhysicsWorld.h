@@ -56,6 +56,21 @@ public:
     const std::vector<RigidBody>& Bodies() const { return bodies_; }
     std::vector<RigidBody>& Bodies() { return bodies_; }
     int BodyCount() const { return int(bodies_.size()); }
+
+    // Diagnostic: how many dynamic bodies are still awake and how fast they
+    // actually move. Sleeping is island based in Jolt, so a pile of debris can
+    // stay awake even when most of its bodies are nearly at rest.
+    struct SleepStats {
+        int dynamic = 0;
+        int awake = 0;
+        int belowThreshold = 0; // awake but slower than the sleep threshold
+        int above1m = 0;        // awake and faster than 1 m/s
+        int above5m = 0;        // awake and faster than 5 m/s
+        float meanSpeed = 0.0f;
+        float maxSpeed = 0.0f;
+        DirectX::XMFLOAT3 fastestPosition{};
+    };
+    SleepStats CollectSleepStats(float threshold = 0.03f) const;
     int AwakeCount() const;
 
     // Converts a static structure body into a dynamic one (chunk detachment).

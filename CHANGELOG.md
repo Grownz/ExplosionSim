@@ -35,6 +35,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Physics transform sync** - `PhysicsWorld::Step` only copies transforms for
   bodies that are awake (or just fell asleep); static structure and sleeping
   debris are skipped instead of costing four Jolt queries per body per substep.
+  Benchmarks also report how many bodies are awake, how many are actually below
+  the sleep threshold and the fastest body, which shows whether a pile is asleep
+  or kept awake by an island.
 
 ### Fixed
 

@@ -377,6 +377,42 @@ int PhysicsWorld::AwakeCount() const {
     return count;
 }
 
+PhysicsWorld::SleepStats PhysicsWorld::CollectSleepStats(float threshold) const {
+    SleepStats stats;
+    double speedSum = 0.0;
+    for (const RigidBody& body : bodies_) {
+        if (body.isStatic) {
+            continue;
+        }
+        ++stats.dynamic;
+        if (body.sleeping) {
+            continue;
+        }
+        ++stats.awake;
+        const float speed = std::sqrt(body.velocity.x * body.velocity.x +
+                                      body.velocity.y * body.velocity.y +
+                                      body.velocity.z * body.velocity.z);
+        speedSum += double(speed);
+        if (speed > stats.maxSpeed) {
+            stats.maxSpeed = speed;
+            stats.fastestPosition = body.position;
+        }
+        if (speed < threshold) {
+            ++stats.belowThreshold;
+        }
+        if (speed > 1.0f) {
+            ++stats.above1m;
+        }
+        if (speed > 5.0f) {
+            ++stats.above5m;
+        }
+    }
+    if (stats.awake > 0) {
+        stats.meanSpeed = float(speedSum / double(stats.awake));
+    }
+    return stats;
+}
+
 void PhysicsWorld::SetBodyDynamic(int index, float mass,
                                   const DirectX::XMFLOAT3& velocity,
                                   const DirectX::XMFLOAT3& angularVelocity) {

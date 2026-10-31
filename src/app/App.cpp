@@ -985,6 +985,15 @@ int App::RunHeadless() {
         LogInfo("Physics: %d awake of %d bodies",
                 simulation_.Scene().Physics().AwakeCount(),
                 simulation_.Scene().Physics().BodyCount());
+        const scene::PhysicsWorld::SleepStats sleep =
+            simulation_.Scene().Physics().CollectSleepStats();
+        LogInfo("Physics detail: %d dynamic, %d awake, %d below 0.03 m/s, "
+                "%d above 1 m/s, %d above 5 m/s, mean %.3f m/s, max %.2f m/s "
+                "at (%.1f, %.1f, %.1f)",
+                sleep.dynamic, sleep.awake, sleep.belowThreshold,
+                sleep.above1m, sleep.above5m, sleep.meanSpeed, sleep.maxSpeed,
+                sleep.fastestPosition.x, sleep.fastestPosition.y,
+                sleep.fastestPosition.z);
     } else {
         if (options_.screenshotPath.empty()) {
             LogError("Headless mode requires --screenshot <path> or --benchmark.");

@@ -1821,6 +1821,15 @@ int main(int argc, char** argv) {
         ex::LogInfo("Physics: %d awake of %d bodies",
                     simulation.Scene().Physics().AwakeCount(),
                     simulation.Scene().Physics().BodyCount());
+        const ex::scene::PhysicsWorld::SleepStats sleep =
+            simulation.Scene().Physics().CollectSleepStats();
+        ex::LogInfo("Physics detail: %d dynamic, %d awake, %d below 0.03 m/s, "
+                    "%d above 1 m/s, %d above 5 m/s, mean %.3f m/s, max %.2f m/s "
+                    "at (%.1f, %.1f, %.1f)",
+                    sleep.dynamic, sleep.awake, sleep.belowThreshold,
+                    sleep.above1m, sleep.above5m, sleep.meanSpeed,
+                    sleep.maxSpeed, sleep.fastestPosition.x,
+                    sleep.fastestPosition.y, sleep.fastestPosition.z);
     }
 
     // Persist the update bookkeeping (skipped version, last check) the same
