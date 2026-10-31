@@ -562,11 +562,11 @@ bool SceneRenderer::CreateMesh(const std::vector<Vertex>& vertices,
         return false;
     }
 
-    mesh.indexCount = UINT(indices.size());
+    mesh.indexCount = uint32_t(indices.size());
     return EnsureInstanceCapacity(mesh, 64);
 }
 
-bool SceneRenderer::EnsureInstanceCapacity(Mesh& mesh, UINT capacity) {
+bool SceneRenderer::EnsureInstanceCapacity(Mesh& mesh, uint32_t capacity) {
     if (!rhiDevice_) {
         return false;
     }
@@ -760,7 +760,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
             continue;
         }
         ChunkDraw draw;
-        draw.indexOffset = UINT(indices.size());
+        draw.indexOffset = uint32_t(indices.size());
         draw.objectIndex = int(objectIndex);
         for (const scene::SceneChunk& chunk : object.chunks) {
             if (chunk.hullPositions.empty() ||
@@ -777,7 +777,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
                 indices.push_back(base + index);
             }
         }
-        draw.indexCount = UINT(indices.size()) - draw.indexOffset;
+        draw.indexCount = uint32_t(indices.size()) - draw.indexOffset;
         if (draw.indexCount > 0) {
             chunkDraws_.push_back(draw);
         }
@@ -813,7 +813,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
     return EnsureChunkInstanceCapacity(std::max(64u, chunkInstanceCount_));
 }
 
-bool SceneRenderer::EnsureChunkInstanceCapacity(UINT capacity) {
+bool SceneRenderer::EnsureChunkInstanceCapacity(uint32_t capacity) {
     if (!rhiDevice_) {
         return false;
     }
@@ -840,14 +840,14 @@ void SceneRenderer::UpdateChunkInstances(const scene::Scene& scene) {
         return;
     }
     const auto& bodies = scene.Physics().Bodies();
-    UINT index = 0;
+    uint32_t index = 0;
     for (const scene::SceneObject& object : scene.Objects()) {
         if (object.chunks.empty() || object.chunks.front().hullPositions.empty()) {
             continue;
         }
         for (const scene::SceneChunk& chunk : object.chunks) {
             if (chunk.hullPositions.empty() ||
-                index >= UINT(chunkInstances_.size())) {
+                index >= uint32_t(chunkInstances_.size())) {
                 continue;
             }
             Instance& instance = chunkInstances_[index++];
@@ -915,7 +915,7 @@ void SceneRenderer::DrawChunks(rhi::CommandList* commandList,
     }
 }
 
-bool SceneRenderer::EnsureStaticInstanceCapacity(UINT capacity) {
+bool SceneRenderer::EnsureStaticInstanceCapacity(uint32_t capacity) {
     if (!rhiDevice_) {
         return false;
     }
@@ -976,7 +976,7 @@ void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
         instances.push_back(instance);
     }
     if (instances.empty() ||
-        !EnsureStaticInstanceCapacity(UINT(instances.size()))) {
+        !EnsureStaticInstanceCapacity(uint32_t(instances.size()))) {
         commandList->EndRenderPass();
         return;
     }
@@ -1006,7 +1006,7 @@ void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
         commandList->BindShaderResource(staticInstanceBuffer_.get(),
                                         rhi::ShaderStage::Vertex, 0);
         commandList->DrawIndexedInstanced(mesh.indexCount,
-                                          UINT(instances.size()));
+                                          uint32_t(instances.size()));
     }
     commandList->EndRenderPass();
 }
@@ -1235,7 +1235,7 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
         if (mesh.instances.empty() || !mesh.vertexBuffer || !mesh.indexBuffer) {
             continue;
         }
-        if (!EnsureInstanceCapacity(mesh, UINT(mesh.instances.size()))) {
+        if (!EnsureInstanceCapacity(mesh, uint32_t(mesh.instances.size()))) {
             continue;
         }
         void* mapped = mesh.instanceBuffer->Map();
@@ -1281,7 +1281,7 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
             commandList->BindShaderResource(mesh.instanceBuffer.get(),
                                             rhi::ShaderStage::Vertex, 0);
             commandList->DrawIndexedInstanced(mesh.indexCount,
-                                              UINT(mesh.instances.size()));
+                                              uint32_t(mesh.instances.size()));
         }
 
         // Voronoi rubble (phase B chunks) with the chunk shadow shader.
@@ -1333,7 +1333,7 @@ void SceneRenderer::RenderScene(rhi::CommandList* commandList,
         commandList->BindShaderResource(mesh.instanceBuffer.get(),
                                         rhi::ShaderStage::Vertex, 0);
         commandList->DrawIndexedInstanced(mesh.indexCount,
-                                          UINT(mesh.instances.size()));
+                                          uint32_t(mesh.instances.size()));
     }
 
     // Voronoi rubble with the chunk vertex shader and the shared pixel shader.

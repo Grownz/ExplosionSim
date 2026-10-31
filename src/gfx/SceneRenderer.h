@@ -1,12 +1,12 @@
 #pragma once
 
 #include <DirectXMath.h>
-#include <d3d11.h>
 
 #include <cstdint>
+#include <memory>
 #include <vector>
 
-#include "gfx/GfxDevice.h"
+#include "gfx/rhi/Rhi.h"
 #include "gfx/SceneMeshLibrary.h"
 #include "scene/SceneTypes.h"
 #include "scene/VehicleModels.h"
@@ -58,23 +58,17 @@ public:
                      rhi::Texture* hdrTarget, rhi::Texture* depthTarget,
                      rhi::Sampler* surfaceSampler);
 
-    ID3D11ShaderResourceView* ShadowSRV(int cascade) const {
-        return shadowTexture_[cascade]
-                   ? static_cast<ID3D11ShaderResourceView*>(
-                         shadowTexture_[cascade]->NativeShaderResourceView())
+    // Shadow maps are exposed as RHI textures so both backends can bind them.
+    // Windows' legacy ground pass derives the native D3D11 views from them.
+    rhi::Texture* ShadowTexture(int cascade) const {
+        return cascade >= 0 && cascade < kShadowCascades
+                   ? shadowTexture_[cascade].get()
                    : nullptr;
     }
-    ID3D11ShaderResourceView* StaticShadowSRV() const {
-        return staticShadowTexture_
-                   ? static_cast<ID3D11ShaderResourceView*>(
-                         staticShadowTexture_->NativeShaderResourceView())
-                   : nullptr;
+    rhi::Texture* StaticShadowTexture() const {
+        return staticShadowTexture_.get();
     }
-    ID3D11SamplerState* ShadowSampler() const {
-        return shadowSampler_
-                   ? static_cast<ID3D11SamplerState*>(shadowSampler_->NativeHandle())
-                   : nullptr;
-    }
+    rhi::Sampler* ShadowSampler() const { return shadowSampler_.get(); }
 
 private:
     bool CreateShadowResources();
@@ -100,8 +94,8 @@ private:
     };
 
     struct ChunkDraw {
-        UINT indexOffset = 0;
-        UINT indexCount = 0;
+        uint32_t indexOffset = 0;
+        uint32_t indexCount = 0;
         int objectIndex = -1; // only drawn once the building is collapsing
 
     };
@@ -110,8 +104,8 @@ private:
         std::unique_ptr<rhi::Buffer> vertexBuffer;
         std::unique_ptr<rhi::Buffer> indexBuffer;
         std::unique_ptr<rhi::Buffer> instanceBuffer;
-        UINT indexCount = 0;
-        UINT instanceCapacity = 0;
+        uint32_t indexCount = 0;
+        uint32_t instanceCapacity = 0;
         // Natural bounds of imported vehicle meshes, used to scale them to the
         // scene object size without distorting their proportions.
         DirectX::XMFLOAT3 modelSize{};
@@ -129,15 +123,15 @@ private:
     bool CreateMesh(const std::vector<Vertex>& vertices,
                     const std::vector<uint32_t>& indices, Mesh& mesh);
     bool LoadVehicleMesh(const wchar_t* asset, Mesh& mesh);
-    bool EnsureInstanceCapacity(Mesh& mesh, UINT capacity);
+    bool EnsureInstanceCapacity(Mesh& mesh, uint32_t capacity);
     void BuildMeshes();
 
     bool BuildChunkGeometry(const scene::Scene& scene);
-    bool EnsureChunkInstanceCapacity(UINT capacity);
+    bool EnsureChunkInstanceCapacity(uint32_t capacity);
     void UpdateChunkInstances(const scene::Scene& scene);
     void DrawChunks(rhi::CommandList* commandList, const scene::Scene& scene,
                     bool shadowPass);
-    bool EnsureStaticInstanceCapacity(UINT capacity);
+    bool EnsureStaticInstanceCapacity(uint32_t capacity);
 
     std::unique_ptr<rhi::Pipeline> sceneShadowPipeline_;
     std::unique_ptr<rhi::Pipeline> chunkShadowPipeline_;
@@ -153,7 +147,7 @@ private:
     // Cached static-caster shadow map (intact buildings, world space).
     std::unique_ptr<rhi::Texture> staticShadowTexture_;
     std::unique_ptr<rhi::Buffer> staticInstanceBuffer_;
-    UINT staticInstanceCapacity_ = 0;
+    uint32_t staticInstanceCapacity_ = 0;
     uint64_t staticShadowKey_ = 0;
     bool staticShadowValid_ = false;
 
@@ -163,8 +157,8 @@ private:
     std::unique_ptr<rhi::Buffer> chunkInstanceBuffer_;
     std::vector<ChunkDraw> chunkDraws_;
     std::vector<Instance> chunkInstances_;
-    UINT chunkInstanceCount_ = 0;
-    UINT chunkInstanceCapacity_ = 0;
+    uint32_t chunkInstanceCount_ = 0;
+    uint32_t chunkInstanceCapacity_ = 0;
     uint64_t chunkGeometryKey_ = 0;
     bool chunkGeometryValid_ = false;
 

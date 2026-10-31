@@ -2050,11 +2050,23 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
         context->PSSetShader(groundPS_.Get(), nullptr, 0);
 
+        auto shadowView = [](rhi::Texture* texture)
+            -> ID3D11ShaderResourceView* {
+            return texture ? static_cast<ID3D11ShaderResourceView*>(
+                                 texture->NativeShaderResourceView())
+                           : nullptr;
+        };
         ID3D11ShaderResourceView* groundShadow[4] = {
-            sceneRenderer_.ShadowSRV(0), sceneRenderer_.ShadowSRV(1),
-            sceneRenderer_.ShadowSRV(2), sceneRenderer_.StaticShadowSRV()};
+            shadowView(sceneRenderer_.ShadowTexture(0)),
+            shadowView(sceneRenderer_.ShadowTexture(1)),
+            shadowView(sceneRenderer_.ShadowTexture(2)),
+            shadowView(sceneRenderer_.StaticShadowTexture())};
         context->PSSetShaderResources(2, 4, groundShadow);
-        ID3D11SamplerState* groundShadowSampler = sceneRenderer_.ShadowSampler();
+        ID3D11SamplerState* groundShadowSampler =
+            sceneRenderer_.ShadowSampler()
+                ? static_cast<ID3D11SamplerState*>(
+                      sceneRenderer_.ShadowSampler()->NativeHandle())
+                : nullptr;
         context->PSSetSamplers(2, 1, &groundShadowSampler);
 
         // Smoke shadow lookup for the ground.
