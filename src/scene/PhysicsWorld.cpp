@@ -9,7 +9,9 @@
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Collision/EstimateCollisionResponse.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
@@ -212,6 +214,13 @@ struct PhysicsWorld::Impl {
         system.Init(kMaxBodies, 0, kMaxBodyPairs, kMaxContactConstraints,
                     bpLayerInterface, objectVsBpFilter, pairFilter);
         system.SetGravity(JPH::Vec3(0.0f, -9.80665f, 0.0f));
+        // A debris pile is one big contact island; a slightly wider sleep window
+        // lets a quiet pile settle instead of being kept awake by its slowest
+        // member.
+        JPH::PhysicsSettings physicsSettings = system.GetPhysicsSettings();
+        physicsSettings.mPointVelocitySleepThreshold = 0.05f;
+        physicsSettings.mTimeBeforeSleep = 0.3f;
+        system.SetPhysicsSettings(physicsSettings);
         system.SetContactListener(&contactCollector);
 
         // Static ground: a large box whose top face lies on y = 0.
@@ -296,8 +305,27 @@ int PhysicsWorld::AddBody(const RigidBody& body) {
     const int index = int(bodies_.size());
     bodies_.push_back(copy);
 
-    JPH::RefConst<JPH::Shape> shape =
-        new JPH::BoxShape(JPH::Vec3(hx, hy, hz));
+    JPH::RefConst<JPH::Shape> shape;
+    if (copy.hullPoints.size() >= 4) {
+        // Voronoi chunks use their real convex hull. The fitted box overlaps
+        // the neighbouring cells, which made Jolt push the pieces apart every
+        // step and kept the whole debris island awake forever.
+        JPH::Array<JPH::Vec3> points;
+        points.reserve(copy.hullPoints.size());
+        for (const DirectX::XMFLOAT3& point : copy.hullPoints) {
+            points.push_back(ToJolt(point));
+        }
+        JPH::ConvexHullShapeSettings hullSettings(points);
+        const JPH::ShapeSettings::ShapeResult result = hullSettings.Create();
+        if (result.IsValid()) {
+            shape = result.Get();
+        }
+    }
+    if (!shape) {
+        shape = new JPH::BoxShape(JPH::Vec3(hx, hy, hz));
+    }
+    // The shape keeps its own copy of the points.
+    copy.hullPoints.clear();
     JPH::BodyCreationSettings settings(
         shape.GetPtr(), ToJolt(copy.position),
         ToJolt(copy.orientation),
@@ -380,11 +408,19 @@ int PhysicsWorld::AwakeCount() const {
 PhysicsWorld::SleepStats PhysicsWorld::CollectSleepStats(float threshold) const {
     SleepStats stats;
     double speedSum = 0.0;
+    bool haveY = false;
     for (const RigidBody& body : bodies_) {
         if (body.isStatic) {
             continue;
         }
         ++stats.dynamic;
+        if (!haveY) {
+            stats.minY = stats.maxY = body.position.y;
+            haveY = true;
+        } else {
+            stats.minY = std::min(stats.minY, body.position.y);
+            stats.maxY = std::max(stats.maxY, body.position.y);
+        }
         if (body.sleeping) {
             continue;
         }

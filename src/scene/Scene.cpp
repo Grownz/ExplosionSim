@@ -307,6 +307,37 @@ void BuildVoronoiChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int 
     }
 }
 
+// Converts the chunk hull into body-local space. The rigid body sits at the
+// chunk centre with the fracture orientation, so the collision hull has to be
+// expressed relative to that pose. The fitted box used to be the collision
+// proxy, but neighbouring boxes overlap and Jolt resolved that penetration
+// every step, which kept the whole debris island awake.
+void AssignChunkHull(const SceneChunk& chunk, RigidBody& body) {
+    if (chunk.hullPositions.size() < 4) {
+        return;
+    }
+    // Shrink the collision hull slightly. The Voronoi cells share their faces,
+    // so exactly matching hulls leave every piece wedged between its still
+    // attached neighbours and the building never comes apart. The rendered hull
+    // keeps its full size; only the collider gets a small clearance.
+    constexpr float kCollisionScale = 0.95f;
+    const DirectX::XMMATRIX inverseRotation = DirectX::XMMatrixTranspose(
+        DirectX::XMMatrixRotationQuaternion(
+            DirectX::XMLoadFloat4(&chunk.orientation)));
+    body.hullPoints.reserve(chunk.hullPositions.size());
+    for (const DirectX::XMFLOAT3& position : chunk.hullPositions) {
+        const DirectX::XMFLOAT3 relative(
+            (position.x - chunk.center.x) * kCollisionScale,
+            (position.y - chunk.center.y) * kCollisionScale,
+            (position.z - chunk.center.z) * kCollisionScale);
+        DirectX::XMFLOAT3 local{};
+        DirectX::XMStoreFloat3(
+            &local, DirectX::XMVector3TransformNormal(
+                        DirectX::XMLoadFloat3(&relative), inverseRotation));
+        body.hullPoints.push_back(local);
+    }
+}
+
 } // namespace
 
 void Scene::Clear() {
@@ -1285,6 +1316,7 @@ void Scene::DetachChunk(SceneObject& object, int index) {
     body.angularVelocity = angular;
     body.restitution = 0.12f;
     body.friction = 0.8f;
+    AssignChunkHull(chunk, body);
     chunk.bodyIndex = physics_.AddBody(body);
 
     const int objectIndex = int(&object - objects_.data());
@@ -1395,6 +1427,7 @@ void Scene::RegisterStructureBodies(SceneObject& object,
         body.isStatic = true;
         body.friction = 0.8f;
         body.restitution = 0.1f;
+        AssignChunkHull(chunk, body);
         chunk.bodyIndex = physics_.AddBody(body);
         if (int(bodyChunk_.size()) <= chunk.bodyIndex) {
             bodyChunk_.resize(chunk.bodyIndex + 1, std::pair<int, int>(-1, -1));

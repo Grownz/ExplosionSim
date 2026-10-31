@@ -8,7 +8,8 @@
 
 namespace ex::scene {
 
-// 6-DOF rigid body. Collision uses oriented boxes; the inertia tensor is the
+// 6-DOF rigid body. Collision uses the convex hull when one is supplied (the
+// Voronoi chunks), otherwise an oriented box; the inertia tensor is the
 // analytic box tensor, stored as a body-space diagonal.
 struct RigidBody {
     DirectX::XMFLOAT3 position{};
@@ -27,6 +28,9 @@ struct RigidBody {
     float sleepTimer = 0.0f;
     bool isStatic = false;
     bool sleeping = false;
+    // Body-local collision hull (only used while the body is created); empty
+    // means the box described by halfExtents is used.
+    std::vector<DirectX::XMFLOAT3> hullPoints;
 };
 
 // A contact impulse worth reporting to the scene (debris hitting structure).
@@ -69,6 +73,8 @@ public:
         float meanSpeed = 0.0f;
         float maxSpeed = 0.0f;
         DirectX::XMFLOAT3 fastestPosition{};
+        float minY = 0.0f;
+        float maxY = 0.0f;
     };
     SleepStats CollectSleepStats(float threshold = 0.03f) const;
     int AwakeCount() const;

@@ -41,6 +41,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Debris collision shapes** - Voronoi chunks collided as their fitted box,
+  which overlaps the neighbouring cells. Jolt resolved that penetration every
+  step, which injected energy into the pile and kept the whole debris island
+  awake. Chunks now collide as their convex hull, scaled by 5 % for clearance
+  (the rendered hull keeps its full size) so the pieces can still separate.
+- **Debris sleep window** - `mPointVelocitySleepThreshold` is 0.05 m/s and
+  `mTimeBeforeSleep` 0.3 s, so a quiet pile settles sooner.
+
+  At t = 10 s with a 5 t charge (7457 bodies, identical scene): physics
+  12.46 ms -> 7.84 ms per frame (-37 %), frame 14.09 ms -> 10.02 ms. Most bodies
+  are still awake (~6270), so a per-body settle remains the next lever.
+
+### Fixed
+
 - **Collapsed buildings disappearing on D3D11** - the per-object instance upload
   used `D3D11_MAP_WRITE`, which dynamic buffers do not allow, so the write
   failed and a building vanished the moment its chunks took over. The upload
