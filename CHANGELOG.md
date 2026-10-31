@@ -51,8 +51,9 @@ settings and CI-verified capture parity.
   uses stb).
 - The Linux shell has no ImGui UI; it is configured through settings and
   command-line options.
-- The volume pass uses a far-depth placeholder instead of the real scene depth,
-  so volumes are not occluded by buildings.
+- The ground pass samples a far-depth proxy because it renders inside the main
+  depth pass; the volume, particle and shock passes sample the real scene depth
+  and are occluded by buildings.
 - The same-GPU-class performance comparison is pending; lavapipe benchmarks are
   functional baselines only.
 

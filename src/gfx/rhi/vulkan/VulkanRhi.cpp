@@ -843,29 +843,72 @@ public:
     }
 
     void TransitionTexture(rhi::Texture* texture,
-                           rhi::TextureState state) override {        if (!device_ || !computeActive_ || !texture) {
+                           rhi::TextureState state) override {
+        if (!device_ || (!computeActive_ && !device_->frameActive_) ||
+            !texture) {
             return;
         }
         auto* impl = dynamic_cast<TextureImpl*>(texture);
         if (!impl) {
             return;
         }
+        const bool isDepth =
+            texture->GetFormat() == rhi::Format::D32_FLOAT ||
+            texture->GetFormat() == rhi::Format::R32_TYPELESS;
+
+        VkImageLayout newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        switch (state) {
+        case rhi::TextureState::General:
+            newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            break;
+        case rhi::TextureState::ShaderRead:
+            newLayout = isDepth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            break;
+        case rhi::TextureState::DepthRead:
+            newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            break;
+        case rhi::TextureState::DepthAttachment:
+            newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            break;
+        }
+
         const VkImageLayout oldLayout = impl->Layout();
-        const VkImageLayout newLayout = state == rhi::TextureState::General
-                                            ? VK_IMAGE_LAYOUT_GENERAL
-                                            : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         if (oldLayout == newLayout) {
             return;
         }
 
         VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         VkAccessFlags srcAccess = 0;
+        VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
+                                        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+        VkAccessFlags dstAccess = VK_ACCESS_SHADER_READ_BIT;
+
         if (oldLayout == VK_IMAGE_LAYOUT_GENERAL) {
             srcStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-            srcAccess = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+            srcAccess = VK_ACCESS_SHADER_WRITE_BIT |
+                        VK_ACCESS_SHADER_READ_BIT;
+        } else if (oldLayout ==
+                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+            srcStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                       VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            srcAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         } else if (oldLayout != VK_IMAGE_LAYOUT_UNDEFINED) {
-            srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+            srcStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                       VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
             srcAccess = VK_ACCESS_SHADER_READ_BIT;
+        }
+
+        if (newLayout == VK_IMAGE_LAYOUT_GENERAL) {
+            dstStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            dstAccess = VK_ACCESS_SHADER_WRITE_BIT |
+                        VK_ACCESS_SHADER_READ_BIT;
+        } else if (newLayout ==
+                   VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+            dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                       VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            dstAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                        VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         }
 
         VkImageMemoryBarrier barrier{};
@@ -875,23 +918,16 @@ public:
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = impl->Handle();
-        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.aspectMask =
+            isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
         barrier.subresourceRange.baseMipLevel = 0;
         barrier.subresourceRange.levelCount = 1;
         barrier.subresourceRange.baseArrayLayer = 0;
         barrier.subresourceRange.layerCount = 1;
         barrier.srcAccessMask = srcAccess;
-        barrier.dstAccessMask = newLayout == VK_IMAGE_LAYOUT_GENERAL
-                                    ? (VK_ACCESS_SHADER_WRITE_BIT |
-                                       VK_ACCESS_SHADER_READ_BIT)
-                                    : VK_ACCESS_SHADER_READ_BIT;
-        vkCmdPipelineBarrier(
-            device_->commandBuffer_, srcStage,
-            newLayout == VK_IMAGE_LAYOUT_GENERAL
-                ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT
-                : (VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT |
-                   VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT),
-            0, 0, nullptr, 0, nullptr, 1, &barrier);
+        barrier.dstAccessMask = dstAccess;
+        vkCmdPipelineBarrier(device_->commandBuffer_, srcStage, dstStage, 0, 0,
+                             nullptr, 0, nullptr, 1, &barrier);
         impl->SetLayout(newLayout);
     }
 
@@ -1899,6 +1935,8 @@ void Device::BeginFrameTexture(Texture* color, Texture* depth, bool clear,
     info.clearValueCount = 2;
     info.pClearValues = clears;
     vkCmdBeginRenderPass(commandBuffer_, &info, VK_SUBPASS_CONTENTS_INLINE);
+    depthTexture->SetLayout(
+        VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
     VkViewport viewport{0.0f, float(targetHeight_), float(targetWidth_),
                         -float(targetHeight_), 0.0f, 1.0f};

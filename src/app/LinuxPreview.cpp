@@ -202,6 +202,7 @@ void LinuxPreview::Shutdown() {
     shockSampler_.reset();
     shockDepthProxy_.reset();
     shockTarget_.reset();
+    volumeDepthTarget_.reset();
     particleSet_.reset();
     particlePipeline_.reset();
     particlePS_.reset();
@@ -287,6 +288,13 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
     depthDesc.usage = ex::rhi::TextureUsage::DepthStencil |
                       ex::rhi::TextureUsage::Sampled;
     depthTarget_ = device->CreateTexture(depthDesc);
+
+    ex::rhi::TextureDesc volumeDepthAttachmentDesc{};
+    volumeDepthAttachmentDesc.format = ex::rhi::Format::D32_FLOAT;
+    volumeDepthAttachmentDesc.width = hdrDesc.width;
+    volumeDepthAttachmentDesc.height = hdrDesc.height;
+    volumeDepthAttachmentDesc.usage = ex::rhi::TextureUsage::DepthStencil;
+    volumeDepthTarget_ = device->CreateTexture(volumeDepthAttachmentDesc);
 
     ex::rhi::BufferDesc frameDesc{};
     frameDesc.size = sizeof(frameConstantsData_);
@@ -500,7 +508,15 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
     bloomConstants_ = device->CreateBuffer(bloomDescBuffer);
 
     commandList_ = device->CreateCommandList();
-    bool ok = hdrTarget_ && depthTarget_ && frameConstants_ &&
+    if (volumeDepthTarget_ && commandList_) {
+        commandList_->BeginCompute();
+        commandList_->TransitionTexture(
+            volumeDepthTarget_.get(),
+            ex::rhi::TextureState::DepthAttachment);
+        commandList_->EndCompute();
+    }
+    bool ok = hdrTarget_ && depthTarget_ && volumeDepthTarget_ &&
+              frameConstants_ &&
               shadowConstants_ && volumeTexture_ && volumeAuxTexture_ &&
               volumeNoiseTexture_ && volumeLightTexture_ &&
               volumeDepthTexture_ && volumeNoiseSampler_ &&
@@ -1757,9 +1773,43 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     }
     commandList_->EndRenderPass();
 
+    // The scene depth is now complete. Full-screen passes sample it, so they
+    // use a dummy depth attachment and bind the real depth as a sampled image.
+    // EndRenderPass submits the scene pass, so the transition runs in its own
+    // compute submission before the next render pass.
+    commandList_->BeginCompute();
+    commandList_->TransitionTexture(depthTarget_.get(),
+                                    ex::rhi::TextureState::DepthRead);
+    commandList_->EndCompute();
+    if (volumeSet_) {
+        volumeSet_->SetImage(9, depthTarget_.get());
+    }
+    if (particleSet_) {
+        particleSet_->SetImage(9, depthTarget_.get());
+    }
+    if (particleFireSet_) {
+        particleFireSet_->SetImage(9, depthTarget_.get());
+    }
+    if (particleAlphaSet_) {
+        particleAlphaSet_->SetImage(9, depthTarget_.get());
+    }
+    if (particleGpuAdditiveSet_) {
+        particleGpuAdditiveSet_->SetImage(9, depthTarget_.get());
+    }
+    if (particleGpuFireSet_) {
+        particleGpuFireSet_->SetImage(9, depthTarget_.get());
+    }
+    if (particleGpuAlphaSet_) {
+        particleGpuAlphaSet_->SetImage(9, depthTarget_.get());
+    }
+    if (shockSet_) {
+        shockSet_->SetImage(9, depthTarget_.get());
+    }
+
     if (settings_.enableVolume && volumePipeline_ && volumeSet_) {
-        commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
-                                      false, false, clear);
+        commandList_->BeginRenderPass(hdrTarget_.get(),
+                                      volumeDepthTarget_.get(), false, false,
+                                      clear);
         commandList_->BindPipeline(volumePipeline_.get());
         commandList_->BindDescriptorSet(volumeSet_.get());
         commandList_->Draw(3);
@@ -1774,8 +1824,9 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
             if (!pipeline || !set) {
                 return;
             }
-            commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
-                                          false, false, clear);
+            commandList_->BeginRenderPass(hdrTarget_.get(),
+                                          volumeDepthTarget_.get(), false,
+                                          false, clear);
             commandList_->BindPipeline(pipeline);
             commandList_->BindDescriptorSet(set);
             commandList_->DrawInstancedIndirect(gpuParticleIndirect_, offset);
@@ -1789,8 +1840,8 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         if (settings_.enableParticles && particlePipeline_ && particleSet_ &&
             particleCount_ > 0) {
             commandList_->BeginRenderPass(hdrTarget_.get(),
-                                          depthTarget_.get(), false, false,
-                                          clear);
+                                          volumeDepthTarget_.get(), false,
+                                          false, clear);
             commandList_->BindPipeline(particlePipeline_.get());
             commandList_->BindDescriptorSet(particleSet_.get());
             commandList_->DrawInstanced(6, particleCount_);
@@ -1799,8 +1850,8 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         if (settings_.enableParticles && particleFirePipeline_ &&
             particleFireSet_ && particleFireCount_ > 0) {
             commandList_->BeginRenderPass(hdrTarget_.get(),
-                                          depthTarget_.get(), false, false,
-                                          clear);
+                                          volumeDepthTarget_.get(), false,
+                                          false, clear);
             commandList_->BindPipeline(particleFirePipeline_.get());
             commandList_->BindDescriptorSet(particleFireSet_.get());
             commandList_->DrawInstanced(6, particleFireCount_);
@@ -1809,8 +1860,8 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         if (settings_.enableParticles && particleAlphaPipeline_ &&
             particleAlphaSet_ && particleAlphaCount_ > 0) {
             commandList_->BeginRenderPass(hdrTarget_.get(),
-                                          depthTarget_.get(), false, false,
-                                          clear);
+                                          volumeDepthTarget_.get(), false,
+                                          false, clear);
             commandList_->BindPipeline(particleAlphaPipeline_.get());
             commandList_->BindDescriptorSet(particleAlphaSet_.get());
             commandList_->DrawInstanced(6, particleAlphaCount_);
@@ -1818,8 +1869,9 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         }
     }
     if (shockPipeline_ && shockSet_) {
-        commandList_->BeginRenderPass(shockTarget_.get(), depthTarget_.get(),
-                                      true, false, clear);
+        commandList_->BeginRenderPass(shockTarget_.get(),
+                                      volumeDepthTarget_.get(), true, false,
+                                      clear);
         commandList_->BindPipeline(shockPipeline_.get());
         commandList_->BindDescriptorSet(shockSet_.get());
         commandList_->Draw(3);
@@ -1828,7 +1880,8 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
 
     if (settings_.enableBloom && bloomDownPipeline_ && bloomDownSet_) {
         commandList_->BeginRenderPass(bloomDownTarget_.get(),
-                                      depthTarget_.get(), true, false, clear);
+                                      volumeDepthTarget_.get(), true, false,
+                                      clear);
         commandList_->BindPipeline(bloomDownPipeline_.get());
         commandList_->BindDescriptorSet(bloomDownSet_.get());
         commandList_->Draw(3);
@@ -1836,7 +1889,8 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     }
     if (settings_.enableBloom && bloomUpPipeline_ && bloomUpSet_) {
         commandList_->BeginRenderPass(bloomUpTarget_.get(),
-                                      depthTarget_.get(), true, false, clear);
+                                      volumeDepthTarget_.get(), true, false,
+                                      clear);
         commandList_->BindPipeline(bloomUpPipeline_.get());
         commandList_->BindDescriptorSet(bloomUpSet_.get());
         commandList_->Draw(3);

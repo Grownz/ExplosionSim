@@ -105,6 +105,10 @@ private:
     ex::rhi::Device* device_ = nullptr;
     std::unique_ptr<ex::rhi::Texture> hdrTarget_;
     std::unique_ptr<ex::rhi::Texture> depthTarget_;
+    // Screen-sized dummy depth used by the full-screen passes after the scene.
+    // Those passes sample the real depth, so they must not bind it as an
+    // attachment.
+    std::unique_ptr<ex::rhi::Texture> volumeDepthTarget_;
     std::unique_ptr<ex::rhi::Buffer> frameConstants_;
 
     // Sky.

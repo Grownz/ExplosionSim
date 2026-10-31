@@ -130,6 +130,10 @@ Hardening in M6:
   from a non-ASCII settings path.
 - Volume texture descriptor rewrites are cached until the texture changes, and
   the Vulkan device uses a pipeline cache.
+- The volume, particle and shock passes sample the real scene depth (transitioned
+  to a depth-read layout after the scene pass) and use a dummy depth attachment,
+  so smoke and effects are occluded by buildings. The ground pass keeps the far
+  proxy because it renders inside the main depth pass.
 - CI runs the Vulkan validation layers on lavapipe for both the reduced-order
   and high-fidelity paths, and a separate ASan/UBSan job builds and runs the
   core and physics tests.

@@ -316,8 +316,10 @@ volume texture is unchanged, and the Vulkan device uses a pipeline cache.
 Minimized windows skip rendering, the swapchain uses pixel sizes for high-DPI
 windows, and CI renders from a non-ASCII settings path. CI also runs the Vulkan
 validation layers on lavapipe (reduced-order and HF) and an ASan/UBSan job for
-the core and physics tests. The Windows and Linux CI jobs upload release
-artifacts, and a tag-triggered `release` job attaches them to a GitHub release.
+the core and physics tests. The volume, particle and shock passes now sample the
+real scene depth with a dummy depth attachment, so they are occluded by
+buildings. The Windows and Linux CI jobs upload release artifacts, and a
+tag-triggered `release` job attaches them to a GitHub release.
 The 10 % same-GPU-class performance target still needs a hardware comparison
 run; the lavapipe numbers are documented as a functional baseline, not a
 hardware-parity claim.

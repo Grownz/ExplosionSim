@@ -73,6 +73,10 @@ enum class ShaderStage {
 enum class TextureState {
     General,
     ShaderRead,
+    // Depth-only states for sampling the scene depth or returning it to the
+    // depth attachment layout after a full-screen pass.
+    DepthRead,
+    DepthAttachment,
 };
 
 struct Extent2D {
