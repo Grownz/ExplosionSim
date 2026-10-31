@@ -288,7 +288,7 @@ bool RhiEulerSolver::CreateSolidMask() {
     // for a field that is only used as a binary obstacle test.
     solidMaskResolution_ = std::clamp(std::min(resolution_, 128), 8, 128);
     const std::vector<float> mask =
-        VoxelizeObstacles(obstacles_, bounds_, solidMaskResolution_);
+        sim::VoxelizeObstacles(obstacles_, bounds_, solidMaskResolution_);
 
     ex::rhi::TextureDesc desc{};
     desc.format = ex::rhi::Format::R32_FLOAT;
@@ -309,7 +309,7 @@ bool RhiEulerSolver::CreateSolidMask() {
     return true;
 }
 
-void RhiEulerSolver::SetObstacles(const std::vector<ObstacleBox>& obstacles) {
+void RhiEulerSolver::SetObstacles(const std::vector<sim::ObstacleBox>& obstacles) {
     obstacles_ = obstacles;
     if (!initialized_ || resolution_ == 0) {
         return;

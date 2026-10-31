@@ -867,8 +867,8 @@ struct HighFidelityRuntime {
             }
             solver.SetObstacles(
                 simulation.Settings().solverFlowAround
-                    ? ex::gfx::SceneObstacles(simulation.Scene())
-                    : std::vector<ex::gfx::ObstacleBox>{});
+                    ? ex::sim::SceneObstacles(simulation.Scene())
+                    : std::vector<ex::sim::ObstacleBox>{});
             blastSerial = simulation.BlastSerial();
             capWarned = false;
         }
@@ -1607,8 +1607,8 @@ int main(int argc, char** argv) {
                     if (highFidelityRuntime.solver.HasVolume()) {
                         highFidelityRuntime.solver.SetObstacles(
                             options.flowAround
-                                ? ex::gfx::SceneObstacles(simulation.Scene())
-                                : std::vector<ex::gfx::ObstacleBox>{});
+                                ? ex::sim::SceneObstacles(simulation.Scene())
+                                : std::vector<ex::sim::ObstacleBox>{});
                     }
                 }
                 if (uiState.applySimulation) {

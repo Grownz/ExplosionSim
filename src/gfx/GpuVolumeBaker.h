@@ -26,6 +26,8 @@ public:
     bool Valid() const { return texture_ != nullptr; }
 
 private:
+    bool CreateSolidMask(const void* data, int resolution);
+
     struct Constants {
         DirectX::XMFLOAT4 boundsMin;   // w = resolution
         DirectX::XMFLOAT4 boundsSize;  // w = voxel size
@@ -34,6 +36,9 @@ private:
         DirectX::XMFLOAT4 cloud;       // w = radius
         DirectX::XMFLOAT4 cloud2;      // x temp, y stem, z strength, w dust ring
         DirectX::XMFLOAT4 shock;       // x radius, y mach, z burstY, w dust
+        DirectX::XMFLOAT4 maskParams;  // x = solid mask enabled
+        DirectX::XMFLOAT4 maskMin;     // xyz = world-space mask box minimum
+        DirectX::XMFLOAT4 maskMax;     // xyz = world-space mask box maximum
     };
 
     ex::rhi::Device* device_ = nullptr;
@@ -43,6 +48,8 @@ private:
     std::unique_ptr<ex::rhi::Buffer> constants_;
     std::unique_ptr<ex::rhi::DescriptorSet> descriptorSet_;
     std::unique_ptr<ex::rhi::Texture> texture_;
+    std::unique_ptr<ex::rhi::Texture> solidMask_;
+    uint64_t solidMaskVersion_ = 0;
     ex::sim::VolumeBounds bounds_{};
     float extinction_ = 0.1f;
     int resolution_ = 0;

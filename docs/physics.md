@@ -285,6 +285,30 @@ top boundaries use zero-gradient ghost cells plus an absorbing sponge over the o
 of the domain that relaxes the state towards ambient, so outgoing waves do not reflect
 back.
 
+### Solid obstacles
+
+The intact buildings and vehicles of the procedural scene are voxelized into a
+binary `R32F` mask that shares the solver domain. The mask resolution is capped at
+128³ (and lowered with the solver grid) because it is only used as a binary test,
+while a 512³ mask would cost 512 MB. Boxes are expanded by half a mask cell so thin
+objects do not fall between samples.
+
+- A solid cell keeps its state; the init, render, light and reduce passes skip it.
+- A face between a fluid and a solid cell uses a no-slip mirror wall, so the blast
+  and the smoke flow around the building instead of through it.
+- The mask is rebuilt from the scene boxes on `Reset`/`Rescale` and when
+  *Flow around objects* (`solverFlowAround`) is toggled in the high-fidelity
+  settings. Destroyed or collapsed objects are no longer obstacles; trees are
+  excluded.
+
+The reduced-order bake uses the same voxelization at up to 32³ over a world-space
+box that contains the current (auto-scaled) volume box. It writes empty voxels
+inside solids, so the analytic smoke and the smoke shadows it casts do not appear
+inside buildings. The mask is cached and only rebuilt when the scene changes or
+the volume box grows or drifts outside the covered box. The analytic field has no
+flow solver, so this is an occlusion and not an advection around the obstacle;
+the high-fidelity solver is the only path that resolves the deflection.
+
 ### Source terms
 
 - Buoyancy uses the density difference relative to the ambient air, so the uniform

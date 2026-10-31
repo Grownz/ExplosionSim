@@ -377,7 +377,22 @@ register-namespace collisions that DXC's default register mapping would create.
 The Euler solver uses its own layout (`b0 -> 0`, `t0/t1 -> 8/9`, `s0 -> 16`,
 `u0/u1 -> 21/22`, reduce output `-> 23`, render output `-> 24`, light input
 `-> 10`, light output `-> 25`) so the same image can be a sampled or storage
-descriptor without register aliasing.
+descriptor without register aliasing. The solid obstacle mask is `t3 -> 11` in
+the solver passes and `t0 -> 22` in the reduced-order volume bake, which keeps the
+bake output at `u0 -> 21` unchanged.
+
+The compute shaders that the Linux application embeds (the Euler passes and the
+volume bake) are checked-in headers under `src/app`. After editing their HLSL,
+regenerate the matching header with the same DXC flags the build uses:
+
+```sh
+mkdir -p build/spirv
+dxc -T cs_6_0 -E CSBake -spirv -fvk-use-dx-layout -DEXPLOSION_VULKAN \
+  -I assets/shaders -Fo build/spirv/volume_bake_CSBake.spv \
+  assets/shaders/volume_bake.hlsl
+python3 tools/embed_spirv.py build/spirv/volume_bake_CSBake.spv \
+  src/app/VolumeBakeShader.h kVolumeBakeCS
+```
 
 The smoke test prints the selected adapter and exits. `--debug` enables the
 Vulkan validation layer when it is installed.

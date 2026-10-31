@@ -171,6 +171,9 @@ private:
         DirectX::XMFLOAT4 cloud;       // w = radius
         DirectX::XMFLOAT4 cloud2;      // x temp, y stem, z strength, w dust ring
         DirectX::XMFLOAT4 shock;       // x radius, y mach, z burstY, w dust intensity
+        DirectX::XMFLOAT4 maskParams;  // x = solid mask enabled
+        DirectX::XMFLOAT4 maskMin;     // xyz = world-space mask box minimum
+        DirectX::XMFLOAT4 maskMax;     // xyz = world-space mask box maximum
     };
 
     // Must match the cbuffer in particles_gpu.hlsl.
@@ -192,6 +195,7 @@ private:
     bool EnsureVolumeTexture(int resolution, bool halfFloat, bool split);
     void UploadVolume(const sim::VolumeFrame& frame);
     bool DispatchGpuVolumeBake(const sim::VolumeBakeRequest& request);
+    bool EnsureSolidMask(const sim::VolumeBakeRequest& request);
     bool CreateParticleGpuResources(int capacity);
     void UpdateGpuParticles(sim::Simulation& simulation);
     void ReadParticleCounters(sim::ParticleSystem& particles);    void UploadParticles(const std::vector<sim::ParticleInstance>& instances,
@@ -221,6 +225,9 @@ private:
     ComPtr<ID3D11ShaderResourceView> volumeDummySRV_;
     ComPtr<ID3D11ComputeShader> volumeBakeCS_;
     ComPtr<ID3D11Buffer> volumeBakeConstantBuffer_;
+    ComPtr<ID3D11Texture3D> solidMaskTexture_;
+    ComPtr<ID3D11ShaderResourceView> solidMaskSRV_;
+    uint64_t solidMaskVersion_ = 0;
     sim::VolumeBounds gpuVolumeBounds_{};
     float gpuVolumeExtinction_ = 0.1f;
     int volumeResolution_ = 0;

@@ -256,7 +256,7 @@ bool GpuEulerSolver::CreateTextures(int resolution) {
 bool GpuEulerSolver::CreateSolidMask() {
     solidMaskResolution_ = std::clamp(std::min(resolution_, 128), 8, 128);
     const std::vector<float> mask =
-        VoxelizeObstacles(obstacles_, bounds_, solidMaskResolution_);
+        sim::VoxelizeObstacles(obstacles_, bounds_, solidMaskResolution_);
 
     solidMask_.Reset();
     D3D11_TEXTURE3D_DESC desc{};
@@ -284,7 +284,7 @@ bool GpuEulerSolver::CreateSolidMask() {
     return true;
 }
 
-void GpuEulerSolver::SetObstacles(const std::vector<ObstacleBox>& obstacles) {
+void GpuEulerSolver::SetObstacles(const std::vector<sim::ObstacleBox>& obstacles) {
     obstacles_ = obstacles;
     if (hasVolume_) {
         CreateSolidMask();

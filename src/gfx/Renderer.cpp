@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <utility>
 
 using namespace DirectX;
 
@@ -669,12 +670,67 @@ void Renderer::UploadVolume(const sim::VolumeFrame& frame) {
     volumeValid_ = true;
 }
 
+bool Renderer::EnsureSolidMask(const sim::VolumeBakeRequest& request) {
+    const uint64_t wantedVersion =
+        request.hasSolidMask() ? request.solidMaskVersion : 0;
+    if (solidMaskSRV_ && solidMaskVersion_ == wantedVersion) {
+        return true;
+    }
+
+    // Real masks cover a world-space box that contains the current bake box;
+    // the placeholder is a 1^3 zero volume so the sampled slot is always valid.
+    const int resolution =
+        request.hasSolidMask() ? request.solidMaskResolution : 1;
+    const float zero = 0.0f;
+    const float* data =
+        request.hasSolidMask() ? request.solidMask->data() : &zero;
+
+    D3D11_TEXTURE3D_DESC desc{};
+    desc.Width = UINT(resolution);
+    desc.Height = UINT(resolution);
+    desc.Depth = UINT(resolution);
+    desc.MipLevels = 1;
+    desc.Format = DXGI_FORMAT_R32_FLOAT;
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA initial{};
+    initial.pSysMem = data;
+    initial.SysMemPitch = UINT(resolution * sizeof(float));
+    initial.SysMemSlicePitch = UINT(resolution * resolution * sizeof(float));
+
+    ComPtr<ID3D11Texture3D> texture;
+    if (FAILED(device_->Device()->CreateTexture3D(&desc, &initial, &texture))) {
+        LogWarn("Solid mask texture creation failed; the volume bake ignores "
+                "obstacles.");
+        return false;
+    }
+
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+    srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE3D;
+    srvDesc.Texture3D.MipLevels = 1;
+    ComPtr<ID3D11ShaderResourceView> srv;
+    if (FAILED(device_->Device()->CreateShaderResourceView(texture.Get(),
+                                                           &srvDesc, &srv))) {
+        return false;
+    }
+
+    solidMaskTexture_ = std::move(texture);
+    solidMaskSRV_ = std::move(srv);
+    solidMaskVersion_ = wantedVersion;
+    return true;
+}
+
 bool Renderer::DispatchGpuVolumeBake(const sim::VolumeBakeRequest& request) {
     if (!volumeBakeCS_ || !volumeBakeConstantBuffer_ || !request.valid() ||
         request.split) {
         return false;
     }
     if (!EnsureVolumeTexture(request.resolution, true, false) || !volumeUAV_) {
+        return false;
+    }
+    if (!EnsureSolidMask(request)) {
         return false;
     }
 
@@ -696,6 +752,14 @@ bool Renderer::DispatchGpuVolumeBake(const sim::VolumeBakeRequest& request) {
         XMFLOAT4(p.cloudTemperature, p.stemRadius, p.cloudStrength, p.dustRingRadius);
     constants.shock =
         XMFLOAT4(p.shockRadius, p.shockMach, p.burstY, p.dustIntensity);
+    constants.maskParams =
+        XMFLOAT4(request.hasSolidMask() ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    constants.maskMin =
+        XMFLOAT4(request.solidMaskBounds.min.x, request.solidMaskBounds.min.y,
+                 request.solidMaskBounds.min.z, 0.0f);
+    constants.maskMax =
+        XMFLOAT4(request.solidMaskBounds.max.x, request.solidMaskBounds.max.y,
+                 request.solidMaskBounds.max.z, 0.0f);
 
     ID3D11DeviceContext* context = device_->Context();
     D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -715,6 +779,8 @@ bool Renderer::DispatchGpuVolumeBake(const sim::VolumeBakeRequest& request) {
     context->CSSetShader(volumeBakeCS_.Get(), nullptr, 0);
     ID3D11Buffer* cbuffer = volumeBakeConstantBuffer_.Get();
     context->CSSetConstantBuffers(0, 1, &cbuffer);
+    ID3D11ShaderResourceView* maskSRV = solidMaskSRV_.Get();
+    context->CSSetShaderResources(0, 1, &maskSRV);
     ID3D11UnorderedAccessView* uav = volumeUAV_.Get();
     context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 
@@ -723,6 +789,7 @@ bool Renderer::DispatchGpuVolumeBake(const sim::VolumeBakeRequest& request) {
 
     ID3D11UnorderedAccessView* nullUAV = nullptr;
     context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+    context->CSSetShaderResources(0, 1, &nullSRV);
     context->CSSetShader(nullptr, nullptr, 0);
 
     gpuVolumeBounds_ = request.bounds;
@@ -1341,7 +1408,7 @@ namespace {
 void ApplySolverObstacles(GpuEulerSolver& solver,
                           const sim::Simulation& simulation) {
     if (simulation.Settings().solverFlowAround) {
-        solver.SetObstacles(SceneObstacles(simulation.Scene()));
+        solver.SetObstacles(sim::SceneObstacles(simulation.Scene()));
     } else {
         solver.SetObstacles({});
     }

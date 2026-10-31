@@ -1,4 +1,4 @@
-#include "gfx/EulerObstacles.h"
+#include "sim/Obstacles.h"
 
 #include "scene/SceneTypes.h"
 
@@ -8,10 +8,10 @@
 
 using namespace DirectX;
 
-namespace ex::gfx {
+namespace ex::sim {
 
 std::vector<float> VoxelizeObstacles(const std::vector<ObstacleBox>& boxes,
-                                     const sim::VolumeBounds& bounds,
+                                     const VolumeBounds& bounds,
                                      int resolution) {
     const int res = std::clamp(resolution, 8, 256);
     std::vector<float> mask(size_t(res) * size_t(res) * size_t(res), 0.0f);
@@ -106,4 +106,73 @@ std::vector<ObstacleBox> SceneObstacles(const scene::Scene& scene) {
     return boxes;
 }
 
-} // namespace ex::gfx
+namespace {
+
+bool SameBoxes(const std::vector<ObstacleBox>& a,
+               const std::vector<ObstacleBox>& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        const ObstacleBox& x = a[i];
+        const ObstacleBox& y = b[i];
+        if (x.center.x != y.center.x || x.center.y != y.center.y ||
+            x.center.z != y.center.z || x.halfExtents.x != y.halfExtents.x ||
+            x.halfExtents.y != y.halfExtents.y ||
+            x.halfExtents.z != y.halfExtents.z ||
+            x.orientation.x != y.orientation.x ||
+            x.orientation.y != y.orientation.y ||
+            x.orientation.z != y.orientation.z ||
+            x.orientation.w != y.orientation.w) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool Contains(const VolumeBounds& outer, const VolumeBounds& inner) {
+    return outer.min.x <= inner.min.x && outer.min.y <= inner.min.y &&
+           outer.min.z <= inner.min.z && outer.max.x >= inner.max.x &&
+           outer.max.y >= inner.max.y && outer.max.z >= inner.max.z;
+}
+
+VolumeBounds Union(const VolumeBounds& a, const VolumeBounds& b) {
+    VolumeBounds result{};
+    result.min.x = std::min(a.min.x, b.min.x);
+    result.min.y = std::min(a.min.y, b.min.y);
+    result.min.z = std::min(a.min.z, b.min.z);
+    result.max.x = std::max(a.max.x, b.max.x);
+    result.max.y = std::max(a.max.y, b.max.y);
+    result.max.z = std::max(a.max.z, b.max.z);
+    return result;
+}
+
+} // namespace
+
+const std::shared_ptr<const std::vector<float>>& VolumeObstacleMask::Update(
+    const scene::Scene& scene, const VolumeBounds& wanted, int resolution) {
+    const std::vector<ObstacleBox> obstacles = SceneObstacles(scene);
+    // The mask is valid as long as the requested bake box stays inside the
+    // covered world-space box; the box drifts downwind between bakes, which
+    // must not rebuild the mask. Rebuild only when the scene, the resolution or
+    // the coverage changes.
+    const bool rebuild = !mask_ || !SameBoxes(obstacles, obstacles_) ||
+                         resolution != resolution_ || !Contains(bounds_, wanted);
+    if (!rebuild) {
+        return mask_;
+    }
+
+    obstacles_ = obstacles;
+    resolution_ = resolution;
+    bounds_ = mask_ ? Union(bounds_, wanted) : wanted;
+    ++version_;
+    if (obstacles_.empty()) {
+        mask_.reset();
+    } else {
+        mask_ = std::make_shared<const std::vector<float>>(
+            VoxelizeObstacles(obstacles_, bounds_, resolution_));
+    }
+    return mask_;
+}
+
+} // namespace ex::sim

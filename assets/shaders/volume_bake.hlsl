@@ -22,9 +22,15 @@ EX_VK_BINDING(0) cbuffer VolumeBakeConstants : register(b0)
     float4 Cloud;       // xyz = centre, w = radius
     float4 Cloud2;      // x = temperature, y = stem radius, z = strength, w = dust ring radius
     float4 Shock;       // x = radius, y = mach, z = burst height, w = dust intensity
+    float4 MaskParams;  // x = solid mask enabled, yzw = reserved
+    float4 MaskMin;     // xyz = world-space mask box minimum
+    float4 MaskMax;     // xyz = world-space mask box maximum
 };
 
 EX_VK_BINDING(21) RWTexture3D<float4> Output : register(u0);
+// Solid mask from the scene (1 = solid, 0 = fluid). Its resolution is
+// independent of the bake grid; cell indices are scaled here.
+EX_VK_BINDING(22) Texture3D<float> SolidMask : register(t0);
 
 static const float kTemperatureScale = 12000.0f;
 
@@ -89,6 +95,26 @@ void CSBake(uint3 id : SV_DispatchThreadID)
 
     const float invResolution = 1.0 / float(resolution);
     const float3 world = BoundsMin.xyz + (float3(id) + 0.5) * BoundsSize.xyz * invResolution;
+
+    // Solid obstacles: the reduced-order field is clipped inside buildings so
+    // smoke (and the smoke shadows it casts) does not appear inside them. The
+    // mask covers its own world-space box, which always contains the bake box,
+    // so the cell mapping matches VolumeBaker::BakeRange even while the bake
+    // box drifts downwind.
+    if (MaskParams.x > 0.5f)
+    {
+        uint3 maskSize;
+        SolidMask.GetDimensions(maskSize.x, maskSize.y, maskSize.z);
+        const float3 cell = max((MaskMax.xyz - MaskMin.xyz) / float3(maskSize),
+                                float3(1e-4f, 1e-4f, 1e-4f));
+        const int3 maskCell = clamp(int3((world - MaskMin.xyz) / cell),
+                                    int3(0, 0, 0), int3(maskSize) - 1);
+        if (SolidMask.Load(int4(maskCell, 0)).r > 0.5f)
+        {
+            Output[id] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+            return;
+        }
+    }
 
     const float ambient = Fireball2.w;
     const float time = Fireball2.z;

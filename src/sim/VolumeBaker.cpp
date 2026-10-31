@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/ThreadPool.h"
+#include "sim/Obstacles.h"
 
 #include <DirectXPackedVector.h>
 
@@ -83,10 +84,18 @@ inline uint16_t ToHalf(float value) {
 
 } // namespace
 
+VolumeBaker::VolumeBaker() = default;
+VolumeBaker::~VolumeBaker() = default;
+
 void VolumeBaker::Initialize(core::ThreadPool* pool, int resolution) {
     pool_ = pool;
     resolution_ = std::clamp(resolution, 16, 1024);
+    obstacleMask_ = std::make_unique<VolumeObstacleMask>();
     Reset();
+}
+
+void VolumeBaker::SetScene(const scene::Scene* scene) {
+    scene_ = scene;
 }
 
 void VolumeBaker::Reset() {
@@ -213,6 +222,24 @@ VolumeBakeRequest VolumeBaker::Prepare(const BlastModel& model) {
     // each): RG = density/temperature, RG = dust/soot.
     request.split = request.resolution >= 1024;
 
+    // Solid obstacles for the reduced-order chain. The mask uses a much lower,
+    // capped resolution than the bake: buildings are large compared to a volume
+    // voxel, the clip only has to hide the smoke inside them, and a 512^3 or
+    // 1024^3 mask would cost more memory than the volume itself. It follows the
+    // bake box, so auto-scaling rebuilds it.
+    if (scene_ && obstacleMask_) {
+        const int maskResolution =
+            std::clamp(std::min(resolution_, 32), 8, 32);
+        const auto& mask =
+            obstacleMask_->Update(*scene_, request.bounds, maskResolution);
+        if (mask) {
+            request.solidMask = mask;
+            request.solidMaskResolution = obstacleMask_->Resolution();
+            request.solidMaskVersion = obstacleMask_->Version();
+            request.solidMaskBounds = obstacleMask_->Bounds();
+        }
+    }
+
     // Keep the frame metadata in sync for the UI even when the renderer
     // evaluates the field on the GPU.
     frame_.resolution = request.resolution;
@@ -249,6 +276,9 @@ void VolumeBaker::Dispatch(const BlastModel& model, bool synchronous) {
     job_.bytesPerVoxel = frame_.bytesPerVoxel;
     job_.halfFloat = frame_.halfFloat;
     job_.split = request.split;
+    job_.solidMask = request.solidMask;
+    job_.solidMaskResolution = request.solidMaskResolution;
+    job_.solidMaskBounds = request.solidMaskBounds;
 
     const size_t voxelCount = size_t(request.resolution) * size_t(request.resolution) *
                               size_t(request.resolution);
@@ -381,8 +411,33 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
     std::vector<uint8_t>* target2 = job.target2;
     const int bytesPerVoxel = job.bytesPerVoxel;
 
+    // Solid mask: the reduced-order field is clipped inside buildings so the
+    // smoke and its shadows do not appear inside them. The mask is voxelized
+    // over its own world-space box (which always contains this bake box), so
+    // sampling is by world position and stays valid while the box drifts. The
+    // mapping matches volume_bake.hlsl.
+    const bool hasMask = job.solidMask && job.solidMaskResolution > 0 &&
+                         !job.solidMask->empty();
+    const int maskResolution = job.solidMaskResolution;
+    const float maskCellX =
+        hasMask ? (job.solidMaskBounds.max.x - job.solidMaskBounds.min.x) /
+                      float(maskResolution)
+                : 1.0f;
+    const float maskCellY =
+        hasMask ? (job.solidMaskBounds.max.y - job.solidMaskBounds.min.y) /
+                      float(maskResolution)
+                : 1.0f;
+    const float maskCellZ =
+        hasMask ? (job.solidMaskBounds.max.z - job.solidMaskBounds.min.z) /
+                      float(maskResolution)
+                : 1.0f;
+
     for (int z = zBegin; z < zEnd; ++z) {
         const float worldZ = minZ + (float(z) + 0.5f) * sizeZ * invResolution;
+        const int maskZ =
+            std::clamp(int((worldZ - job.solidMaskBounds.min.z) /
+                           std::max(maskCellZ, 1e-4f)),
+                       0, std::max(maskResolution - 1, 0));
         uint8_t* rowZ = target.data() + size_t(z) * size_t(resolution) * size_t(resolution) *
                                             size_t(bytesPerVoxel);
         uint8_t* rowZ2 = target2 ? target2->data() + size_t(z) * size_t(resolution) *
@@ -391,11 +446,35 @@ void VolumeBaker::BakeRange(int zBegin, int zEnd, const BakeJob& job) {
 
         for (int y = 0; y < resolution; ++y) {
             const float worldY = minY + (float(y) + 0.5f) * sizeY * invResolution;
+            const int maskY =
+                std::clamp(int((worldY - job.solidMaskBounds.min.y) /
+                               std::max(maskCellY, 1e-4f)),
+                           0, std::max(maskResolution - 1, 0));
             uint8_t* rowY = rowZ + size_t(y) * size_t(resolution) * size_t(bytesPerVoxel);
             uint8_t* rowY2 = rowZ2 ? rowZ2 + size_t(y) * size_t(resolution) * 2 : nullptr;
 
             for (int x = 0; x < resolution; ++x) {
                 const float worldX = minX + (float(x) + 0.5f) * sizeX * invResolution;
+
+                if (hasMask) {
+                    const int maskX =
+                        std::clamp(int((worldX - job.solidMaskBounds.min.x) /
+                                       std::max(maskCellX, 1e-4f)),
+                                   0, std::max(maskResolution - 1, 0));
+                    const size_t maskIndex =
+                        (size_t(maskZ) * size_t(maskResolution) + size_t(maskY)) *
+                            size_t(maskResolution) +
+                        size_t(maskX);
+                    if ((*job.solidMask)[maskIndex] > 0.5f) {
+                        uint8_t* out = rowY + size_t(x) * size_t(bytesPerVoxel);
+                        std::memset(out, 0, size_t(bytesPerVoxel));
+                        if (rowY2) {
+                            rowY2[size_t(x) * 2] = 0;
+                            rowY2[size_t(x) * 2 + 1] = 0;
+                        }
+                        continue;
+                    }
+                }
 
                 float density = 0.0f;
                 float temperature = ambient;

@@ -136,6 +136,10 @@ the current rigid-body pose, so flames are not hidden inside the mesh.
   the bounds and field parameters, so there is no voxel loop and no 16 MB (128³) /
   128 MB (256³) upload per bake. The CPU baker remains as a fallback and owns the 1024³
   split `RG8` layout, whose format has no typed UAV store
+- a shared world-space solid mask (32³ for the reduced-order bake, up to 128³ for the
+  Euler solver) clips the field inside intact buildings and vehicles. The CPU bake, the
+  D3D11 compute bake and the Vulkan compute bake sample the same mask, so the three
+  paths agree
 - *Rendering > GPU volume bake* (default on, `--no-gpu-volume-bake` on the command line)
   selects the backend; if the shader or the constant buffer cannot be created the
   renderer falls back to the CPU baker on the next scheduled bake

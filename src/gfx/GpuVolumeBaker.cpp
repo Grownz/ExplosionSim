@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace ex::gfx {
@@ -29,11 +30,13 @@ bool GpuVolumeBaker::Initialize(ex::rhi::Device* device,
          ex::rhi::ShaderStage::Compute, 4},
         {21, ex::rhi::DescriptorType::StorageImage, 1,
          ex::rhi::ShaderStage::Compute, 4},
+        {22, ex::rhi::DescriptorType::SampledImage, 1,
+         ex::rhi::ShaderStage::Compute, 4},
     };
     ex::rhi::PipelineDesc pipelineDesc{};
     pipelineDesc.computeShader = shader_.get();
     pipelineDesc.descriptorBindings = bindings;
-    pipelineDesc.descriptorBindingCount = 2;
+    pipelineDesc.descriptorBindingCount = 3;
     pipeline_ = device->CreatePipeline(pipelineDesc);
     if (!pipeline_) {
         LogWarn("GPU volume bake pipeline unavailable; using the CPU bake.");
@@ -46,11 +49,48 @@ bool GpuVolumeBaker::Initialize(ex::rhi::Device* device,
     constantDesc.usage = ex::rhi::BufferUsage::Uniform |
                          ex::rhi::BufferUsage::Dynamic;
     constants_ = device->CreateBuffer(constantDesc);
-    return descriptorSet_ && constants_;
+    if (!descriptorSet_ || !constants_) {
+        return false;
+    }
+
+    // Placeholder mask until the first bake supplies one; the pipeline always
+    // needs a bound sampled image.
+    const float zero = 0.0f;
+    return CreateSolidMask(&zero, 1);
+}
+
+bool GpuVolumeBaker::CreateSolidMask(const void* data, int resolution) {
+    if (!device_ || !commandList_) {
+        return false;
+    }
+    device_->WaitIdle();
+    ex::rhi::TextureDesc desc{};
+    desc.format = ex::rhi::Format::R32_FLOAT;
+    desc.width = uint32_t(std::max(resolution, 1));
+    desc.height = uint32_t(std::max(resolution, 1));
+    desc.depth = uint32_t(std::max(resolution, 1));
+    desc.usage = ex::rhi::TextureUsage::Sampled;
+    desc.initialData = data;
+    auto texture = device_->CreateTexture(desc);
+    if (!texture) {
+        return false;
+    }
+    // The image is created with initial data, but the validation layers still
+    // expect an explicit transition to the layout the descriptor declares.
+    commandList_->BeginCompute();
+    commandList_->TransitionTexture(texture.get(),
+                                    ex::rhi::TextureState::ShaderRead);
+    commandList_->EndCompute();
+    solidMask_ = std::move(texture);
+    if (descriptorSet_) {
+        descriptorSet_->SetImage(22, solidMask_.get());
+    }
+    return true;
 }
 
 void GpuVolumeBaker::Shutdown() {
     texture_.reset();
+    solidMask_.reset();
     descriptorSet_.reset();
     constants_.reset();
     pipeline_.reset();
@@ -82,6 +122,25 @@ bool GpuVolumeBaker::Bake(const ex::sim::VolumeBakeRequest& request) {
         descriptorSet_->SetImage(21, texture_.get());
     }
 
+    // Upload the solid mask only when its contents actually changed; the CPU
+    // baker caches it the same way and bumps the version on every rebuild.
+    const uint64_t wantedMaskVersion =
+        request.hasSolidMask() ? request.solidMaskVersion : 0;
+    if (solidMaskVersion_ != wantedMaskVersion && solidMask_) {
+        if (request.hasSolidMask()) {
+            if (!CreateSolidMask(request.solidMask->data(),
+                                 request.solidMaskResolution)) {
+                return false;
+            }
+        } else {
+            const float zero = 0.0f;
+            if (!CreateSolidMask(&zero, 1)) {
+                return false;
+            }
+        }
+        solidMaskVersion_ = wantedMaskVersion;
+    }
+
     Constants constants{};
     const ex::sim::VolumeFieldParams& p = request.params;
     constants.boundsMin =
@@ -108,6 +167,15 @@ bool GpuVolumeBaker::Bake(const ex::sim::VolumeBakeRequest& request) {
     constants.shock =
         DirectX::XMFLOAT4(p.shockRadius, p.shockMach, p.burstY,
                           p.dustIntensity);
+    constants.maskParams =
+        DirectX::XMFLOAT4(request.hasSolidMask() ? 1.0f : 0.0f, 0.0f, 0.0f,
+                          0.0f);
+    constants.maskMin = DirectX::XMFLOAT4(request.solidMaskBounds.min.x,
+                                          request.solidMaskBounds.min.y,
+                                          request.solidMaskBounds.min.z, 0.0f);
+    constants.maskMax = DirectX::XMFLOAT4(request.solidMaskBounds.max.x,
+                                          request.solidMaskBounds.max.y,
+                                          request.solidMaskBounds.max.z, 0.0f);
     void* mapped = constants_->Map();
     if (!mapped) {
         return false;

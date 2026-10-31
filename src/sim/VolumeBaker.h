@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 #include "sim/BlastModel.h"
@@ -12,7 +13,13 @@ namespace ex::core {
 class ThreadPool;
 }
 
+namespace ex::scene {
+class Scene;
+}
+
 namespace ex::sim {
+
+class VolumeObstacleMask;
 
 struct VolumeBounds {
     DirectX::XMFLOAT3 min{0.0f, 0.0f, 0.0f};
@@ -57,7 +64,25 @@ struct VolumeBakeRequest {
     bool split = false;
     VolumeFieldParams params{};
 
+    // Optional solid mask (1 = solid, 0 = fluid) voxelized over `bounds`. The
+    // reduced-order bake writes empty voxels inside solids so smoke does not
+    // appear inside buildings. Shared so one mask feeds the CPU bake and both
+    // GPU bakes; `solidMaskVersion` changes whenever the contents change, which
+    // lets the GPU paths skip re-uploading an unchanged mask.
+    std::shared_ptr<const std::vector<float>> solidMask;
+    int solidMaskResolution = 0;
+    uint64_t solidMaskVersion = 0;
+    // World-space box the mask covers. It contains `bounds`, so the bake keeps
+    // its mask while the volume box drifts downwind or grows.
+    VolumeBounds solidMaskBounds{};
+
     bool valid() const { return resolution > 0; }
+    bool hasSolidMask() const {
+        return solidMask && solidMaskResolution > 0 &&
+               solidMask->size() == size_t(solidMaskResolution) *
+                                        size_t(solidMaskResolution) *
+                                        size_t(solidMaskResolution);
+    }
 };
 
 // CPU-side volumetric field in RGBA16F layout:
@@ -87,12 +112,20 @@ struct VolumeFrame {
 // footprint at one frame, which is what makes 512³ and 1024³ possible at all.
 class VolumeBaker {
 public:
+    VolumeBaker();
+    ~VolumeBaker();
+
     void Initialize(core::ThreadPool* pool, int resolution);
     void Reset();
     void SetResolution(int resolution);
     int Resolution() const { return resolution_; }
     void SetAutoScale(bool enabled);
     bool AutoScale() const { return autoScale_; }
+
+    // Registers the scene whose intact buildings and vehicles occlude the
+    // reduced-order smoke. The mask is cached in world space and only rebuilt
+    // when the scene changes or the bake box grows or drifts outside it.
+    void SetScene(const scene::Scene* scene);
 
     void StartBake(const BlastModel& model);
     void BakeNow(const BlastModel& model);
@@ -131,6 +164,9 @@ private:
         bool split = false;
         std::vector<uint8_t>* target = nullptr;
         std::vector<uint8_t>* target2 = nullptr;
+        std::shared_ptr<const std::vector<float>> solidMask;
+        int solidMaskResolution = 0;
+        VolumeBounds solidMaskBounds{};
     };
 
     void Dispatch(const BlastModel& model, bool synchronous);
@@ -153,6 +189,8 @@ private:
     bool gpuPending_ = false;
     VolumeBakeRequest gpuRequest_{};
     float lastBakeMs_ = 0.0f;
+    const scene::Scene* scene_ = nullptr;
+    std::unique_ptr<VolumeObstacleMask> obstacleMask_;
 };
 
 } // namespace ex::sim

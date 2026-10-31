@@ -40,6 +40,7 @@ bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool
     particles_.SetGpuMode(settings.gpuParticles);
     particles_.Initialize(settings.particleBudget);
     volume_.Initialize(pool_, settings.volumeResolution);
+    volume_.SetScene(&scene_);
     initialized_ = true;
     ResetInternal(holdFuse, true);
     return true;

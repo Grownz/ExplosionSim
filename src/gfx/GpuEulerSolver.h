@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "gfx/EulerSolverTypes.h"
-#include "gfx/EulerObstacles.h"
+#include "sim/Obstacles.h"
 #include "gfx/GfxDevice.h"
 #include "sim/VolumeBaker.h"
 
@@ -26,7 +26,7 @@ public:
 
     bool Reset(const EulerConfig& config);
     // Solid boxes for the flow-around variant.
-    void SetObstacles(const std::vector<ObstacleBox>& obstacles);
+    void SetObstacles(const std::vector<sim::ObstacleBox>& obstacles);
     void Step(int steps);
     void UpdateRenderVolume();
     // Precomputes the sun transmittance volume for the volume raymarcher.
@@ -165,7 +165,7 @@ private:
     VolumeTexture renderVolume_;
     VolumeTexture lightVolume_;
     VolumeTexture solidMask_;
-    std::vector<ObstacleBox> obstacles_;
+    std::vector<sim::ObstacleBox> obstacles_;
     int solidMaskResolution_ = 0;
     int stateIndex_ = 0;
     int resolution_ = 0;

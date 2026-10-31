@@ -56,6 +56,7 @@ Useful flags:
 | `--solver-steps <n>` | Maximum solver steps per frame. |
 | `--solver-time <s>` | Solver time for a high-fidelity capture. |
 | `--no-solver-auto-scale` | Keep the solver domain fixed. |
+| `--flow-around` / `--no-flow-around` | Include the scene buildings and vehicles as solid obstacles in the high-fidelity solver (default on). |
 | `--benchmark --frames <n>` | Render a fixed frame count and report the average. |
 | `--solver-benchmark` | Report solver GPU timings per pass. |
 | `--splash-test` | Render the splash briefly and exit. |
