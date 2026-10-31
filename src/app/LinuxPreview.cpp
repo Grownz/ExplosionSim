@@ -170,8 +170,23 @@ bool LinuxPreview::Initialize(ex::rhi::Device* device, int width, int height) {
         return false;
     }
     device_ = device;
-    if (!CreateTargets(device, width, height) || !CreateSky(device) ||
-        !CreateGround(device) || !CreateScene(device) ||
+    if (!CreateTargets(device, width, height)) {
+        return false;
+    }
+
+    const ex::gfx::SceneRenderer::Shaders sceneShaders{
+        {kSceneVS, kSceneVSSize},
+        {kScenePS, kScenePSSize},
+        {kSceneVSShadow, kSceneVSShadowSize},
+        {kSceneVSChunk, kSceneVSChunkSize},
+        {kSceneVSShadowChunk, kSceneVSShadowChunkSize},
+    };
+    sceneRendererReady_ = sceneRenderer_.Initialize(device, sceneShaders);
+    if (!sceneRendererReady_) {
+        ex::LogWarn("Shared scene renderer unavailable; using the preview path.");
+    }
+
+    if (!CreateSky(device) || !CreateGround(device) || !CreateScene(device) ||
         !CreateVolume(device) || !CreateParticles(device) ||
         !CreateShock(device) || !CreateComposite(device)) {
         return false;
@@ -180,6 +195,8 @@ bool LinuxPreview::Initialize(ex::rhi::Device* device, int width, int height) {
 }
 
 void LinuxPreview::Shutdown() {
+    sceneRenderer_.Shutdown();
+    sceneRendererReady_ = false;
     compositeSet_.reset();
     compositePipeline_.reset();
     compositePS_.reset();
@@ -1727,6 +1744,77 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     }
     UpdateFrameConstants(simulation, camera, width, height);
 
+    // Shared cascades: compute the same light matrices as the Windows renderer
+    // and fill the shadow maps before the ground samples them.
+    if (sceneRendererReady_) {
+        ex::gfx::SceneRenderer::ShadowInput shadowInput{};
+        DirectX::XMStoreFloat4x4(&shadowInput.viewMatrix, camera.ViewMatrix());
+        shadowInput.sunDirection =
+            DirectX::XMFLOAT3(frameConstantsData_[36], frameConstantsData_[37],
+                              frameConstantsData_[38]);
+        shadowInput.nearPlane = camera.NearPlane();
+        shadowInput.fovY = camera.FovY();
+        shadowInput.cameraDistance = camera.Distance();
+        shadowInput.viewportWidth = width;
+        shadowInput.viewportHeight = height;
+        shadowInput.sceneExtent = simulation.Scene().Settings().enabled
+                                      ? simulation.Scene().Extent()
+                                      : 0.0f;
+        const ex::gfx::SceneRenderer::ShadowConstants shadows =
+            ex::gfx::SceneRenderer::ComputeShadows(shadowInput);
+        if (shadowConstants_) {
+            if (void* mapped = shadowConstants_->Map()) {
+                std::memcpy(mapped, &shadows, sizeof(shadows));
+                shadowConstants_->Unmap();
+            }
+        }
+
+        uint64_t staticShadowKey = simulation.Scene().GenerationHash();
+        staticShadowKey ^=
+            uint64_t(int(std::lround(settings_.sunAzimuthDeg * 10.0f))) *
+            0x9E3779B97F4A7C15ull;
+        staticShadowKey ^=
+            uint64_t(int(std::lround(settings_.sunElevationDeg * 10.0f)))
+            << 32;
+        int collapsedBuildings = 0;
+        for (const ex::scene::SceneObject& object :
+             simulation.Scene().Objects()) {
+            if (object.collapsed) {
+                ++collapsedBuildings;
+            }
+        }
+        staticShadowKey ^=
+            uint64_t(collapsedBuildings) * 0xBF58476D1CE4E5B9ull;
+
+        ex::gfx::SceneRenderer::ViewInfo sceneView{};
+        DirectX::XMStoreFloat4x4(&sceneView.viewProj,
+                                 camera.ViewProjectionMatrix());
+        sceneView.eye = camera.Position();
+        sceneView.projScale =
+            float(height) / (2.0f * std::tan(camera.FovY() * 0.5f));
+        const DirectX::XMFLOAT3 burstCenter(
+            0.0f, float(simulation.Blast().GetCharge().heightOfBurstM), 0.0f);
+
+        sceneRenderer_.RenderStaticShadow(commandList_.get(),
+                                          simulation.Scene(),
+                                          shadows.staticLightViewProj,
+                                          staticShadowKey);
+        sceneRenderer_.RenderShadow(commandList_.get(), simulation.Scene(),
+                                    sceneView, shadows.lightViewProj,
+                                    burstCenter);
+
+        // The ground descriptor was built before the shadow maps existed, so
+        // point it at the shared maps now that their layouts are sampled.
+        if (groundSet_) {
+            for (int i = 0; i < 3; ++i) {
+                groundSet_->SetImage(uint32_t(10 + i),
+                                     sceneRenderer_.ShadowTexture(i));
+            }
+            groundSet_->SetImage(13,
+                                 sceneRenderer_.StaticShadowTexture());
+        }
+    }
+
     const float clear[4] = {0.02f, 0.02f, 0.03f, 1.0f};
     commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(), true,
                                   true, clear);
@@ -1740,40 +1828,60 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         commandList_->BindDescriptorSet(groundSet_.get());
         commandList_->Draw(3);
     }
-    if (scenePipeline_ && sceneVertexBuffer_ && sceneIndexBuffer_) {
-        commandList_->BindPipeline(scenePipeline_.get());
-        commandList_->BindVertexBuffer(sceneVertexBuffer_.get(),
-                                       sizeof(SceneMeshVertex));
-        commandList_->BindIndexBuffer(sceneIndexBuffer_.get());
-        for (const SceneDraw& draw : sceneDraws_) {
-            if (!draw.set) {
-                continue;
-            }
-            commandList_->BindDescriptorSet(draw.set.get());
-            commandList_->DrawIndexedInstanced(draw.indexCount,
-                                               draw.instanceCount,
-                                               draw.indexOffset);
-        }
-    }
-    if (chunkPipeline_ && chunkSet_ && chunkVertexBuffer_ &&
-        chunkIndexBuffer_ && !chunkDraws_.empty()) {
-        const auto& objects = simulation.Scene().Objects();
-        commandList_->BindPipeline(chunkPipeline_.get());
-        commandList_->BindVertexBuffer(chunkVertexBuffer_.get(),
-                                       sizeof(ChunkVertex));
-        commandList_->BindIndexBuffer(chunkIndexBuffer_.get());
-        commandList_->BindDescriptorSet(chunkSet_.get());
-        for (const ChunkDraw& draw : chunkDraws_) {
-            if (draw.objectIndex < 0 ||
-                draw.objectIndex >= int(objects.size()) ||
-                !objects[draw.objectIndex].collapsed) {
-                continue;
-            }
-            commandList_->DrawIndexedInstanced(draw.indexCount, 1,
-                                               draw.indexOffset);
-        }
-    }
     commandList_->EndRenderPass();
+
+    // The shared renderer owns its own pipelines and descriptor layouts, so it
+    // records the scene in a separate pass that loads the sky/ground colour
+    // and depth written above.
+    if (sceneRendererReady_) {
+        ex::gfx::SceneRenderer::FrameResources resources{};
+        resources.frameConstants = frameConstants_.get();
+        resources.shadowConstants = shadowConstants_.get();
+        resources.volumeTexture =
+            gpuVolumeValid_ && gpuVolumeTexture_ ? gpuVolumeTexture_
+                                                 : volumeTexture_.get();
+        resources.volumeSampler = volumeSampler_.get();
+        sceneRenderer_.RenderScene(commandList_.get(), simulation.Scene(),
+                                   hdrTarget_.get(), depthTarget_.get(),
+                                   surfaceSampler_.get(), resources);
+    } else {
+        commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
+                                      false, false, clear);
+        if (scenePipeline_ && sceneVertexBuffer_ && sceneIndexBuffer_) {
+            commandList_->BindPipeline(scenePipeline_.get());
+            commandList_->BindVertexBuffer(sceneVertexBuffer_.get(),
+                                           sizeof(SceneMeshVertex));
+            commandList_->BindIndexBuffer(sceneIndexBuffer_.get());
+            for (const SceneDraw& draw : sceneDraws_) {
+                if (!draw.set) {
+                    continue;
+                }
+                commandList_->BindDescriptorSet(draw.set.get());
+                commandList_->DrawIndexedInstanced(draw.indexCount,
+                                                   draw.instanceCount,
+                                                   draw.indexOffset);
+            }
+        }
+        if (chunkPipeline_ && chunkSet_ && chunkVertexBuffer_ &&
+            chunkIndexBuffer_ && !chunkDraws_.empty()) {
+            const auto& objects = simulation.Scene().Objects();
+            commandList_->BindPipeline(chunkPipeline_.get());
+            commandList_->BindVertexBuffer(chunkVertexBuffer_.get(),
+                                           sizeof(ChunkVertex));
+            commandList_->BindIndexBuffer(chunkIndexBuffer_.get());
+            commandList_->BindDescriptorSet(chunkSet_.get());
+            for (const ChunkDraw& draw : chunkDraws_) {
+                if (draw.objectIndex < 0 ||
+                    draw.objectIndex >= int(objects.size()) ||
+                    !objects[draw.objectIndex].collapsed) {
+                    continue;
+                }
+                commandList_->DrawIndexedInstanced(draw.indexCount, 1,
+                                                   draw.indexOffset);
+            }
+        }
+        commandList_->EndRenderPass();
+    }
 
     // The scene depth is now complete. Full-screen passes sample it, so they
     // use a dummy depth attachment and bind the real depth as a sampled image.

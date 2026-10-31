@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gfx/rhi/Rhi.h"
+#include "gfx/SceneRenderer.h"
 #include "scene/SceneTypes.h"
 #include "sim/ParticleSystem.h"
 #include "sim/VolumeBaker.h"
@@ -108,6 +109,11 @@ private:
 
     std::unique_ptr<ex::rhi::CommandList> commandList_;
     ex::rhi::Device* device_ = nullptr;
+    // Shared scene/shadow renderer. When ready it replaces the preview's own
+    // scene and chunk path, so both platforms use the same instancing, LOD and
+    // shadow logic.
+    ex::gfx::SceneRenderer sceneRenderer_;
+    bool sceneRendererReady_ = false;
     std::unique_ptr<ex::rhi::Texture> hdrTarget_;
     std::unique_ptr<ex::rhi::Texture> depthTarget_;
     // Screen-sized dummy depth used by the full-screen passes after the scene.
