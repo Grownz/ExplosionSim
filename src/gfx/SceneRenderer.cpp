@@ -247,6 +247,109 @@ void AddCone(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
 
 } // namespace
 
+SceneRenderer::ShadowConstants SceneRenderer::ComputeShadows(
+    const ShadowInput& input) {
+    using namespace DirectX;
+    ShadowConstants result{};
+
+    const float extent = std::max(input.sceneExtent, 60.0f);
+    const XMVECTOR sunDirection = XMVector3Normalize(
+        XMVectorSet(input.sunDirection.x, input.sunDirection.y,
+                    input.sunDirection.z, 0.0f));
+    const float nearPlane = std::max(input.nearPlane, 0.2f);
+    const float farPlane = std::max(
+        {extent * 2.0f, 320.0f, input.cameraDistance * 3.0f});
+    constexpr float kSplitLambda = 0.7f;
+    float splits[4] = {nearPlane, 0.0f, 0.0f, 0.0f};
+    for (int i = 1; i <= 3; ++i) {
+        const float p = float(i) / 3.0f;
+        const float logSplit = nearPlane * std::pow(farPlane / nearPlane, p);
+        const float uniform = nearPlane + (farPlane - nearPlane) * p;
+        splits[i] = kSplitLambda * logSplit + (1.0f - kSplitLambda) * uniform;
+    }
+
+    const XMMATRIX inverseView =
+        XMMatrixInverse(nullptr, XMLoadFloat4x4(&input.viewMatrix));
+    const float aspect = float(input.viewportWidth) /
+                         float(std::max(input.viewportHeight, 1));
+    const float tanY = std::tan(input.fovY * 0.5f);
+    const float tanX = tanY * aspect;
+    const XMVECTOR up = std::abs(XMVectorGetY(sunDirection)) > 0.95f
+                            ? XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f)
+                            : XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+
+    for (int cascade = 0; cascade < 3; ++cascade) {
+        // Overlap the next cascade backwards by the blend band so both maps
+        // cover the last 10 % of the previous cascade.
+        constexpr float kBlendWidth = 0.1f;
+        float nearZ = splits[cascade];
+        if (cascade > 0) {
+            nearZ = std::max(
+                splits[cascade - 1],
+                splits[cascade] -
+                    kBlendWidth * (splits[cascade] - splits[cascade - 1]));
+        }
+        XMVECTOR corners[8];
+        int corner = 0;
+        for (int side = 0; side < 2; ++side) {
+            const float z = side == 0 ? nearZ : splits[cascade + 1];
+            for (int sy = -1; sy <= 1; sy += 2) {
+                for (int sx = -1; sx <= 1; sx += 2) {
+                    corners[corner++] = XMVector3TransformCoord(
+                        XMVectorSet(sx * tanX * z, sy * tanY * z, z, 1.0f),
+                        inverseView);
+                }
+            }
+        }
+        XMVECTOR center = XMVectorZero();
+        for (int i = 0; i < 8; ++i) {
+            center += corners[i];
+        }
+        center /= 8.0f;
+        float radius = 2.0f;
+        for (int i = 0; i < 8; ++i) {
+            radius = std::max(
+                radius, XMVectorGetX(XMVector3Length(corners[i] - center)));
+        }
+        const XMVECTOR eye = center + sunDirection * (radius + 2.0f);
+        const XMMATRIX lightView = XMMatrixLookAtLH(eye, center, up);
+        const XMMATRIX lightProjection = XMMatrixOrthographicLH(
+            radius * 2.1f, radius * 2.1f, 0.1f, radius * 2.0f + 4.0f);
+        XMStoreFloat4x4(&result.lightViewProj[cascade],
+                        lightView * lightProjection);
+        (&result.cascadeSplits.x)[cascade] = splits[cascade + 1];
+        (&result.cascadeTexel.x)[cascade] =
+            1.0f / float(ShadowSize(cascade));
+        (&result.cascadeWorldTexel.x)[cascade] =
+            radius * 2.1f / float(ShadowSize(cascade));
+    }
+    result.cascadeSplits.w = farPlane;
+
+    // Static world-space map for the intact buildings. It covers the town and
+    // the longest shadows of its tallest buildings, and is independent of the
+    // camera, so it can be cached across frames.
+    const float sunY = std::max(XMVectorGetY(sunDirection), 0.2f);
+    const float shadowLength =
+        30.0f * std::sqrt(std::max(1.0f - sunY * sunY, 0.0f)) / sunY;
+    const float staticRadius =
+        std::max(extent * 1.2f, 60.0f) + 20.0f + shadowLength * 0.5f;
+    const XMVECTOR staticCenter = XMVectorSet(0.0f, 15.0f, 0.0f, 1.0f);
+    const XMVECTOR staticEye =
+        staticCenter + sunDirection * (staticRadius * 2.0f);
+    const XMMATRIX staticView =
+        XMMatrixLookAtLH(staticEye, staticCenter, up);
+    const XMMATRIX staticProjection = XMMatrixOrthographicLH(
+        staticRadius * 2.0f, staticRadius * 2.0f, 0.1f,
+        staticRadius * 4.0f);
+    XMStoreFloat4x4(&result.staticLightViewProj,
+                    staticView * staticProjection);
+    result.staticTexel = XMFLOAT4(
+        1.0f / float(kStaticShadowSize),
+        staticRadius * 2.0f / float(kStaticShadowSize),
+        0.05f / (staticRadius * 4.0f), 0.0f);
+    return result;
+}
+
 bool SceneRenderer::Initialize(rhi::Device* rhiDevice, const Shaders& shaders) {
     if (!rhiDevice) {
         return false;
@@ -974,6 +1077,47 @@ void SceneRenderer::UpdateChunkInstances(const scene::Scene& scene) {
     chunkInstanceBuffer_->Unmap();
 }
 
+void SceneRenderer::BindSceneResources(rhi::CommandList* commandList) {
+    if (!commandList) {
+        return;
+    }
+    commandList->BindShaderResource(shadowTexture_[0].get(),
+                                    rhi::ShaderStage::Pixel, 2);
+    commandList->BindShaderResource(shadowTexture_[1].get(),
+                                    rhi::ShaderStage::Pixel, 3);
+    commandList->BindShaderResource(shadowTexture_[2].get(),
+                                    rhi::ShaderStage::Pixel, 4);
+    commandList->BindShaderResource(staticShadowTexture_.get(),
+                                    rhi::ShaderStage::Pixel, 5);
+    commandList->BindSampler(shadowSampler_.get(), rhi::ShaderStage::Pixel, 2);
+
+    // Tiling grain for the procedural materials. The sampler is chosen by the
+    // anisotropic-filtering setting, so objects benefit from it as well.
+    commandList->BindShaderResource(surfaceDetailTexture_.get(),
+                                    rhi::ShaderStage::Pixel, 6);
+    commandList->BindSampler(frameSurfaceSampler_, rhi::ShaderStage::Pixel, 3);
+
+    // Caller-owned resources: frame/shadow constants and the smoke volume.
+    if (frameResources_.frameConstants) {
+        commandList->BindConstantBuffer(frameResources_.frameConstants,
+                                        rhi::ShaderStage::Vertex, 0);
+        commandList->BindConstantBuffer(frameResources_.frameConstants,
+                                        rhi::ShaderStage::Pixel, 0);
+    }
+    if (frameResources_.shadowConstants) {
+        commandList->BindConstantBuffer(frameResources_.shadowConstants,
+                                        rhi::ShaderStage::Pixel, 2);
+    }
+    if (frameResources_.volumeTexture) {
+        commandList->BindShaderResource(frameResources_.volumeTexture,
+                                        rhi::ShaderStage::Pixel, 7);
+    }
+    if (frameResources_.volumeSampler) {
+        commandList->BindSampler(frameResources_.volumeSampler,
+                                 rhi::ShaderStage::Pixel, 4);
+    }
+}
+
 void SceneRenderer::DrawChunks(rhi::CommandList* commandList,
                                const scene::Scene& scene, bool shadowPass) {
     if (!commandList || chunkDraws_.empty() || !chunkVertexBuffer_ ||
@@ -987,6 +1131,12 @@ void SceneRenderer::DrawChunks(rhi::CommandList* commandList,
     commandList->BindIndexBuffer(chunkIndexBuffer_.get());
     commandList->BindPipeline(shadowPass ? chunkShadowPipeline_.get()
                                          : chunkPipeline_.get());
+    if (shadowPass) {
+        commandList->BindConstantBuffer(shadowCascadeBuffer_.get(),
+                                        rhi::ShaderStage::Vertex, 3);
+    } else {
+        BindSceneResources(commandList);
+    }
     commandList->BindShaderResource(chunkInstanceBuffer_.get(),
                                     rhi::ShaderStage::Vertex, 1);
     for (const ChunkDraw& draw : chunkDraws_) {
@@ -1379,7 +1529,8 @@ void SceneRenderer::RenderScene(rhi::CommandList* commandList,
                                 const scene::Scene& scene,
                                 rhi::Texture* hdrTarget,
                                 rhi::Texture* depthTarget,
-                                rhi::Sampler* surfaceSampler) {
+                                rhi::Sampler* surfaceSampler,
+                                const FrameResources& frameResources) {
     if (!rhiDevice_ || !commandList || !hdrTarget || !depthTarget) {
         return;
     }
@@ -1387,26 +1538,14 @@ void SceneRenderer::RenderScene(rhi::CommandList* commandList,
         return;
     }
 
+    frameResources_ = frameResources;
+    frameSurfaceSampler_ = surfaceSampler;
+
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     commandList->BeginRenderPass(hdrTarget, depthTarget, false, false,
                                  clearColor);
     commandList->BindPipeline(scenePipeline_.get());
-
-    commandList->BindShaderResource(shadowTexture_[0].get(),
-                                    rhi::ShaderStage::Pixel, 2);
-    commandList->BindShaderResource(shadowTexture_[1].get(),
-                                    rhi::ShaderStage::Pixel, 3);
-    commandList->BindShaderResource(shadowTexture_[2].get(),
-                                    rhi::ShaderStage::Pixel, 4);
-    commandList->BindShaderResource(staticShadowTexture_.get(),
-                                    rhi::ShaderStage::Pixel, 5);
-    commandList->BindSampler(shadowSampler_.get(), rhi::ShaderStage::Pixel, 2);
-
-    // Tiling grain for the procedural materials. The sampler is chosen by the
-    // anisotropic-filtering setting, so objects benefit from it as well.
-    commandList->BindShaderResource(surfaceDetailTexture_.get(),
-                                    rhi::ShaderStage::Pixel, 6);
-    commandList->BindSampler(surfaceSampler, rhi::ShaderStage::Pixel, 3);
+    BindSceneResources(commandList);
 
     for (Mesh& mesh : meshes_) {
         if (mesh.instances.empty() || !mesh.instanceBuffer) {

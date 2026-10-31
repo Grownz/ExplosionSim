@@ -1928,103 +1928,21 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     // Computed unconditionally so the ground always has valid light matrices,
     // even when the procedural scene is disabled.
     {
-        const float sceneExtent =
-            simulation.Settings().scene.enabled ? simulation.Scene().Extent() : 0.0f;
-        const float extent = std::max(sceneExtent, 60.0f);
-        const XMVECTOR sunDirection =
-            XMVector3Normalize(XMVectorSet(frameConstants_.sunDirection.x,
-                                           frameConstants_.sunDirection.y,
-                                           frameConstants_.sunDirection.z, 0.0f));
-        const float nearPlane = std::max(camera.NearPlane(), 0.2f);
-        const float farPlane =
-            std::max({extent * 2.0f, 320.0f, camera.Distance() * 3.0f});
-        constexpr float kSplitLambda = 0.7f;
-        float splits[4] = {nearPlane, 0.0f, 0.0f, 0.0f};
-        for (int i = 1; i <= 3; ++i) {
-            const float p = float(i) / 3.0f;
-            const float logSplit = nearPlane * std::pow(farPlane / nearPlane, p);
-            const float uniform = nearPlane + (farPlane - nearPlane) * p;
-            splits[i] = kSplitLambda * logSplit + (1.0f - kSplitLambda) * uniform;
-        }
-
-        const XMMATRIX inverseView = XMMatrixInverse(nullptr, camera.ViewMatrix());
-        const float aspect =
-            float(hdr_.width) / float(std::max(hdr_.height, 1));
-        const float tanY = std::tan(camera.FovY() * 0.5f);
-        const float tanX = tanY * aspect;
-        const XMVECTOR up = std::abs(XMVectorGetY(sunDirection)) > 0.95f
-                                ? XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f)
-                                : XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-
-        for (int cascade = 0; cascade < 3; ++cascade) {
-            // Overlap the next cascade backwards by the blend band so both
-            // maps cover the last 10 % of the previous cascade.
-            constexpr float kBlendWidth = 0.1f;
-            float nearZ = splits[cascade];
-            if (cascade > 0) {
-                nearZ = std::max(
-                    splits[cascade - 1],
-                    splits[cascade] - kBlendWidth *
-                                          (splits[cascade] - splits[cascade - 1]));
-            }
-            XMVECTOR corners[8];
-            int corner = 0;
-            for (int side = 0; side < 2; ++side) {
-                const float z = side == 0 ? nearZ : splits[cascade + 1];
-                for (int sy = -1; sy <= 1; sy += 2) {
-                    for (int sx = -1; sx <= 1; sx += 2) {
-                        corners[corner++] = XMVector3TransformCoord(
-                            XMVectorSet(sx * tanX * z, sy * tanY * z, z, 1.0f),
-                            inverseView);
-                    }
-                }
-            }
-            XMVECTOR center = XMVectorZero();
-            for (int i = 0; i < 8; ++i) {
-                center += corners[i];
-            }
-            center /= 8.0f;
-            float radius = 2.0f;
-            for (int i = 0; i < 8; ++i) {
-                radius = std::max(
-                    radius, XMVectorGetX(XMVector3Length(corners[i] - center)));
-            }
-            const XMVECTOR eye = center + sunDirection * (radius + 2.0f);
-            const XMMATRIX lightView = XMMatrixLookAtLH(eye, center, up);
-            const XMMATRIX lightProjection = XMMatrixOrthographicLH(
-                radius * 2.1f, radius * 2.1f, 0.1f, radius * 2.0f + 4.0f);
-            XMStoreFloat4x4(&shadowConstants_.lightViewProj[cascade],
-                            lightView * lightProjection);
-            (&shadowConstants_.cascadeSplits.x)[cascade] = splits[cascade + 1];
-            (&shadowConstants_.cascadeTexels.x)[cascade] =
-                1.0f / float(SceneRenderer::ShadowSize(cascade));
-            (&shadowConstants_.cascadeWorldTexels.x)[cascade] =
-                radius * 2.1f / float(SceneRenderer::ShadowSize(cascade));
-        }
-        shadowConstants_.cascadeSplits.w = farPlane;
-
-        // Static world-space map for the intact buildings. It covers the town
-        // and the longest shadows of its tallest buildings, and is independent
-        // of the camera, so it can be cached across frames.
-        const float sunY = std::max(XMVectorGetY(sunDirection), 0.2f);
-        const float shadowLength =
-            30.0f * std::sqrt(std::max(1.0f - sunY * sunY, 0.0f)) / sunY;
-        const float staticRadius =
-            std::max(extent * 1.2f, 60.0f) + 20.0f + shadowLength * 0.5f;
-        const XMVECTOR staticCenter = XMVectorSet(0.0f, 15.0f, 0.0f, 1.0f);
-        const XMVECTOR staticEye =
-            staticCenter + sunDirection * (staticRadius * 2.0f);
-        const XMMATRIX staticView =
-            XMMatrixLookAtLH(staticEye, staticCenter, up);
-        const XMMATRIX staticProjection = XMMatrixOrthographicLH(
-            staticRadius * 2.0f, staticRadius * 2.0f, 0.1f,
-            staticRadius * 4.0f);
-        XMStoreFloat4x4(&shadowConstants_.staticLightViewProj,
-                        staticView * staticProjection);
-        shadowConstants_.staticTexel = XMFLOAT4(
-            1.0f / float(SceneRenderer::kStaticShadowSize),
-            staticRadius * 2.0f / float(SceneRenderer::kStaticShadowSize),
-            0.05f / (staticRadius * 4.0f), 0.0f);
+        SceneRenderer::ShadowInput shadowInput{};
+        XMStoreFloat4x4(&shadowInput.viewMatrix, camera.ViewMatrix());
+        shadowInput.sunDirection =
+            XMFLOAT3(frameConstants_.sunDirection.x,
+                     frameConstants_.sunDirection.y,
+                     frameConstants_.sunDirection.z);
+        shadowInput.nearPlane = camera.NearPlane();
+        shadowInput.fovY = camera.FovY();
+        shadowInput.cameraDistance = camera.Distance();
+        shadowInput.viewportWidth = hdr_.width;
+        shadowInput.viewportHeight = hdr_.height;
+        shadowInput.sceneExtent =
+            simulation.Settings().scene.enabled ? simulation.Scene().Extent()
+                                                : 0.0f;
+        shadowConstants_ = SceneRenderer::ComputeShadows(shadowInput);
 
         D3D11_MAPPED_SUBRESOURCE shadowMapped{};
         if (SUCCEEDED(context->Map(shadowConstantBuffer_.Get(), 0,

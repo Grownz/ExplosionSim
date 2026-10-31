@@ -263,16 +263,7 @@ private:
     FrameConstants frameConstants_{};
     BloomConstants bloomConstants_{};
 
-    struct ShadowConstants {
-        DirectX::XMFLOAT4X4 lightViewProj[3]{};
-        // Camera-independent world-space projection for the cached static
-        // casters (intact buildings).
-        DirectX::XMFLOAT4X4 staticLightViewProj{};
-        DirectX::XMFLOAT4 cascadeSplits{};
-        DirectX::XMFLOAT4 cascadeTexels{};      // 1 / shadow map size
-        DirectX::XMFLOAT4 cascadeWorldTexels{}; // world size of one texel
-        DirectX::XMFLOAT4 staticTexel{};        // x = 1/size, y = world texel, z = depth bias
-    };
+    using ShadowConstants = SceneRenderer::ShadowConstants;
     ShadowConstants shadowConstants_{};
 
     ComPtr<ID3D11Buffer> particleBufferAdditive_;
