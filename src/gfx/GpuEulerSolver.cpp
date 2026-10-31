@@ -111,10 +111,13 @@ bool GpuEulerSolver::CreateComputeShaders() {
     auto renderBlob = compile(L"assets\\shaders\\euler_render.hlsl", "CSRender");
     auto rescaleBlob = compile(L"assets\\shaders\\euler_rescale.hlsl", "CSRescale");
     auto lightBlob = compile(L"assets\\shaders\\euler_light.hlsl", "CSLight");
+    auto bodyFlowBlob =
+        compile(L"assets\\shaders\\euler_bodyflow.hlsl", "CSBodyFlow");
 
     if (!initBlob || !sweepXBlob || !sweepYBlob || !sweepZBlob ||
         !sweepXSourceBlob || !sweepYSourceBlob || !sweepZSourceBlob ||
-        !reduceBlob || !renderBlob || !rescaleBlob || !lightBlob) {
+        !reduceBlob || !renderBlob || !rescaleBlob || !lightBlob ||
+        !bodyFlowBlob) {
         LogError("High-fidelity solver: shader compilation failed.");
         return false;
     }
@@ -139,6 +142,10 @@ bool GpuEulerSolver::CreateComputeShaders() {
     }
     if (!create(lightBlob.Get(), lightShader_)) {
         LogError("High-fidelity solver: failed to create the light shader object.");
+        return false;
+    }
+    if (!create(bodyFlowBlob.Get(), bodyFlowShader_)) {
+        LogError("High-fidelity solver: failed to create the body-flow shader.");
         return false;
     }
     return true;
@@ -194,6 +201,20 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
     queryDesc.Query = D3D11_QUERY_EVENT;
     if (FAILED(device_->CreateQuery(&queryDesc, &reduceQuery_))) {
         LogError("High-fidelity solver: reduction query creation failed.");
+        return false;
+    }
+
+    // The body-flow pass shares the solver constant buffer layout but writes
+    // into a small dedicated buffer so the ring of sweep constants is not
+    // disturbed.
+    D3D11_BUFFER_DESC bodyConstantsDesc{};
+    bodyConstantsDesc.ByteWidth = sizeof(Constants);
+    bodyConstantsDesc.Usage = D3D11_USAGE_DYNAMIC;
+    bodyConstantsDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    bodyConstantsDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    if (FAILED(device_->CreateBuffer(&bodyConstantsDesc, nullptr,
+                                     &bodyFlowConstants_))) {
+        LogError("High-fidelity solver: body-flow constants creation failed.");
         return false;
     }
 
@@ -254,41 +275,198 @@ bool GpuEulerSolver::CreateTextures(int resolution) {
 }
 
 bool GpuEulerSolver::CreateSolidMask() {
-    solidMaskResolution_ = std::clamp(std::min(resolution_, 128), 8, 128);
-    const std::vector<float> mask =
-        sim::VoxelizeObstacles(obstacles_, bounds_, solidMaskResolution_);
+    // Per-frame updates favour a small mask: 64^3 RGBA16F is 2 MB.
+    const int maskResolution = std::clamp(std::min(resolution_, 64), 8, 64);
+    const std::vector<uint16_t> mask =
+        sim::VoxelizeObstacleVelocityMask(obstacles_, bounds_, maskResolution);
+    const UINT rowPitch = UINT(maskResolution * 4u * sizeof(uint16_t));
+    const size_t sliceBytes = size_t(rowPitch) * size_t(maskResolution);
 
-    solidMask_.Reset();
-    D3D11_TEXTURE3D_DESC desc{};
-    desc.Width = UINT(solidMaskResolution_);
-    desc.Height = UINT(solidMaskResolution_);
-    desc.Depth = UINT(solidMaskResolution_);
-    desc.MipLevels = 1;
-    desc.Format = DXGI_FORMAT_R32_FLOAT;
-    desc.Usage = D3D11_USAGE_IMMUTABLE;
-    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-    D3D11_SUBRESOURCE_DATA data{};
-    data.pSysMem = mask.data();
-    data.SysMemPitch = UINT(solidMaskResolution_ * sizeof(float));
-    data.SysMemSlicePitch =
-        UINT(solidMaskResolution_ * solidMaskResolution_ * sizeof(float));
-    if (FAILED(device_->CreateTexture3D(&desc, &data, &solidMask_.texture))) {
-        LogError("High-fidelity solver: solid mask creation failed.");
+    if (!solidMask_.texture || solidMaskResolution_ != maskResolution) {
+        solidMask_.Reset();
+        D3D11_TEXTURE3D_DESC desc{};
+        desc.Width = UINT(maskResolution);
+        desc.Height = UINT(maskResolution);
+        desc.Depth = UINT(maskResolution);
+        desc.MipLevels = 1;
+        desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        desc.Usage = D3D11_USAGE_DYNAMIC;
+        desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+        desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(device_->CreateTexture3D(&desc, nullptr, &solidMask_.texture))) {
+            LogError("High-fidelity solver: solid mask creation failed.");
+            return false;
+        }
+        if (FAILED(device_->CreateShaderResourceView(solidMask_.texture.Get(),
+                                                     nullptr, &solidMask_.srv))) {
+            LogError("High-fidelity solver: solid mask view creation failed.");
+            return false;
+        }
+        solidMaskResolution_ = maskResolution;
+    }
+
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context_->Map(solidMask_.texture.Get(), 0,
+                             D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
         return false;
     }
-    if (FAILED(device_->CreateShaderResourceView(solidMask_.texture.Get(), nullptr,
-                                                 &solidMask_.srv))) {
-        LogError("High-fidelity solver: solid mask view creation failed.");
-        return false;
+    const size_t depthPitch =
+        mapped.DepthPitch ? size_t(mapped.DepthPitch)
+                          : size_t(mapped.RowPitch) * size_t(maskResolution);
+    const uint8_t* source = reinterpret_cast<const uint8_t*>(mask.data());
+    for (int z = 0; z < maskResolution; ++z) {
+        std::memcpy(static_cast<uint8_t*>(mapped.pData) + depthPitch * size_t(z),
+                    source + sliceBytes * size_t(z), sliceBytes);
     }
+    context_->Unmap(solidMask_.texture.Get(), 0);
     return true;
 }
 
 void GpuEulerSolver::SetObstacles(const std::vector<sim::ObstacleBox>& obstacles) {
+    if (sim::SameObstacles(obstacles, obstacles_)) {
+        return;
+    }
     obstacles_ = obstacles;
     if (hasVolume_) {
         CreateSolidMask();
     }
+}
+
+bool GpuEulerSolver::CreateBodyBuffers(int capacity) {
+    const int rounded = std::max(256, (capacity + 255) / 256 * 256);
+    const UINT stride = sizeof(float) * 4;
+    const UINT bytes = UINT(rounded) * stride;
+
+    D3D11_BUFFER_DESC desc{};
+    desc.ByteWidth = bytes;
+    desc.Usage = D3D11_USAGE_DYNAMIC;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    desc.StructureByteStride = stride;
+    bodyPositionBuffer_.Reset();
+    bodyPositionSRV_.Reset();
+    if (FAILED(device_->CreateBuffer(&desc, nullptr, &bodyPositionBuffer_))) {
+        LogError("High-fidelity solver: body buffer creation failed.");
+        return false;
+    }
+    if (FAILED(device_->CreateShaderResourceView(bodyPositionBuffer_.Get(),
+                                                 nullptr, &bodyPositionSRV_))) {
+        LogError("High-fidelity solver: body buffer view creation failed.");
+        return false;
+    }
+
+    desc = {};
+    desc.ByteWidth = bytes;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    desc.StructureByteStride = stride;
+    bodyFlowBuffer_.Reset();
+    bodyFlowUAV_.Reset();
+    if (FAILED(device_->CreateBuffer(&desc, nullptr, &bodyFlowBuffer_))) {
+        LogError("High-fidelity solver: body-flow buffer creation failed.");
+        return false;
+    }
+    if (FAILED(device_->CreateUnorderedAccessView(bodyFlowBuffer_.Get(), nullptr,
+                                                  &bodyFlowUAV_))) {
+        LogError("High-fidelity solver: body-flow UAV creation failed.");
+        return false;
+    }
+
+    desc = {};
+    desc.ByteWidth = bytes;
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    desc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+    desc.StructureByteStride = stride;
+    bodyFlowStaging_.Reset();
+    if (FAILED(device_->CreateBuffer(&desc, nullptr, &bodyFlowStaging_))) {
+        LogError("High-fidelity solver: body-flow staging creation failed.");
+        return false;
+    }
+    bodyCapacity_ = rounded;
+    return true;
+}
+
+void GpuEulerSolver::SetFlowBodies(const std::vector<sim::FlowBody>& bodies) {
+    bodyCount_ = 0;
+    if (bodies.empty() || !bodyFlowShader_) {
+        return;
+    }
+    if (int(bodies.size()) > bodyCapacity_ &&
+        !CreateBodyBuffers(int(bodies.size()))) {
+        return;
+    }
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context_->Map(bodyPositionBuffer_.Get(), 0,
+                             D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        return;
+    }
+    float* destination = static_cast<float*>(mapped.pData);
+    for (size_t i = 0; i < bodies.size(); ++i) {
+        destination[i * 4 + 0] = bodies[i].position.x;
+        destination[i * 4 + 1] = bodies[i].position.y;
+        destination[i * 4 + 2] = bodies[i].position.z;
+        destination[i * 4 + 3] = 1.0f;
+    }
+    context_->Unmap(bodyPositionBuffer_.Get(), 0);
+    bodyCount_ = int(bodies.size());
+}
+
+void GpuEulerSolver::DispatchBodyFlow() {
+    if (bodyCount_ <= 0 || !bodyFlowShader_ || !bodyFlowConstants_ ||
+        !bodyPositionSRV_ || !bodyFlowUAV_ || !bodyFlowStaging_) {
+        return;
+    }
+    // The pass only needs the grid and the domain minimum; the shader declares
+    // that prefix of the solver constants.
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (SUCCEEDED(context_->Map(bodyFlowConstants_.Get(), 0,
+                                D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        std::memcpy(mapped.pData, &constants_,
+                    std::min(sizeof(Constants), size_t(32)));
+        context_->Unmap(bodyFlowConstants_.Get(), 0);
+    }
+
+    context_->CSSetShader(bodyFlowShader_.Get(), nullptr, 0);
+    ID3D11Buffer* constants = bodyFlowConstants_.Get();
+    context_->CSSetConstantBuffers(0, 1, &constants);
+    ID3D11ShaderResourceView* state = stateA_[stateIndex_].srv.Get();
+    context_->CSSetShaderResources(0, 1, &state);
+    ID3D11ShaderResourceView* positions = bodyPositionSRV_.Get();
+    context_->CSSetShaderResources(4, 1, &positions);
+    ID3D11UnorderedAccessView* output = bodyFlowUAV_.Get();
+    context_->CSSetUnorderedAccessViews(4, 1, &output, nullptr);
+
+    context_->Dispatch(UINT((bodyCount_ + 63) / 64), 1, 1);
+
+    ID3D11UnorderedAccessView* nullUAV = nullptr;
+    context_->CSSetUnorderedAccessViews(4, 1, &nullUAV, nullptr);
+    ID3D11ShaderResourceView* nullSRV = nullptr;
+    context_->CSSetShaderResources(4, 1, &nullSRV);
+    context_->CSSetShader(nullptr, nullptr, 0);
+    context_->CopyResource(bodyFlowStaging_.Get(), bodyFlowBuffer_.Get());
+}
+
+void GpuEulerSolver::ConsumeBodyFlow(std::vector<sim::BodyFlowSample>& samples) {
+    samples.clear();
+    if (bodyCount_ <= 0 || !bodyFlowStaging_) {
+        return;
+    }
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (FAILED(context_->Map(bodyFlowStaging_.Get(), 0, D3D11_MAP_READ, 0,
+                             &mapped))) {
+        return;
+    }
+    const float* source = static_cast<const float*>(mapped.pData);
+    samples.resize(size_t(bodyCount_));
+    for (int i = 0; i < bodyCount_; ++i) {
+        const float* entry = source + size_t(i) * 4;
+        samples[size_t(i)].density = entry[0];
+        samples[size_t(i)].velocity = XMFLOAT3(entry[1], entry[2], entry[3]);
+    }
+    context_->Unmap(bodyFlowStaging_.Get(), 0);
 }
 
 void GpuEulerSolver::ReleaseVolumeResources() {
@@ -312,6 +490,14 @@ void GpuEulerSolver::Shutdown() {
     reduceQuery_.Reset();
     maxSpeedUAV_.Reset();
     maxSpeedBuffer_.Reset();
+    bodyFlowStaging_.Reset();
+    bodyFlowUAV_.Reset();
+    bodyFlowBuffer_.Reset();
+    bodyPositionSRV_.Reset();
+    bodyPositionBuffer_.Reset();
+    bodyFlowConstants_.Reset();
+    bodyCount_ = 0;
+    bodyCapacity_ = 0;
     for (auto& buffer : constantBuffers_) {
         buffer.Reset();
     }
@@ -320,6 +506,7 @@ void GpuEulerSolver::Shutdown() {
     renderShader_.Reset();
     reduceShader_.Reset();
     lightShader_.Reset();
+    bodyFlowShader_.Reset();
     for (auto& shader : sweepShaders_) {
         shader.Reset();
     }
@@ -753,6 +940,10 @@ void GpuEulerSolver::Step(int steps) {
             DispatchReduce();
         }
     }
+
+    // Sample the flow at the dynamic bodies once per frame, after the state has
+    // settled. The readback is consumed by the app for the drag impulses.
+    DispatchBodyFlow();
 
     stats_.active = true;
     stats_.resolution = resolution_;

@@ -52,7 +52,7 @@ void CSLight(uint3 id : SV_DispatchThreadID)
         const int3 maskCell = clamp(
             int3(maskUvw * float3(maskSize)), int3(0, 0, 0),
             int3(maskSize) - 1);
-        if (SolidMask.Load(int4(maskCell, 0)).r > 0.5)
+        if (SolidMask.Load(int4(maskCell, 0)).a > 0.5)
         {
             LightVolume[id] = 0.0;
             return;

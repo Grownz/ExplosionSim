@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "gfx/EulerSolverTypes.h"
+#include "sim/FlowBodies.h"
 #include "sim/Obstacles.h"
 #include "gfx/GfxDevice.h"
 #include "sim/VolumeBaker.h"
@@ -27,6 +28,10 @@ public:
     bool Reset(const EulerConfig& config);
     // Solid boxes for the flow-around variant.
     void SetObstacles(const std::vector<sim::ObstacleBox>& obstacles);
+    // Dynamic bodies sampled for the 4C drag coupling. The order is reflected
+    // by ConsumeBodyFlow.
+    void SetFlowBodies(const std::vector<sim::FlowBody>& bodies);
+    void ConsumeBodyFlow(std::vector<sim::BodyFlowSample>& samples);
     void Step(int steps);
     void UpdateRenderVolume();
     // Precomputes the sun transmittance volume for the volume raymarcher.
@@ -120,6 +125,8 @@ private:
     bool CreateTextures(int resolution);
     bool CreateSolidMask();
     bool CreateAuxiliaryResources();
+    bool CreateBodyBuffers(int capacity);
+    void DispatchBodyFlow();
     void ReleaseVolumeResources();
     void UpdateConstants(int direction, float dt);
     void BindStateSRV(int index);
@@ -154,6 +161,7 @@ private:
     ComPtr<ID3D11ComputeShader> renderShader_;
     ComPtr<ID3D11ComputeShader> rescaleShader_;
     ComPtr<ID3D11ComputeShader> lightShader_;
+    ComPtr<ID3D11ComputeShader> bodyFlowShader_;
 
     ComPtr<ID3D11Buffer> constantBuffers_[kConstantBufferCount];
     int constantBufferIndex_ = 0;
@@ -173,6 +181,15 @@ private:
     ComPtr<ID3D11Buffer> maxSpeedBuffer_;
     ComPtr<ID3D11UnorderedAccessView> maxSpeedUAV_;
     ComPtr<ID3D11Buffer> maxSpeedStaging_;
+    // 4C drag: body positions in, sampled flow out, plus a staging copy.
+    ComPtr<ID3D11Buffer> bodyPositionBuffer_;
+    ComPtr<ID3D11ShaderResourceView> bodyPositionSRV_;
+    ComPtr<ID3D11Buffer> bodyFlowBuffer_;
+    ComPtr<ID3D11UnorderedAccessView> bodyFlowUAV_;
+    ComPtr<ID3D11Buffer> bodyFlowStaging_;
+    ComPtr<ID3D11Buffer> bodyFlowConstants_;
+    int bodyCapacity_ = 0;
+    int bodyCount_ = 0;
     ComPtr<ID3D11Query> reduceQuery_;
     bool reducePending_ = false;
     bool deterministic_ = false;

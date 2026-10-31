@@ -179,6 +179,7 @@ public:
     std::vector<SceneFireSpawn> ConsumeFireSpawns();
     std::vector<SceneEmberSpawn> ConsumeEmberSpawns();
 
+    PhysicsWorld& Physics() { return physics_; }
     const PhysicsWorld& Physics() const { return physics_; }
 
 private:

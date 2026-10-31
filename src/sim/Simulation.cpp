@@ -448,6 +448,47 @@ void Simulation::AdvanceExternal(double dtSim, double realDt) {
     realTime_ += realDt >= 0.0 ? realDt : dtSim;
 }
 
+std::vector<ObstacleBox> Simulation::CollectSolverObstacles(
+    const VolumeBounds& bounds) const {
+    std::vector<ObstacleBox> boxes = SceneObstacles(scene_);
+    std::vector<ObstacleBox> bodies = PhysicsObstacles(scene_.Physics(), bounds);
+    boxes.insert(boxes.end(), bodies.begin(), bodies.end());
+    return boxes;
+}
+
+std::vector<FlowBody> Simulation::CollectFlowBodies(
+    const VolumeBounds& bounds) const {
+    std::vector<FlowBody> flow;
+    const std::vector<scene::RigidBody>& rigid = scene_.Physics().Bodies();
+    for (int i = 0; i < int(rigid.size()); ++i) {
+        const scene::RigidBody& body = rigid[i];
+        if (body.isStatic) {
+            continue;
+        }
+        if (body.position.x < bounds.min.x || body.position.x > bounds.max.x ||
+            body.position.y < bounds.min.y || body.position.y > bounds.max.y ||
+            body.position.z < bounds.min.z || body.position.z > bounds.max.z) {
+            continue;
+        }
+        FlowBody entry;
+        entry.position = body.position;
+        entry.velocity = body.velocity;
+        entry.halfExtents = body.halfExtents;
+        entry.orientation = body.orientation;
+        entry.physicsIndex = i;
+        flow.push_back(entry);
+    }
+    return flow;
+}
+
+void Simulation::ApplyBodyDrag(const std::vector<FlowBody>& bodies,
+                               const std::vector<BodyFlowSample>& samples,
+                               float dt) {
+    if (settings_.solverBodyDrag) {
+        ex::sim::ApplyBodyDrag(scene_.Physics(), bodies, samples, dt);
+    }
+}
+
 void Simulation::UpdateScene(double dtSim) {
     if (sceneGenerating_.load(std::memory_order_acquire)) {
         return;

@@ -1408,7 +1408,7 @@ namespace {
 void ApplySolverObstacles(GpuEulerSolver& solver,
                           const sim::Simulation& simulation) {
     if (simulation.Settings().solverFlowAround) {
-        solver.SetObstacles(sim::SceneObstacles(simulation.Scene()));
+        solver.SetObstacles(simulation.CollectSolverObstacles(solver.Bounds()));
     } else {
         solver.SetObstacles({});
     }
@@ -1442,6 +1442,20 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
     }
 
     MaybeExpandSolver(simulation);
+    // The wall mask follows the debris, so refresh it every other frame. The
+    // solver skips the upload when nothing moved.
+    if (++solverObstacleFrame_ >= 2) {
+        solverObstacleFrame_ = 0;
+        ApplySolverObstacles(solver_, simulation);
+    }
+
+    // 4C drag: upload the dynamic body positions before stepping and apply the
+    // sampled flow after the frame's steps.
+    std::vector<sim::FlowBody> flowBodies;
+    if (simulation.Settings().solverBodyDrag) {
+        flowBodies = simulation.CollectFlowBodies(solver_.Bounds());
+    }
+    solver_.SetFlowBodies(flowBodies);
 
     // The playback time scale is the target: at 1.0 the solver advances one
     // simulated second per real second. The solver's CFL step is smaller, so
@@ -1483,6 +1497,11 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
         // longer does this, so several Step() calls share a single pass.
         solver_.UpdateRenderVolume();
     }
+    if (!flowBodies.empty() && advancedTotal > 0.0) {
+        std::vector<sim::BodyFlowSample> samples;
+        solver_.ConsumeBodyFlow(samples);
+        simulation.ApplyBodyDrag(flowBodies, samples, float(advancedTotal));
+    }
     return advancedTotal;
 }
 
@@ -1501,7 +1520,13 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
     int guard = 0;
     while (solver_.Stats().time < targetTime && guard++ < 4096) {
         MaybeExpandSolver(simulation);
+        ApplySolverObstacles(solver_, simulation);
         UpdatePlumeModel(simulation);
+        std::vector<sim::FlowBody> flowBodies;
+        if (simulation.Settings().solverBodyDrag) {
+            flowBodies = simulation.CollectFlowBodies(solver_.Bounds());
+        }
+        solver_.SetFlowBodies(flowBodies);
         solver_.Step(16);
 
         // Keep the analytic model in sync so the ground effects, dust and the
@@ -1510,6 +1535,11 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
         const double advance = solver_.ConsumeAdvance();
         if (advance > 0.0) {
             simulation.AdvanceExternal(advance);
+        }
+        if (!flowBodies.empty() && advance > 0.0) {
+            std::vector<sim::BodyFlowSample> samples;
+            solver_.ConsumeBodyFlow(samples);
+            simulation.ApplyBodyDrag(flowBodies, samples, float(advance));
         }
 
         const double elapsed = std::chrono::duration<double>(
@@ -1544,15 +1574,26 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
     const auto start = std::chrono::steady_clock::now();
     while (solver_.Stats().steps < targetSteps) {
         MaybeExpandSolver(simulation);
+        ApplySolverObstacles(solver_, simulation);
 
         const long long remaining = targetSteps - solver_.Stats().steps;
         const int batch = int(std::min<long long>(remaining, 16));
         UpdatePlumeModel(simulation);
+        std::vector<sim::FlowBody> flowBodies;
+        if (simulation.Settings().solverBodyDrag) {
+            flowBodies = simulation.CollectFlowBodies(solver_.Bounds());
+        }
+        solver_.SetFlowBodies(flowBodies);
         solver_.Step(batch);
 
         const double advance = solver_.ConsumeAdvance();
         if (advance > 0.0) {
             simulation.AdvanceExternal(advance);
+        }
+        if (!flowBodies.empty() && advance > 0.0) {
+            std::vector<sim::BodyFlowSample> samples;
+            solver_.ConsumeBodyFlow(samples);
+            simulation.ApplyBodyDrag(flowBodies, samples, float(advance));
         }
 
         const double elapsed = std::chrono::duration<double>(

@@ -69,6 +69,13 @@ const DescriptorBinding kRescaleBindings[] = {
     {22, DescriptorType::StorageImage, 1, ShaderStage::Compute, 4},
 };
 
+const DescriptorBinding kBodyFlowBindings[] = {
+    {0, DescriptorType::UniformBuffer, 1, ShaderStage::Compute, 4},
+    {8, DescriptorType::SampledImage, 1, ShaderStage::Compute, 4},
+    {30, DescriptorType::StorageBuffer, 1, ShaderStage::Compute, 4},
+    {31, DescriptorType::StorageBuffer, 1, ShaderStage::Compute, 4},
+};
+
 } // namespace
 
 bool RhiEulerSolver::Initialize(ex::rhi::Device* device, const Shaders& shaders) {
@@ -103,6 +110,10 @@ bool RhiEulerSolver::Initialize(ex::rhi::Device* device, const Shaders& shaders)
         LogError("High-fidelity solver: RHI resource creation failed.");
         return false;
     }
+    if (!CreateBodyBuffers()) {
+        LogError("High-fidelity solver: body buffers could not be created.");
+        return false;
+    }
 
     struct PassDesc {
         const ShaderSource* source;
@@ -134,6 +145,8 @@ bool RhiEulerSolver::Initialize(ex::rhi::Device* device, const Shaders& shaders)
          &lightPipeline_},
         {&shaders.rescale, "CSRescale", kRescaleBindings, 7, &rescaleShader_,
          &rescalePipeline_},
+        {&shaders.bodyFlow, "CSBodyFlow", kBodyFlowBindings, 4,
+         &bodyflowShader_, &bodyflowPipeline_},
     };
     for (const PassDesc& pass : passes) {
         if (!CreatePipeline(*pass.source, pass.name, pass.bindings,
@@ -178,8 +191,12 @@ void RhiEulerSolver::Shutdown() {
     timingPool_.reset();
     timingLabels_.clear();
     reduceBuffer_.reset();
+    bodyFlowBuffer_.reset();
+    bodyPositionBuffer_.reset();
+    bodyCount_ = 0;
     linearSampler_.reset();
     constantsBuffer_.reset();
+    bodyflowPipeline_.reset();
     rescalePipeline_.reset();
     lightPipeline_.reset();
     renderPipeline_.reset();
@@ -191,6 +208,7 @@ void RhiEulerSolver::Shutdown() {
         pipeline.reset();
     }
     initPipeline_.reset();
+    bodyflowShader_.reset();
     rescaleShader_.reset();
     lightShader_.reset();
     renderShader_.reset();
@@ -242,14 +260,14 @@ bool RhiEulerSolver::CreateTextures(int resolution) {
 
     if (!solidMask_) {
         // Placeholder until Reset() builds the real mask from the bounds.
-        const float zero = 0.0f;
+        const uint16_t zero[4] = {};
         ex::rhi::TextureDesc desc{};
-        desc.format = ex::rhi::Format::R32_FLOAT;
+        desc.format = ex::rhi::Format::R16G16B16A16_FLOAT;
         desc.width = 1;
         desc.height = 1;
         desc.depth = 1;
         desc.usage = ex::rhi::TextureUsage::Sampled;
-        desc.initialData = &zero;
+        desc.initialData = zero;
         solidMask_ = device_->CreateTexture(desc);
         if (!solidMask_) {
             LogError("High-fidelity solver: solid mask creation failed.");
@@ -284,17 +302,23 @@ bool RhiEulerSolver::CreateTextures(int resolution) {
 }
 
 bool RhiEulerSolver::CreateSolidMask() {
-    // The mask uses a capped resolution: a 512^3 R32F volume would need 512 MB
-    // for a field that is only used as a binary obstacle test.
-    solidMaskResolution_ = std::clamp(std::min(resolution_, 128), 8, 128);
-    const std::vector<float> mask =
-        sim::VoxelizeObstacles(obstacles_, bounds_, solidMaskResolution_);
+    // The mask is uploaded every few frames, so it uses a capped resolution:
+    // 64^3 RGBA16F is 2 MB per upload instead of 16 MB at 128^3, and the clip
+    // only needs to resolve building-sized walls.
+    const int maskResolution = std::clamp(std::min(resolution_, 64), 8, 64);
+    const std::vector<uint16_t> mask =
+        sim::VoxelizeObstacleVelocityMask(obstacles_, bounds_, maskResolution);
+
+    if (solidMask_ && solidMaskResolution_ == maskResolution) {
+        // Same texture and descriptor; only the contents move.
+        return solidMask_->Update(mask.data());
+    }
 
     ex::rhi::TextureDesc desc{};
-    desc.format = ex::rhi::Format::R32_FLOAT;
-    desc.width = uint32_t(solidMaskResolution_);
-    desc.height = uint32_t(solidMaskResolution_);
-    desc.depth = uint32_t(solidMaskResolution_);
+    desc.format = ex::rhi::Format::R16G16B16A16_FLOAT;
+    desc.width = uint32_t(maskResolution);
+    desc.height = uint32_t(maskResolution);
+    desc.depth = uint32_t(maskResolution);
     desc.usage = ex::rhi::TextureUsage::Sampled;
     desc.initialData = mask.data();
     solidMask_ = device_->CreateTexture(desc);
@@ -302,6 +326,7 @@ bool RhiEulerSolver::CreateSolidMask() {
         LogError("High-fidelity solver: solid mask creation failed.");
         return false;
     }
+    solidMaskResolution_ = maskResolution;
     commandList_->BeginCompute();
     commandList_->TransitionTexture(solidMask_.get(),
                                     ex::rhi::TextureState::ShaderRead);
@@ -310,13 +335,83 @@ bool RhiEulerSolver::CreateSolidMask() {
 }
 
 void RhiEulerSolver::SetObstacles(const std::vector<sim::ObstacleBox>& obstacles) {
+    if (sim::SameObstacles(obstacles, obstacles_)) {
+        return;
+    }
     obstacles_ = obstacles;
     if (!initialized_ || resolution_ == 0) {
         return;
     }
+    ex::rhi::Texture* before = solidMask_.get();
     if (CreateSolidMask()) {
-        CreateDescriptorSets();
+        if (solidMask_.get() != before) {
+            CreateDescriptorSets();
+        }
     }
+}
+
+bool RhiEulerSolver::CreateBodyBuffers() {
+    ex::rhi::BufferDesc desc{};
+    desc.size = uint64_t(kMaxFlowBodies) * 16u;
+    desc.usage = ex::rhi::BufferUsage::Storage | ex::rhi::BufferUsage::Dynamic;
+    desc.structureStride = 16;
+    bodyPositionBuffer_ = device_->CreateBuffer(desc);
+    bodyFlowBuffer_ = device_->CreateBuffer(desc);
+    return bodyPositionBuffer_ && bodyFlowBuffer_;
+}
+
+void RhiEulerSolver::SetFlowBodies(const std::vector<sim::FlowBody>& bodies) {
+    bodyCount_ = 0;
+    if (!bodyPositionBuffer_ || bodies.empty()) {
+        return;
+    }
+    const int count = std::min(int(bodies.size()), kMaxFlowBodies);
+    void* mapped = bodyPositionBuffer_->Map();
+    if (!mapped) {
+        return;
+    }
+    float* destination = static_cast<float*>(mapped);
+    for (int i = 0; i < count; ++i) {
+        destination[i * 4 + 0] = bodies[size_t(i)].position.x;
+        destination[i * 4 + 1] = bodies[size_t(i)].position.y;
+        destination[i * 4 + 2] = bodies[size_t(i)].position.z;
+        destination[i * 4 + 3] = 1.0f;
+    }
+    bodyPositionBuffer_->Unmap();
+    bodyCount_ = count;
+}
+
+void RhiEulerSolver::DispatchBodyFlow() {
+    if (bodyCount_ <= 0 || !bodyflowPipeline_ ||
+        !bodyFlowSets_[stateIndex_]) {
+        return;
+    }
+    commandList_->BeginCompute();
+    commandList_->BindPipeline(bodyflowPipeline_.get());
+    commandList_->BindDescriptorSet(bodyFlowSets_[stateIndex_].get());
+    commandList_->Dispatch(uint32_t((bodyCount_ + 63) / 64), 1, 1);
+    commandList_->ComputeBarrier();
+    commandList_->EndCompute();
+}
+
+void RhiEulerSolver::ConsumeBodyFlow(
+    std::vector<sim::BodyFlowSample>& samples) {
+    samples.clear();
+    if (bodyCount_ <= 0 || !bodyFlowBuffer_) {
+        return;
+    }
+    void* mapped = bodyFlowBuffer_->Map();
+    if (!mapped) {
+        return;
+    }
+    const float* source = static_cast<const float*>(mapped);
+    samples.resize(size_t(bodyCount_));
+    for (int i = 0; i < bodyCount_; ++i) {
+        const float* entry = source + size_t(i) * 4;
+        samples[size_t(i)].density = entry[0];
+        samples[size_t(i)].velocity = XMFLOAT3(entry[1], entry[2], entry[3]);
+    }
+    bodyFlowBuffer_->Unmap();
 }
 
 bool RhiEulerSolver::CreateDescriptorSets() {
@@ -401,11 +496,28 @@ bool RhiEulerSolver::CreateDescriptorSets() {
     lightSet_->SetImage(11, solidMask_.get());
     lightSet_->SetSampler(16, linearSampler_.get());
     lightSet_->SetImage(25, lightVolume_.get());
+
+    for (int parity = 0; parity < 2; ++parity) {
+        bodyFlowSets_[parity] =
+            device_->CreateDescriptorSet(bodyflowPipeline_.get());
+        if (!bodyFlowSets_[parity]) {
+            return false;
+        }
+        bindCommon(bodyFlowSets_[parity].get());
+        bodyFlowSets_[parity]->SetImage(8, stateA_[parity].get());
+        bodyFlowSets_[parity]->SetBuffer(30, bodyPositionBuffer_.get(), 0,
+                                         bodyPositionBuffer_->Size());
+        bodyFlowSets_[parity]->SetBuffer(31, bodyFlowBuffer_.get(), 0,
+                                         bodyFlowBuffer_->Size());
+    }
     return true;
 }
 
 void RhiEulerSolver::ReleaseVolumeResources() {
     initSet_.reset();
+    for (auto& set : bodyFlowSets_) {
+        set.reset();
+    }
     for (auto& row : sweepSets_) {
         for (auto& set : row) {
             set.reset();
@@ -710,6 +822,9 @@ void RhiEulerSolver::Step(int steps) {
         advance_ += double(dt) * double(batch);
         remaining -= batch;
     }
+
+    // One flow sample per frame, after the last batch has settled.
+    DispatchBodyFlow();
 
     stats_.active = true;
     stats_.resolution = resolution_;

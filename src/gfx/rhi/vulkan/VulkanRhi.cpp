@@ -349,10 +349,11 @@ private:
 
 class TextureImpl final : public rhi::Texture {
 public:
-    TextureImpl(VkDevice device, VkImage image, VkDeviceMemory memory,
-                VkImageView view, VkFormat format, const TextureDesc& desc)
-        : device_(device), image_(image), memory_(memory), view_(view),
-          format_(format), desc_(desc) {}
+    TextureImpl(Device* owner, VkDevice device, VkImage image,
+                VkDeviceMemory memory, VkImageView view, VkFormat format,
+                const TextureDesc& desc)
+        : owner_(owner), device_(device), image_(image), memory_(memory),
+          view_(view), format_(format), desc_(desc) {}
     ~TextureImpl() override {
         if (view_) {
             vkDestroyImageView(device_, view_, nullptr);
@@ -382,8 +383,11 @@ public:
         return reinterpret_cast<void*>(uintptr_t(view_));
     }
 
+    bool Update(const void* data) override;
+
     VkImage Handle() const { return image_; }
     VkImageView View() const { return view_; }
+    const TextureDesc& Desc() const { return desc_; }
 
     // Layout the image is expected to be in for the next descriptor write. The
     // render pass helpers do not update it; textures used through
@@ -393,6 +397,7 @@ public:
     void SetLayout(VkImageLayout layout) { layout_ = layout; }
 
 private:
+    Device* owner_ = nullptr;
     VkDevice device_ = VK_NULL_HANDLE;
     VkImage image_ = VK_NULL_HANDLE;
     VkDeviceMemory memory_ = VK_NULL_HANDLE;
@@ -663,7 +668,110 @@ bool CreateHostVisibleBuffer(VkPhysicalDevice physical, VkDevice device,
            vkBindBufferMemory(device, buffer, memory, 0) == VK_SUCCESS;
 }
 
+bool TextureImpl::Update(const void* data) {
+    return owner_ ? owner_->UploadTexture(this, data) : false;
+}
+
 } // namespace
+
+bool Device::UploadTexture(rhi::Texture* texture, const void* data) {
+    auto* impl = dynamic_cast<TextureImpl*>(texture);
+    if (!impl || !data) {
+        return false;
+    }
+    const TextureDesc& desc = impl->Desc();
+    if (desc.width == 0 || desc.height == 0) {
+        return false;
+    }
+    const uint32_t bytesPerPixel = FormatBytesPerPixel(desc.format);
+    if (bytesPerPixel == 0) {
+        return false;
+    }
+
+    const bool is3D = desc.depth > 1;
+    const VkDeviceSize rowBytes = VkDeviceSize(desc.width) * bytesPerPixel;
+    const VkDeviceSize sliceBytes = rowBytes * desc.height;
+    const VkDeviceSize totalBytes = sliceBytes * (is3D ? desc.depth : 1);
+
+    VkBuffer staging = VK_NULL_HANDLE;
+    VkDeviceMemory stagingMemory = VK_NULL_HANDLE;
+    if (!CreateHostVisibleBuffer(physicalDevice_, device_, totalBytes,
+                                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT, staging,
+                                 stagingMemory)) {
+        return false;
+    }
+    void* mapped = nullptr;
+    if (vkMapMemory(device_, stagingMemory, 0, totalBytes, 0, &mapped) !=
+        VK_SUCCESS) {
+        vkDestroyBuffer(device_, staging, nullptr);
+        vkFreeMemory(device_, stagingMemory, nullptr);
+        return false;
+    }
+    std::memcpy(mapped, data, size_t(totalBytes));
+    vkUnmapMemory(device_, stagingMemory);
+
+    const VkImageAspectFlags aspect =
+        HasUsage(desc.usage, TextureUsage::DepthStencil)
+            ? VK_IMAGE_ASPECT_DEPTH_BIT
+            : VK_IMAGE_ASPECT_COLOR_BIT;
+    const VkImageLayout newLayout =
+        HasUsage(desc.usage, TextureUsage::Sampled)
+            ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            : VK_IMAGE_LAYOUT_GENERAL;
+    const VkImageLayout oldLayout = impl->Layout();
+
+    const bool copied = ExecuteImmediate([&](VkCommandBuffer command) {
+        VkImageMemoryBarrier toTransfer{};
+        toTransfer.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toTransfer.oldLayout = oldLayout;
+        toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toTransfer.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toTransfer.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toTransfer.image = impl->Handle();
+        toTransfer.subresourceRange = {aspect, 0, desc.mipLevels, 0, 1};
+        toTransfer.srcAccessMask =
+            oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                ? 0
+                : (VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+        toTransfer.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
+                             nullptr, 1, &toTransfer);
+
+        const uint32_t slices = is3D ? desc.depth : 1;
+        for (uint32_t slice = 0; slice < slices; ++slice) {
+            VkBufferImageCopy region{};
+            region.bufferOffset = sliceBytes * VkDeviceSize(slice);
+            region.imageSubresource = {aspect, 0, 0, 1};
+            region.imageOffset = {0, 0, int32_t(is3D ? slice : 0)};
+            region.imageExtent = {desc.width, desc.height, 1};
+            vkCmdCopyBufferToImage(command, staging, impl->Handle(),
+                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                                   &region);
+        }
+
+        VkImageMemoryBarrier toFinal{};
+        toFinal.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        toFinal.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        toFinal.newLayout = newLayout;
+        toFinal.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toFinal.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        toFinal.image = impl->Handle();
+        toFinal.subresourceRange = {aspect, 0, desc.mipLevels, 0, 1};
+        toFinal.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toFinal.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr,
+                             0, nullptr, 1, &toFinal);
+    });
+
+    vkDestroyBuffer(device_, staging, nullptr);
+    vkFreeMemory(device_, stagingMemory, nullptr);
+    if (copied) {
+        impl->SetLayout(newLayout);
+    }
+    return copied;
+}
 
 // Vulkan command list for the migrated renderer. It records into the device's
 // single in-flight command buffer; the frame lifecycle still belongs to the
@@ -2259,6 +2367,29 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
         return nullptr;
     }
 
+    // Tightly packed initialData is the common case for generated 3D volumes
+    // (the solver mask and the volume bake). Treat it as one subresource so it
+    // takes the same staging upload path as an explicit mip chain; otherwise
+    // the texture would be created with undefined contents.
+    std::vector<TextureSubresource> initialSubresources;
+    const TextureSubresource* subresources = desc.subresources;
+    uint32_t subresourceCount = desc.subresourceCount;
+    if ((!subresources || subresourceCount == 0) && desc.initialData) {
+        const uint32_t bytesPerPixel = FormatBytesPerPixel(desc.format);
+        if (bytesPerPixel == 0) {
+            return nullptr;
+        }
+        TextureSubresource packed{};
+        packed.data = desc.initialData;
+        packed.width = desc.width;
+        packed.height = desc.height;
+        packed.rowPitch = desc.width * bytesPerPixel;
+        packed.slicePitch = packed.rowPitch * desc.height;
+        initialSubresources.push_back(packed);
+        subresources = initialSubresources.data();
+        subresourceCount = 1;
+    }
+
     const bool is3D = desc.depth > 1;
     VkImageCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -2273,7 +2404,7 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
     if (info.usage == 0) {
         info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
     }
-    if (desc.subresources && desc.subresourceCount > 0) {
+    if (subresources && subresourceCount > 0) {
         info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     }
     info.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -2323,22 +2454,21 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
         return nullptr;
     }
 
-    auto result = std::make_unique<TextureImpl>(device_, image, memory, view,
-                                                format, desc);
-    if (!desc.subresources || desc.subresourceCount == 0) {
+    auto result = std::make_unique<TextureImpl>(this, device_, image, memory,
+                                                view, format, desc);
+    if (subresourceCount == 0) {
         return result;
     }
 
     VkDeviceSize stagingSize = 0;
-    std::vector<VkDeviceSize> offsets(desc.subresourceCount);
-    std::vector<VkDeviceSize> sliceSizes(desc.subresourceCount);
-    for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
+    std::vector<VkDeviceSize> offsets(subresourceCount);
+    std::vector<VkDeviceSize> sliceSizes(subresourceCount);
+    for (uint32_t i = 0; i < subresourceCount; ++i) {
         offsets[i] = stagingSize;
         const VkDeviceSize rowBytes =
-            VkDeviceSize(desc.subresources[i].rowPitch) *
-            desc.subresources[i].height;
-        sliceSizes[i] = desc.subresources[i].slicePitch
-                            ? desc.subresources[i].slicePitch
+            VkDeviceSize(subresources[i].rowPitch) * subresources[i].height;
+        sliceSizes[i] = subresources[i].slicePitch
+                            ? subresources[i].slicePitch
                             : rowBytes;
         stagingSize += sliceSizes[i] * (is3D ? desc.depth : 1);
     }
@@ -2360,14 +2490,14 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
         vkFreeMemory(device_, stagingMemory, nullptr);
         return nullptr;
     }
-    for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
+    for (uint32_t i = 0; i < subresourceCount; ++i) {
         const uint32_t slices = is3D ? desc.depth : 1;
         const size_t rowBytes =
-            size_t(desc.subresources[i].rowPitch) * desc.subresources[i].height;
+            size_t(subresources[i].rowPitch) * subresources[i].height;
         for (uint32_t slice = 0; slice < slices; ++slice) {
             std::memcpy(static_cast<uint8_t*>(mapped) + offsets[i] +
                             size_t(sliceSizes[i]) * slice,
-                        static_cast<const uint8_t*>(desc.subresources[i].data) +
+                        static_cast<const uint8_t*>(subresources[i].data) +
                             size_t(sliceSizes[i]) * slice,
                         rowBytes);
         }
@@ -2400,7 +2530,7 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
                              VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0,
                              nullptr, 1, &toTransfer);
 
-        for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
+        for (uint32_t i = 0; i < subresourceCount; ++i) {
             const uint32_t slices = is3D ? desc.depth : 1;
             for (uint32_t slice = 0; slice < slices; ++slice) {
                 VkBufferImageCopy region{};
@@ -2408,8 +2538,8 @@ std::unique_ptr<Texture> Device::CreateTexture(const TextureDesc& desc) {
                     offsets[i] + sliceSizes[i] * VkDeviceSize(slice);
                 region.imageSubresource = {aspect, i, 0, 1};
                 region.imageOffset = {0, 0, int32_t(slice)};
-                region.imageExtent = {desc.subresources[i].width,
-                                      desc.subresources[i].height, 1};
+                region.imageExtent = {subresources[i].width,
+                                      subresources[i].height, 1};
                 vkCmdCopyBufferToImage(command, staging, image,
                                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
                                        &region);

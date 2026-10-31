@@ -2,9 +2,12 @@
 
 #include "scene/SceneTypes.h"
 
+#include <DirectXPackedVector.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 
 using namespace DirectX;
 
@@ -106,10 +109,8 @@ std::vector<ObstacleBox> SceneObstacles(const scene::Scene& scene) {
     return boxes;
 }
 
-namespace {
-
-bool SameBoxes(const std::vector<ObstacleBox>& a,
-               const std::vector<ObstacleBox>& b) {
+bool SameObstacles(const std::vector<ObstacleBox>& a,
+                   const std::vector<ObstacleBox>& b) {
     if (a.size() != b.size()) {
         return false;
     }
@@ -123,12 +124,137 @@ bool SameBoxes(const std::vector<ObstacleBox>& a,
             x.orientation.x != y.orientation.x ||
             x.orientation.y != y.orientation.y ||
             x.orientation.z != y.orientation.z ||
-            x.orientation.w != y.orientation.w) {
+            x.orientation.w != y.orientation.w ||
+            x.velocity.x != y.velocity.x || x.velocity.y != y.velocity.y ||
+            x.velocity.z != y.velocity.z) {
             return false;
         }
     }
     return true;
 }
+
+namespace {
+
+bool SameBoxes(const std::vector<ObstacleBox>& a,
+               const std::vector<ObstacleBox>& b) {
+    return SameObstacles(a, b);
+}
+
+uint16_t ToHalfBits(float value) {
+    const DirectX::PackedVector::HALF half =
+        DirectX::PackedVector::XMConvertFloatToHalf(value);
+    uint16_t bits = 0;
+    std::memcpy(&bits, &half, sizeof(bits));
+    return bits;
+}
+
+} // namespace
+
+std::vector<uint16_t> VoxelizeObstacleVelocityMask(
+    const std::vector<ObstacleBox>& boxes, const VolumeBounds& bounds,
+    int resolution) {
+    const int res = std::clamp(resolution, 8, 256);
+    std::vector<uint16_t> mask(size_t(res) * size_t(res) * size_t(res) * 4u, 0);
+    if (boxes.empty()) {
+        return mask;
+    }
+
+    const XMFLOAT3 extent{bounds.max.x - bounds.min.x,
+                          bounds.max.y - bounds.min.y,
+                          bounds.max.z - bounds.min.z};
+    const float cellX = extent.x / float(res);
+    const float cellY = extent.y / float(res);
+    const float cellZ = extent.z / float(res);
+    if (cellX <= 0.0f || cellY <= 0.0f || cellZ <= 0.0f) {
+        return mask;
+    }
+
+    const uint16_t solid = ToHalfBits(1.0f);
+    for (const ObstacleBox& box : boxes) {
+        const XMVECTOR center = XMLoadFloat3(&box.center);
+        const XMVECTOR orientation = XMLoadFloat4(&box.orientation);
+        const XMVECTOR half = XMLoadFloat3(&box.halfExtents);
+        const float radius =
+            XMVectorGetX(XMVector3Length(half)) +
+            0.5f * std::max({cellX, cellY, cellZ});
+
+        const float minX = box.center.x - radius;
+        const float maxX = box.center.x + radius;
+        const float minY = box.center.y - radius;
+        const float maxY = box.center.y + radius;
+        const float minZ = box.center.z - radius;
+        const float maxZ = box.center.z + radius;
+
+        const int x0 = std::max(0, int(std::floor((minX - bounds.min.x) / cellX)));
+        const int x1 = std::min(res - 1, int(std::ceil((maxX - bounds.min.x) / cellX)));
+        const int y0 = std::max(0, int(std::floor((minY - bounds.min.y) / cellY)));
+        const int y1 = std::min(res - 1, int(std::ceil((maxY - bounds.min.y) / cellY)));
+        const int z0 = std::max(0, int(std::floor((minZ - bounds.min.z) / cellZ)));
+        const int z1 = std::min(res - 1, int(std::ceil((maxZ - bounds.min.z) / cellZ)));
+        if (x0 > x1 || y0 > y1 || z0 > z1) {
+            continue;
+        }
+
+        const uint16_t vx = ToHalfBits(box.velocity.x);
+        const uint16_t vy = ToHalfBits(box.velocity.y);
+        const uint16_t vz = ToHalfBits(box.velocity.z);
+        const XMFLOAT3 halfCell{0.5f * cellX, 0.5f * cellY, 0.5f * cellZ};
+        for (int z = z0; z <= z1; ++z) {
+            for (int y = y0; y <= y1; ++y) {
+                for (int x = x0; x <= x1; ++x) {
+                    const XMFLOAT3 world{
+                        bounds.min.x + (float(x) + 0.5f) * cellX,
+                        bounds.min.y + (float(y) + 0.5f) * cellY,
+                        bounds.min.z + (float(z) + 0.5f) * cellZ};
+                    const XMVECTOR local = XMVector3InverseRotate(
+                        XMLoadFloat3(&world) - center, orientation);
+                    XMFLOAT3 localValue{};
+                    XMStoreFloat3(&localValue, local);
+                    if (std::abs(localValue.x) <= box.halfExtents.x + halfCell.x &&
+                        std::abs(localValue.y) <= box.halfExtents.y + halfCell.y &&
+                        std::abs(localValue.z) <= box.halfExtents.z + halfCell.z) {
+                        const size_t index =
+                            ((size_t(z) * size_t(res) + size_t(y)) * size_t(res) +
+                             size_t(x)) *
+                            4u;
+                        mask[index + 0] = vx;
+                        mask[index + 1] = vy;
+                        mask[index + 2] = vz;
+                        mask[index + 3] = solid;
+                    }
+                }
+            }
+        }
+    }
+    return mask;
+}
+
+std::vector<ObstacleBox> PhysicsObstacles(const scene::PhysicsWorld& physics,
+                                          const VolumeBounds& bounds) {
+    std::vector<ObstacleBox> boxes;
+    for (const scene::RigidBody& body : physics.Bodies()) {
+        // Conservative AABB test; bodies outside the solver domain cannot
+        // affect the flow and only cost voxelization work.
+        const float radius = std::max(body.boundingRadius, 0.05f);
+        if (body.position.x + radius < bounds.min.x ||
+            body.position.x - radius > bounds.max.x ||
+            body.position.y + radius < bounds.min.y ||
+            body.position.y - radius > bounds.max.y ||
+            body.position.z + radius < bounds.min.z ||
+            body.position.z - radius > bounds.max.z) {
+            continue;
+        }
+        ObstacleBox box;
+        box.center = body.position;
+        box.halfExtents = body.halfExtents;
+        box.orientation = body.orientation;
+        box.velocity = body.velocity;
+        boxes.push_back(box);
+    }
+    return boxes;
+}
+
+namespace {
 
 bool Contains(const VolumeBounds& outer, const VolumeBounds& inner) {
     return outer.min.x <= inner.min.x && outer.min.y <= inner.min.y &&

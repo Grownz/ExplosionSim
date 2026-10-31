@@ -5,14 +5,17 @@
 #include "core/ThreadPool.h"
 #include "scene/SceneTypes.h"
 #include "sim/BlastModel.h"
+#include "sim/FlowBodies.h"
 #include "sim/Obstacles.h"
 #include "sim/VolumeBaker.h"
 
+#include <DirectXPackedVector.h>
 #include <DirectXMath.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -217,6 +220,126 @@ void TestVolumeObstacleCache() {
     CHECK(cache.Version() == firstVersion + 1);
 }
 
+void TestObstacleVelocityMask() {
+    ex::sim::VolumeBounds bounds{};
+    bounds.min = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
+    bounds.max = DirectX::XMFLOAT3(8.0f, 8.0f, 8.0f);
+
+    std::vector<ex::sim::ObstacleBox> boxes(1);
+    boxes[0].center = DirectX::XMFLOAT3(4.0f, 4.0f, 4.0f);
+    boxes[0].halfExtents = DirectX::XMFLOAT3(2.0f, 2.0f, 2.0f);
+    boxes[0].velocity = DirectX::XMFLOAT3(1.0f, 2.0f, 3.0f);
+
+    const std::vector<uint16_t> mask =
+        ex::sim::VoxelizeObstacleVelocityMask(boxes, bounds, 8);
+    CHECK(mask.size() == 512u * 4u);
+    const auto channel = [&](int x, int y, int z, int c) {
+        return mask[((size_t(z) * 8u + size_t(y)) * 8u + size_t(x)) * 4u +
+                    size_t(c)];
+    };
+    const auto decode = [](uint16_t bits) {
+        DirectX::PackedVector::HALF half = 0;
+        std::memcpy(&half, &bits, sizeof(half));
+        return DirectX::PackedVector::XMConvertHalfToFloat(half);
+    };
+    CHECK(decode(channel(4, 4, 4, 3)) > 0.5f);
+    CHECK(std::abs(decode(channel(4, 4, 4, 0)) - 1.0f) < 1e-3f);
+    CHECK(std::abs(decode(channel(4, 4, 4, 1)) - 2.0f) < 1e-3f);
+    CHECK(std::abs(decode(channel(4, 4, 4, 2)) - 3.0f) < 1e-3f);
+    CHECK(decode(channel(0, 0, 0, 3)) < 0.5f);
+    CHECK(decode(channel(0, 0, 0, 0)) == 0.0f);
+
+    const std::vector<uint16_t> empty =
+        ex::sim::VoxelizeObstacleVelocityMask({}, bounds, 8);
+    CHECK(empty.size() == 512u * 4u);
+    for (uint16_t value : empty) {
+        CHECK(value == 0);
+    }
+}
+
+void TestPhysicsObstacles() {
+    ex::scene::PhysicsWorld physics;
+
+    ex::scene::RigidBody body;
+    body.position = DirectX::XMFLOAT3(1.0f, 2.0f, 3.0f);
+    body.velocity = DirectX::XMFLOAT3(4.0f, 5.0f, 6.0f);
+    body.halfExtents = DirectX::XMFLOAT3(0.5f, 0.5f, 0.5f);
+    body.mass = 10.0f;
+    CHECK(physics.AddBody(body) == 0);
+
+    ex::sim::VolumeBounds inside{};
+    inside.min = DirectX::XMFLOAT3(-5.0f, -5.0f, -5.0f);
+    inside.max = DirectX::XMFLOAT3(5.0f, 5.0f, 5.0f);
+    std::vector<ex::sim::ObstacleBox> boxes =
+        ex::sim::PhysicsObstacles(physics, inside);
+    CHECK(boxes.size() == 1);
+    CHECK(boxes[0].center.x == 1.0f && boxes[0].center.y == 2.0f &&
+          boxes[0].center.z == 3.0f);
+    CHECK(boxes[0].velocity.x == 4.0f && boxes[0].velocity.y == 5.0f &&
+          boxes[0].velocity.z == 6.0f);
+    CHECK(boxes[0].halfExtents.x == 0.5f);
+
+    // Bodies outside the box cannot affect the flow.
+    ex::sim::VolumeBounds outside{};
+    outside.min = DirectX::XMFLOAT3(100.0f, 100.0f, 100.0f);
+    outside.max = DirectX::XMFLOAT3(110.0f, 110.0f, 110.0f);
+    CHECK(ex::sim::PhysicsObstacles(physics, outside).empty());
+
+    // Static structure keeps its place but has no wall velocity.
+    ex::scene::RigidBody wall;
+    wall.position = DirectX::XMFLOAT3(2.0f, 2.0f, 2.0f);
+    wall.velocity = DirectX::XMFLOAT3(9.0f, 9.0f, 9.0f);
+    wall.halfExtents = DirectX::XMFLOAT3(1.0f, 1.0f, 1.0f);
+    wall.isStatic = true;
+    CHECK(physics.AddBody(wall) == 1);
+    boxes = ex::sim::PhysicsObstacles(physics, inside);
+    CHECK(boxes.size() == 2);
+    CHECK(boxes[1].velocity.x == 0.0f && boxes[1].velocity.y == 0.0f &&
+          boxes[1].velocity.z == 0.0f);
+}
+
+void TestBodyDrag() {
+    ex::sim::FlowBody box;
+    box.halfExtents = DirectX::XMFLOAT3(0.5f, 0.5f, 0.5f);
+    const float area = ex::sim::ProjectedArea(
+        box, DirectX::XMFLOAT3(1.0f, 0.0f, 0.0f));
+    CHECK(std::abs(area - 1.0f) < 1e-4f);
+    const float diagonal = ex::sim::ProjectedArea(
+        box, DirectX::XMFLOAT3(0.57735f, 0.57735f, 0.57735f));
+    CHECK(diagonal > area);
+
+    ex::scene::PhysicsWorld physics;
+    ex::scene::RigidBody rigid;
+    rigid.position = DirectX::XMFLOAT3(0.0f, 5.0f, 0.0f);
+    rigid.halfExtents = DirectX::XMFLOAT3(0.5f, 0.5f, 0.5f);
+    rigid.mass = 10.0f;
+    const int index = physics.AddBody(rigid);
+    CHECK(index == 0);
+
+    ex::sim::FlowBody body;
+    body.position = rigid.position;
+    body.halfExtents = rigid.halfExtents;
+    body.physicsIndex = index;
+    ex::sim::BodyFlowSample sample;
+    sample.density = 1.2f;
+    sample.velocity = DirectX::XMFLOAT3(10.0f, 0.0f, 0.0f);
+
+    ex::sim::ApplyBodyDrag(physics, {body}, {sample}, 0.1f);
+    physics.Step(1.0f / 120.0f);
+    CHECK(physics.Bodies()[size_t(index)].velocity.x > 0.1f);
+
+    // Static bodies never receive an impulse.
+    ex::scene::RigidBody wall;
+    wall.position = DirectX::XMFLOAT3(3.0f, 5.0f, 0.0f);
+    wall.halfExtents = rigid.halfExtents;
+    wall.isStatic = true;
+    const int wallIndex = physics.AddBody(wall);
+    body.physicsIndex = wallIndex;
+    ex::sim::ApplyBodyDrag(physics, {body}, {sample}, 0.1f);
+    physics.Step(1.0f / 120.0f);
+    CHECK(physics.Bodies()[size_t(wallIndex)].velocity.x == 0.0f);
+}
+
 void TestVolumeBakeObstacles() {
     ex::core::ThreadPool pool(2);
     ex::sim::BlastModel blast;
@@ -319,6 +442,9 @@ int main() {
     TestSceneDeterminism();
     TestVolumeBake();
     TestObstacleVoxelization();
+    TestObstacleVelocityMask();
+    TestPhysicsObstacles();
+    TestBodyDrag();
     TestVolumeObstacleCache();
     TestVolumeBakeObstacles();
 

@@ -249,6 +249,7 @@ private:
     bool solverCapWarned_ = false;
     bool solverPaused_ = false;
     bool solverBudgetHit_ = false;
+    int solverObstacleFrame_ = 0;
 
     // Copy of the depth buffer that can be sampled while the original is still
     // bound as a depth-stencil target.

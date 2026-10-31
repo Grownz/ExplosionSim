@@ -4,6 +4,7 @@
 // available it is skipped, so CI machines without Vulkan still pass. Shader or
 // resource failures are real errors.
 
+#include "app/EulerBodyFlowShader.h"
 #include "app/EulerInitShader.h"
 #include "app/EulerLightShader.h"
 #include "app/EulerReduceShader.h"
@@ -68,6 +69,7 @@ int main() {
         {kEulerCSRender, kEulerCSRenderSize},
         {kEulerCSLight, kEulerCSLightSize},
         {kEulerCSRescale, kEulerCSRescaleSize},
+        {kEulerCSBodyFlow, kEulerCSBodyFlowSize},
     };
     if (!solver.Initialize(device.get(), shaders)) {
         std::printf("FAILED: RHI solver initialisation (shaders or resources)\n");
@@ -105,6 +107,18 @@ int main() {
     CHECK(solver.Stats().time > 0.0);
     CHECK(std::isfinite(solver.Stats().maxSpeed));
     CHECK(solver.Stats().maxSpeed > 1.0f);
+
+    // 4C drag sampling: a body at the burst sees a dense, moving flow.
+    std::vector<ex::sim::FlowBody> flowBodies(1);
+    flowBodies[0].position = DirectX::XMFLOAT3(0.0f, 0.4f, 0.0f);
+    flowBodies[0].physicsIndex = 0;
+    solver.SetFlowBodies(flowBodies);
+    solver.Step(1);
+    std::vector<ex::sim::BodyFlowSample> flowSamples;
+    solver.ConsumeBodyFlow(flowSamples);
+    CHECK(flowSamples.size() == 1);
+    CHECK(flowSamples[0].density > 0.0f);
+    CHECK(std::isfinite(flowSamples[0].velocity.x));
 
     solver.UpdateRenderVolume();
     solver.UpdateLightVolume(DirectX::XMFLOAT3(0.0f, 1.0f, 0.0f));

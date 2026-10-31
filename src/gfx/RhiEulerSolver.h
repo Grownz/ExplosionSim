@@ -1,6 +1,7 @@
 #pragma once
 
 #include "gfx/EulerSolverTypes.h"
+#include "sim/FlowBodies.h"
 #include "sim/Obstacles.h"
 #include "gfx/rhi/Rhi.h"
 #include "sim/VolumeBaker.h"
@@ -40,6 +41,7 @@ public:
         ShaderSource render;
         ShaderSource light;
         ShaderSource rescale;
+        ShaderSource bodyFlow;
     };
 
     bool Initialize(ex::rhi::Device* device, const Shaders& shaders);
@@ -49,6 +51,9 @@ public:
     // Solid boxes for the flow-around variant. The mask is rebuilt on the next
     // Reset/Rescale and immediately when the domain is already valid.
     void SetObstacles(const std::vector<sim::ObstacleBox>& obstacles);
+    // Dynamic bodies sampled for the 4C drag coupling.
+    void SetFlowBodies(const std::vector<sim::FlowBody>& bodies);
+    void ConsumeBodyFlow(std::vector<sim::BodyFlowSample>& samples);
     void Step(int steps);
     void UpdateRenderVolume();
     // Precomputes the sun transmittance volume for the volume raymarcher.
@@ -124,6 +129,8 @@ private:
                         std::unique_ptr<ex::rhi::Pipeline>& pipeline);
     bool CreateTextures(int resolution);
     bool CreateSolidMask();
+    bool CreateBodyBuffers();
+    void DispatchBodyFlow();
     void ReleaseVolumeResources();
     bool CreateDescriptorSets();
     void UpdateConstants(int direction, float dt);
@@ -139,6 +146,7 @@ private:
     static constexpr int kMaxBatchSteps = 8;
     static constexpr int kLightVolumeResolution = 64;
     static constexpr int kReduceChannels = 8;
+    static constexpr int kMaxFlowBodies = 4096;
     static constexpr int kThreadGroup = 8; // EULER_GROUP_* default in the shaders
 
     ex::rhi::Device* device_ = nullptr;
@@ -150,6 +158,7 @@ private:
     std::unique_ptr<ex::rhi::Shader> reduceShader_;
     std::unique_ptr<ex::rhi::Shader> renderShader_;
     std::unique_ptr<ex::rhi::Shader> lightShader_;
+    std::unique_ptr<ex::rhi::Shader> bodyflowShader_;
     std::unique_ptr<ex::rhi::Shader> rescaleShader_;
 
     std::unique_ptr<ex::rhi::Pipeline> initPipeline_;
@@ -158,6 +167,7 @@ private:
     std::unique_ptr<ex::rhi::Pipeline> reducePipeline_;
     std::unique_ptr<ex::rhi::Pipeline> renderPipeline_;
     std::unique_ptr<ex::rhi::Pipeline> lightPipeline_;
+    std::unique_ptr<ex::rhi::Pipeline> bodyflowPipeline_;
     std::unique_ptr<ex::rhi::Pipeline> rescalePipeline_;
 
     // One set per ping-pong parity; the state textures stay in GENERAL so a
@@ -169,6 +179,7 @@ private:
     SetPtr renderSets_[2];
     SetPtr rescaleSets_[2];
     SetPtr lightSet_;
+    SetPtr bodyFlowSets_[2];
 
     std::unique_ptr<ex::rhi::Buffer> constantsBuffer_;
     Constants constants_{};
@@ -180,6 +191,9 @@ private:
     std::unique_ptr<ex::rhi::Texture> renderVolume_;
     std::unique_ptr<ex::rhi::Texture> lightVolume_;
     std::unique_ptr<ex::rhi::Texture> solidMask_;
+    std::unique_ptr<ex::rhi::Buffer> bodyPositionBuffer_;
+    std::unique_ptr<ex::rhi::Buffer> bodyFlowBuffer_;
+    int bodyCount_ = 0;
     std::vector<sim::ObstacleBox> obstacles_;
     int solidMaskResolution_ = 0;
     int stateIndex_ = 0;

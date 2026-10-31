@@ -287,27 +287,51 @@ back.
 
 ### Solid obstacles
 
-The intact buildings and vehicles of the procedural scene are voxelized into a
-binary `R32F` mask that shares the solver domain. The mask resolution is capped at
-128³ (and lowered with the solver grid) because it is only used as a binary test,
-while a 512³ mask would cost 512 MB. Boxes are expanded by half a mask cell so thin
-objects do not fall between samples.
+The intact buildings and vehicles of the procedural scene, plus the rigid bodies
+inside the solver domain, are voxelized into a binary `RGBA16F` mask that shares
+the solver domain. `rgb` stores the wall velocity, `alpha` the solid flag. The
+mask resolution is capped at 64³ because it is uploaded every other frame, while
+a 128³ mask would mean a 16 MB upload per update. Boxes are expanded by half a
+mask cell so thin objects do not fall between samples.
 
 - A solid cell keeps its state; the init, render, light and reduce passes skip it.
-- A face between a fluid and a solid cell uses a no-slip mirror wall, so the blast
-  and the smoke flow around the building instead of through it.
-- The mask is rebuilt from the scene boxes on `Reset`/`Rescale` and when
-  *Flow around objects* (`solverFlowAround`) is toggled in the high-fidelity
-  settings. Destroyed or collapsed objects are no longer obstacles; trees are
-  excluded.
+- A face between a fluid and a solid cell uses a no-slip mirror wall around the
+  wall velocity, so the blast and the smoke flow around the building and moving
+  debris drags the flow with it.
+- The static scene boxes are rebuilt whenever the mask changes. The physics
+  bodies are appended after them every second frame and overwrite the static
+  boxes where debris moved, so a collapsed building stops being a static wall.
+  Destroyed or collapsed scene objects are skipped; trees are excluded from the
+  static pass.
+- `SetObstacles` compares the new set with the previous one and skips the upload
+  when nothing moved, which keeps the idle cost at zero.
 
-The reduced-order bake uses the same voxelization at up to 32³ over a world-space
-box that contains the current (auto-scaled) volume box. It writes empty voxels
-inside solids, so the analytic smoke and the smoke shadows it casts do not appear
-inside buildings. The mask is cached and only rebuilt when the scene changes or
-the volume box grows or drifts outside the covered box. The analytic field has no
-flow solver, so this is an occlusion and not an advection around the obstacle;
-the high-fidelity solver is the only path that resolves the deflection.
+The reduced-order bake uses its own binary R32F mask at up to 32³ over a
+world-space box that contains the current (auto-scaled) volume box. It writes
+empty voxels inside solids, so the analytic smoke and the smoke shadows it casts
+do not appear inside buildings. The mask is cached and only rebuilt when the
+scene changes or the volume box grows or drifts outside the covered box. The
+analytic field has no flow solver, so this is an occlusion and not an advection
+around the obstacle; the high-fidelity solver is the only path that resolves the
+deflection.
+
+### 4C debris drag
+
+The high-fidelity solver is coupled back to the rigid-body physics through a
+body-flow pass (`euler_bodyflow.hlsl`). Every frame the app uploads the dynamic
+body centres inside the solver domain, and one thread per body samples `rho` and
+`u,v,w` at the body centre:
+
+```
+F = 0.5 * rho * C_d * A * |u - v| * (u - v),   C_d = 1
+```
+
+`A` is the projected area of the body's oriented box along the relative velocity.
+The app reads the sampled flow back and applies `F * dt` through
+`PhysicsWorld::AddImpulse`. The impulse is capped at 400 g, bodies below 1 m/s
+relative speed are skipped, and a sleeping body only wakes when the drag impulse
+exceeds 5 % of its weight, so settled rubble does not twitch in a light breeze.
+The coupling is sampled once per frame, not per solver sub-step.
 
 ### Source terms
 

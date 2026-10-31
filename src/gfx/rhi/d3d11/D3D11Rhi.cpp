@@ -191,13 +191,14 @@ public:
     TextureImpl(ComPtr<ID3D11Texture2D> texture2D, ComPtr<ID3D11Texture3D> texture3D,
                 ComPtr<ID3D11ShaderResourceView> srv, ComPtr<ID3D11RenderTargetView> rtv,
                 ComPtr<ID3D11DepthStencilView> dsv, ComPtr<ID3D11UnorderedAccessView> uav,
-                const TextureDesc& desc)
+                ID3D11DeviceContext* context, const TextureDesc& desc)
         : texture2D_(std::move(texture2D)),
           texture3D_(std::move(texture3D)),
           srv_(std::move(srv)),
           rtv_(std::move(rtv)),
           dsv_(std::move(dsv)),
           uav_(std::move(uav)),
+          context_(context),
           desc_(desc) {}
 
     uint32_t Width() const override { return desc_.width; }
@@ -218,6 +219,24 @@ public:
     void* NativeRenderTargetView() const override { return rtv_.Get(); }
     void* NativeDepthStencilView() const override { return dsv_.Get(); }
 
+    bool Update(const void* data) override {
+        if (!context_ || !data) {
+            return false;
+        }
+        ID3D11Resource* resource =
+            texture2D_ ? static_cast<ID3D11Resource*>(texture2D_.Get())
+                       : static_cast<ID3D11Resource*>(texture3D_.Get());
+        const uint32_t bytesPerPixel = FormatBytesPerPixel(desc_.format);
+        if (!resource || bytesPerPixel == 0) {
+            return false;
+        }
+        const UINT rowPitch = desc_.width * bytesPerPixel;
+        const UINT depthPitch = rowPitch * desc_.height;
+        context_->UpdateSubresource(resource, 0, nullptr, data, rowPitch,
+                                    depthPitch);
+        return true;
+    }
+
 private:
     ComPtr<ID3D11Texture2D> texture2D_;
     ComPtr<ID3D11Texture3D> texture3D_;
@@ -225,6 +244,7 @@ private:
     ComPtr<ID3D11RenderTargetView> rtv_;
     ComPtr<ID3D11DepthStencilView> dsv_;
     ComPtr<ID3D11UnorderedAccessView> uav_;
+    ID3D11DeviceContext* context_ = nullptr;
     TextureDesc desc_{};
 };
 
@@ -889,7 +909,7 @@ bool Device::CreateSizeDependentResources() {
         depthTarget_ = std::make_unique<TextureImpl>(
             depthTexture_, ComPtr<ID3D11Texture3D>(), depthSRV_,
             ComPtr<ID3D11RenderTargetView>(), dsv_,
-            ComPtr<ID3D11UnorderedAccessView>(), targetDesc);
+            ComPtr<ID3D11UnorderedAccessView>(), context_.Get(), targetDesc);
     }
 
     if (swapchain_) {
@@ -1086,14 +1106,29 @@ std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {
         for (uint32_t i = 0; i < desc.subresourceCount; ++i) {
             subresources[i].pSysMem = desc.subresources[i].data;
             subresources[i].SysMemPitch = desc.subresources[i].rowPitch;
-            subresources[i].SysMemSlicePitch = 0;
+            subresources[i].SysMemSlicePitch =
+                desc.subresources[i].slicePitch
+                    ? desc.subresources[i].slicePitch
+                    : desc.subresources[i].rowPitch *
+                          desc.subresources[i].height;
         }
         initial = subresources.data();
+    } else if (desc.initialData) {
+        const uint32_t bytesPerPixel = FormatBytesPerPixel(desc.format);
+        if (bytesPerPixel == 0) {
+            return nullptr;
+        }
+        D3D11_SUBRESOURCE_DATA packed{};
+        packed.pSysMem = desc.initialData;
+        packed.SysMemPitch = desc.width * bytesPerPixel;
+        packed.SysMemSlicePitch = packed.SysMemPitch * desc.height;
+        subresources.push_back(packed);
+        initial = subresources.data();
     }
+    // Default (not immutable) so Texture::Update can replace the contents.
     const D3D11_USAGE usage = HasUsage(desc.usage, TextureUsage::Staging)
                                   ? D3D11_USAGE_STAGING
-                                  : (initial ? D3D11_USAGE_IMMUTABLE
-                                             : D3D11_USAGE_DEFAULT);
+                                  : D3D11_USAGE_DEFAULT;
 
     ComPtr<ID3D11Texture2D> texture2D;
     ComPtr<ID3D11Texture3D> texture3D;
@@ -1109,7 +1144,7 @@ std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {
         textureDesc.CPUAccessFlags = HasUsage(desc.usage, TextureUsage::Staging)
                                          ? D3D11_CPU_ACCESS_READ
                                          : 0;
-        if (FAILED(device_->CreateTexture3D(&textureDesc, initial, &texture3D))) {
+        if (FAILED(device_->CreateTexture3D(&textureDesc, nullptr, &texture3D))) {
             return nullptr;
         }
     } else {
@@ -1125,13 +1160,22 @@ std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {
         textureDesc.CPUAccessFlags = HasUsage(desc.usage, TextureUsage::Staging)
                                          ? D3D11_CPU_ACCESS_READ
                                          : 0;
-        if (FAILED(device_->CreateTexture2D(&textureDesc, initial, &texture2D))) {
+        if (FAILED(device_->CreateTexture2D(&textureDesc, nullptr, &texture2D))) {
             return nullptr;
         }
     }
 
     ID3D11Resource* resource = texture2D ? static_cast<ID3D11Resource*>(texture2D.Get())
                                          : static_cast<ID3D11Resource*>(texture3D.Get());
+    if (initial) {
+        const uint32_t count =
+            desc.subresources ? desc.subresourceCount : 1u;
+        for (uint32_t i = 0; i < count; ++i) {
+            context_->UpdateSubresource(resource, i, nullptr,
+                                        initial[i].pSysMem, initial[i].SysMemPitch,
+                                        initial[i].SysMemSlicePitch);
+        }
+    }
     ComPtr<ID3D11ShaderResourceView> srv;
     ComPtr<ID3D11RenderTargetView> rtv;
     ComPtr<ID3D11DepthStencilView> dsv;
@@ -1177,7 +1221,7 @@ std::unique_ptr<rhi::Texture> Device::CreateTexture(const TextureDesc& desc) {
 
     return std::make_unique<TextureImpl>(std::move(texture2D), std::move(texture3D),
                                          std::move(srv), std::move(rtv), std::move(dsv),
-                                         std::move(uav), desc);
+                                         std::move(uav), context_.Get(), desc);
 }
 
 std::unique_ptr<rhi::Shader> Device::CreateShader(const ShaderDesc& desc) {

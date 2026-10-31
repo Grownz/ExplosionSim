@@ -136,10 +136,13 @@ the current rigid-body pose, so flames are not hidden inside the mesh.
   the bounds and field parameters, so there is no voxel loop and no 16 MB (128³) /
   128 MB (256³) upload per bake. The CPU baker remains as a fallback and owns the 1024³
   split `RG8` layout, whose format has no typed UAV store
-- a shared world-space solid mask (32³ for the reduced-order bake, up to 128³ for the
-  Euler solver) clips the field inside intact buildings and vehicles. The CPU bake, the
-  D3D11 compute bake and the Vulkan compute bake sample the same mask, so the three
-  paths agree
+- a shared solid mask (RGBA16F: wall velocity in rgb, solid flag in alpha) covers the
+  solver domain at 64³ and is uploaded every other frame as the debris moves. The
+  reduced-order bake keeps a binary R32F mask at 32³. Both are produced by
+  `sim/Obstacles.*`, and the solver mask is only re-uploaded when the obstacle set or
+  the domain changes
+- a body-flow pass samples `rho` and the velocity at each dynamic body centre once per
+  frame; the CPU turns the readback into drag impulses for `PhysicsWorld`
 - *Rendering > GPU volume bake* (default on, `--no-gpu-volume-bake` on the command line)
   selects the backend; if the shader or the constant buffer cannot be created the
   renderer falls back to the CPU baker on the next scheduled bake

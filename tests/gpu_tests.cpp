@@ -93,6 +93,7 @@ int main() {
     CHECK(std::isfinite(solver.Stats().maxSpeed));
     CHECK(solver.Stats().maxSpeed > 0.0f);
 
+
     solver.Step(8);
     CHECK(solver.Stats().steps == 16);
     CHECK(solver.Stats().fieldBoundsValid);
@@ -110,6 +111,18 @@ int main() {
     solver.Step(8);
     CHECK(solver.Stats().steps == 24);
     CHECK(solver.Stats().fieldBoundsValid);
+
+    // 4C drag sampling: a body at the burst sees a dense, moving flow.
+    std::vector<ex::sim::FlowBody> flowBodies(1);
+    flowBodies[0].position = DirectX::XMFLOAT3(0.0f, 0.4f, 0.0f);
+    flowBodies[0].physicsIndex = 0;
+    solver.SetFlowBodies(flowBodies);
+    solver.Step(1);
+    std::vector<ex::sim::BodyFlowSample> flowSamples;
+    solver.ConsumeBodyFlow(flowSamples);
+    CHECK(flowSamples.size() == 1);
+    CHECK(flowSamples[0].density > 0.0f);
+    CHECK(std::isfinite(flowSamples[0].velocity.x));
 
     solver.Shutdown();
 

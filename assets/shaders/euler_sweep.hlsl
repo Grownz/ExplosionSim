@@ -46,7 +46,7 @@ void SweepBody(uint3 id, int dir, bool applySource)
     }
     if (IsSolidCell(cell + offset))
     {
-        wp1 = MirrorWall(w0, float3(0.0, 0.0, 0.0));
+        wp1 = MirrorWall(w0, SolidWallVelocity(cell + offset));
         wp2 = wp1;
     }
     else if (IsSolidCell(cell + 2 * offset))
@@ -55,7 +55,7 @@ void SweepBody(uint3 id, int dir, bool applySource)
     }
     if (IsSolidCell(cell - offset))
     {
-        wm1 = MirrorWall(w0, float3(0.0, 0.0, 0.0));
+        wm1 = MirrorWall(w0, SolidWallVelocity(cell - offset));
         wm2 = wm1;
     }
     else if (IsSolidCell(cell - 2 * offset))

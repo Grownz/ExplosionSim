@@ -93,6 +93,10 @@ public:
         return uint32_t(swapchainImages_.size());
     }
 
+    // Uploads tightly packed texel data into a texture created with
+    // TextureUsage::Sampled. Implements Texture::Update for the Vulkan backend.
+    bool UploadTexture(Texture* texture, const void* data);
+
 private:
     friend class CommandListImpl;
 

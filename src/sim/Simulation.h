@@ -4,8 +4,11 @@
 #include <cstdint>
 #include <memory>
 #include <thread>
+#include <vector>
 
 #include "sim/BlastModel.h"
+#include "sim/FlowBodies.h"
+#include "sim/Obstacles.h"
 #include "sim/ParticleSystem.h"
 #include "sim/VolumeBaker.h"
 #include "scene/SceneTypes.h"
@@ -46,6 +49,9 @@ struct SimulationSettings {
     // Flow-around variant: voxelize the procedural objects into a solid mask so
     // the high-fidelity flow bends around buildings and debris.
     bool solverFlowAround = true;
+    // 4C coupling: the solver samples the flow at each rigid body and applies
+    // aerodynamic drag back to the physics world.
+    bool solverBodyDrag = true;
 
     // Performance
     int particleBudget = 40000;
@@ -111,6 +117,22 @@ public:
     VolumeBaker& Volume() { return volume_; }
     const VolumeBaker& Volume() const { return volume_; }
     const scene::Scene& Scene() const { return scene_; }
+
+    // Obstacle boxes for the high-fidelity solver: the intact scene first, then
+    // the rigid bodies that overlap `bounds` so moving debris overwrites the
+    // static boxes with its wall velocity.
+    std::vector<ObstacleBox> CollectSolverObstacles(
+        const VolumeBounds& bounds) const;
+
+    // Dynamic bodies whose centre lies inside the solver box, for the 4C drag.
+    // The index in the result is stable for one frame and maps back through
+    // `physicsIndex`.
+    std::vector<FlowBody> CollectFlowBodies(const VolumeBounds& bounds) const;
+
+    // Applies the sampled fluid drag as impulses. `samples` must match the
+    // FlowBody order returned by CollectFlowBodies.
+    void ApplyBodyDrag(const std::vector<FlowBody>& bodies,
+                       const std::vector<BodyFlowSample>& samples, float dt);
 
     // Waits until all pending volume work is finished and adopts the result.
     void FinishPendingVolumeWork();

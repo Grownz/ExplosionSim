@@ -29,6 +29,26 @@ enum class Format {
     D32_FLOAT,
 };
 
+inline uint32_t FormatBytesPerPixel(Format format) {
+    switch (format) {
+    case Format::B8G8R8A8_UNORM:
+    case Format::R8G8B8A8_UNORM:
+    case Format::R8G8B8A8_UNORM_SRGB:
+    case Format::R32_FLOAT:
+    case Format::R32_TYPELESS:
+    case Format::D32_FLOAT:
+        return 4;
+    case Format::R16G16B16A16_FLOAT:
+    case Format::R32G32_FLOAT:
+        return 8;
+    case Format::R32G32B32A32_FLOAT:
+        return 16;
+    case Format::Unknown:
+    default:
+        return 0;
+    }
+}
+
 enum class BufferUsage : uint32_t {
     None = 0,
     Vertex = 1u << 0,
@@ -173,6 +193,12 @@ public:
     virtual uint32_t Depth() const = 0;
     virtual Format GetFormat() const = 0;
     virtual void* NativeHandle() const = 0;
+    // Replaces the whole texture with `data` (tightly packed rows: width times
+    // the format's texel size, then height, then depth). Used by the solid
+    // obstacle mask, which changes every few frames. The texture must have been
+    // created with TextureUsage::Sampled. The call blocks until the upload is
+    // complete.
+    virtual bool Update(const void* data) = 0;
     // Views created for the usages requested in TextureDesc; nullptr when the
     // usage was not requested. Temporary bridge until binding lives in the RHI.
     virtual void* NativeShaderResourceView() const = 0;

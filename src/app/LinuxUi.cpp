@@ -201,6 +201,7 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
     ImGui::EndDisabled();
     if (state.highFidelity) {
         ImGui::Checkbox("Flow around objects", &state.flowAround);
+        ImGui::Checkbox("Debris drag", &state.bodyDrag);
         ImGui::SliderInt("Solver grid", &state.solverResolution, 32, 256);
     }
     if (ImGui::Button("Apply blast settings")) {

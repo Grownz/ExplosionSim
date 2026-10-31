@@ -56,9 +56,10 @@ EX_VK_BINDING(16) SamplerState LinearSampler : register(s0);
 
 EX_VK_BINDING(8) Texture3D<float4> StateA : register(t0);
 EX_VK_BINDING(9) Texture3D<float2> StateB : register(t1);
-// Solid mask from the scene (1 = solid, 0 = fluid). Its resolution is
-// independent of the solver grid; cell indices are scaled in the shaders.
-EX_VK_BINDING(11) Texture3D<float> SolidMask : register(t3);
+// Solid mask from the scene (a = 1 solid, 0 fluid; rgb = wall velocity). Its
+// resolution is independent of the solver grid; cell indices are scaled in the
+// shaders.
+EX_VK_BINDING(11) Texture3D<float4> SolidMask : register(t3);
 
 EX_VK_BINDING(21) RWTexture3D<float4> OutA : register(u0);
 EX_VK_BINDING(22) RWTexture3D<float2> OutB : register(u1);
@@ -148,7 +149,18 @@ bool IsSolidCell(int3 p)
     {
         return false;
     }
-    return SolidMask.Load(int4(SolidMaskCell(p), 0)).r > 0.5;
+    return SolidMask.Load(int4(SolidMaskCell(p), 0)).a > 0.5;
+}
+
+// Velocity of the solid wall at a cell (zero for static scene boxes). The
+// no-slip ghost mirrors around the moving wall so debris drags the flow.
+float3 SolidWallVelocity(int3 p)
+{
+    if (any(p < int3(0, 0, 0)) || any(p >= Grid.xyz))
+    {
+        return float3(0.0, 0.0, 0.0);
+    }
+    return SolidMask.Load(int4(SolidMaskCell(p), 0)).rgb;
 }
 
 // No-slip ghost state. The face velocity must equal the wall velocity, so the

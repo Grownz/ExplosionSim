@@ -19,6 +19,7 @@
 #include "platform/Platform.h"
 #include "sim/Simulation.h"
 #include "update/Version.h"
+#include "EulerBodyFlowShader.h"
 #include "EulerInitShader.h"
 #include "EulerLightShader.h"
 #include "EulerReduceShader.h"
@@ -84,6 +85,7 @@ struct Options {
     bool gpuParticles = true;
     bool highFidelity = false;
     bool flowAround = true;
+    bool bodyDrag = true;
     int solverResolution = 0;
     int solverSteps = 0;
     double solverTime = -1.0;
@@ -138,6 +140,8 @@ void PrintUsage() {
     std::printf("  --solver-time <s>    Solver time for the high-fidelity capture.\n");
     std::printf("  --solver-benchmark   Run the high-fidelity solver benchmark and exit.\n");
     std::printf("  --solver-step-count <n>  Measured solver steps for the benchmark.\n");
+    std::printf("  --flow-around / --no-flow-around  Toggle scene obstacles (default on).\n");
+    std::printf("  --body-drag / --no-body-drag      Toggle 4C debris drag (default on).\n");
     std::printf("  --splash-test        Show the SDL3 splash briefly and exit.\n");
     std::printf("  --benchmark          Render a fixed frame count and report the average.\n");
     std::printf("  --write-settings <path>  Write the active settings and exit.\n");
@@ -282,6 +286,7 @@ void LoadSettingsFile(const std::string& path, Options& options) {
     options.solverHemisphere =
         boolean("solverHemisphere", options.solverHemisphere);
     options.flowAround = boolean("solverFlowAround", options.flowAround);
+    options.bodyDrag = boolean("solverBodyDrag", options.bodyDrag);
 
     options.sceneEnabled = boolean("sceneEnabled", options.sceneEnabled);
     options.sceneEnabledSet = true;
@@ -369,6 +374,7 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
     file << "solverHemisphere=" << IniBoolText(options.solverHemisphere)
          << "\n";
     file << "solverFlowAround=" << IniBoolText(options.flowAround) << "\n";
+    file << "solverBodyDrag=" << IniBoolText(options.bodyDrag) << "\n";
     file << "particleBudget=" << options.particleBudget << "\n";
     file << "gpuParticles=" << IniBoolText(options.gpuParticles) << "\n";
     file << "volumeResolution="
@@ -425,6 +431,14 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--flow-around") == 0) {
             options.flowAround = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--no-body-drag") == 0) {
+            options.bodyDrag = false;
+            continue;
+        }
+        if (std::strcmp(arg, "--body-drag") == 0) {
+            options.bodyDrag = true;
             continue;
         }
         if (std::strcmp(arg, "--high-fidelity") == 0) {
@@ -858,6 +872,33 @@ struct HighFidelityRuntime {
     uint64_t version = 0;
     bool capWarned = false;
     bool published = false;
+    int obstacleFrame = 0;
+    std::vector<ex::sim::FlowBody> flowBodies;
+
+    void BeginFrame(const ex::sim::Simulation& simulation) {
+        if (simulation.Settings().solverBodyDrag) {
+            flowBodies = simulation.CollectFlowBodies(solver.Bounds());
+        } else {
+            flowBodies.clear();
+        }
+        solver.SetFlowBodies(flowBodies);
+    }
+
+    void EndFrame(ex::sim::Simulation& simulation, double advance) {
+        if (flowBodies.empty() || advance <= 0.0) {
+            return;
+        }
+        std::vector<ex::sim::BodyFlowSample> samples;
+        solver.ConsumeBodyFlow(samples);
+        simulation.ApplyBodyDrag(flowBodies, samples, float(advance));
+    }
+
+    void UpdateObstacles(const ex::sim::Simulation& simulation) {
+        solver.SetObstacles(
+            simulation.Settings().solverFlowAround
+                ? simulation.CollectSolverObstacles(solver.Bounds())
+                : std::vector<ex::sim::ObstacleBox>{});
+    }
 
     bool Ensure(const ex::sim::Simulation& simulation) {
         if (!solver.HasVolume() || blastSerial != simulation.BlastSerial()) {
@@ -865,12 +906,15 @@ struct HighFidelityRuntime {
                 ex::LogError("High-fidelity solver could not be initialised.");
                 return false;
             }
-            solver.SetObstacles(
-                simulation.Settings().solverFlowAround
-                    ? ex::sim::SceneObstacles(simulation.Scene())
-                    : std::vector<ex::sim::ObstacleBox>{});
+            UpdateObstacles(simulation);
             blastSerial = simulation.BlastSerial();
             capWarned = false;
+        }
+        // The wall mask follows the debris; refresh it every other frame. The
+        // solver skips the upload when nothing moved.
+        if (++obstacleFrame >= 2) {
+            obstacleFrame = 0;
+            UpdateObstacles(simulation);
         }
         return solver.HasVolume();
     }
@@ -1114,6 +1158,7 @@ int main(int argc, char** argv) {
             {kEulerCSRender, kEulerCSRenderSize},
             {kEulerCSLight, kEulerCSLightSize},
             {kEulerCSRescale, kEulerCSRescaleSize},
+            {kEulerCSBodyFlow, kEulerCSBodyFlowSize},
         };
         solverReady =
             highFidelityRuntime.solver.Initialize(device.get(), eulerShaders);
@@ -1172,6 +1217,7 @@ int main(int argc, char** argv) {
     simulationSettings.solverAutoScale = options.solverAutoScale;
     simulationSettings.solverHemisphere = options.solverHemisphere;
     simulationSettings.solverFlowAround = options.flowAround;
+    simulationSettings.solverBodyDrag = options.bodyDrag;
     simulationSettings.gpuParticles = gpuParticlesReady;
     simulationSettings.gpuVolumeBake = gpuVolumeReady;
     simulationSettings.timeScale = options.timeScale;
@@ -1337,6 +1383,8 @@ int main(int argc, char** argv) {
                    guard++ < 200000) {
                 MaybeExpandSolver(highFidelityRuntime.solver, simulation,
                                   options, highFidelityRuntime.capWarned);
+                highFidelityRuntime.UpdateObstacles(simulation);
+                highFidelityRuntime.BeginFrame(simulation);
                 UpdatePlumeModel(highFidelityRuntime.solver, simulation);
                 highFidelityRuntime.solver.Step(16);
                 const double advance =
@@ -1344,6 +1392,7 @@ int main(int argc, char** argv) {
                 if (advance > 0.0) {
                     simulation.AdvanceExternal(advance);
                 }
+                highFidelityRuntime.EndFrame(simulation, advance);
                 if (gpuParticlesReady) {
                     gpuParticles.Update(simulation.Particles());
                 }
@@ -1457,6 +1506,7 @@ int main(int argc, char** argv) {
             uiState.timeScale = simulation.Settings().timeScale;
             uiState.highFidelity = highFidelity;
             uiState.flowAround = options.flowAround;
+            uiState.bodyDrag = options.bodyDrag;
             uiState.solverResolution = simulation.Settings().solverResolution;
             uiState.solverAvailable = solverReady;
             uiState.updateCheckEnabled = options.checkForUpdates;
@@ -1604,12 +1654,18 @@ int main(int argc, char** argv) {
                 }
                 if (uiState.flowAround != options.flowAround) {
                     options.flowAround = uiState.flowAround;
+                    ex::sim::SimulationSettings settings = simulation.Settings();
+                    settings.solverFlowAround = options.flowAround;
+                    simulation.ApplySettings(settings);
                     if (highFidelityRuntime.solver.HasVolume()) {
-                        highFidelityRuntime.solver.SetObstacles(
-                            options.flowAround
-                                ? ex::sim::SceneObstacles(simulation.Scene())
-                                : std::vector<ex::sim::ObstacleBox>{});
+                        highFidelityRuntime.UpdateObstacles(simulation);
                     }
+                }
+                if (uiState.bodyDrag != options.bodyDrag) {
+                    options.bodyDrag = uiState.bodyDrag;
+                    ex::sim::SimulationSettings settings = simulation.Settings();
+                    settings.solverBodyDrag = options.bodyDrag;
+                    simulation.ApplySettings(settings);
                 }
                 if (uiState.applySimulation) {
                     ex::sim::SimulationSettings settings = simulation.Settings();
@@ -1656,6 +1712,7 @@ int main(int argc, char** argv) {
                 } else if (highFidelityRuntime.Ensure(simulation)) {
                     MaybeExpandSolver(highFidelityRuntime.solver, simulation,
                                       options, highFidelityRuntime.capWarned);
+                    highFidelityRuntime.BeginFrame(simulation);
                     const double target =
                         std::max(0.0, double(dt) *
                                           simulation.Settings().timeScale);
@@ -1686,6 +1743,7 @@ int main(int argc, char** argv) {
                             break;
                         }
                     }
+                    highFidelityRuntime.EndFrame(simulation, advanced);
                     if (submitted > 0 || !highFidelityRuntime.published) {
                         highFidelityRuntime.Publish(preview, options);
                     }

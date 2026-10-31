@@ -279,6 +279,7 @@ add_library(explosion_core STATIC
     src/sim/ParticleSystem.cpp
     src/sim/Simulation.cpp
     src/sim/Obstacles.cpp
+    src/sim/FlowBodies.cpp
     src/sim/VolumeBaker.cpp
     src/scene/Scene.cpp
     src/scene/VoronoiFracture.cpp
@@ -354,6 +355,7 @@ if(EXPLOSION_BUILD_VULKAN_SMOKE AND TARGET explosion_vulkan)
             euler_render.hlsl:CSRender:cs_6_0
             euler_light.hlsl:CSLight:cs_6_0
             euler_rescale.hlsl:CSRescale:cs_6_0
+            euler_bodyflow.hlsl:CSBodyFlow:cs_6_0
             volume_bake.hlsl:CSBake:cs_6_0)
         file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/spirv")
         set(EXPLOSION_SPIRV_OUTPUTS)

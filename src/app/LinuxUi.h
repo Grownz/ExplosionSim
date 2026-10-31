@@ -46,6 +46,7 @@ struct LinuxUiState {
     double timeScale = 0.06;
     bool highFidelity = false;
     bool flowAround = true;
+    bool bodyDrag = true;
     int solverResolution = 128;
 
     // Update panel.
