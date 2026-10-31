@@ -4,6 +4,32 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Shared scene and shadows on Linux** - the Linux shell renders the procedural
+  scene, the Voronoi rubble and the cascaded/static shadow maps through
+  `SceneRenderer`, using the same cascades, instancing, LOD and static shadow
+  cache as the Windows renderer. The preview's own scene and chunk pipelines
+  stay as a fallback. Headless capture parity against the Windows reference
+  improves from 15.01 % to 13.79 % of pixels for the reduced-order frame and
+  from 38.57 % to 17.45 % for the high-fidelity frame; the Windows captures are
+  unchanged.
+
+### Fixed
+
+- **Vulkan depth-only passes** - `BeginRenderPass` rejected a null colour target,
+  so the shadow passes never ran and the ground sampled undefined depth maps.
+  Depth-only passes use the existing depth-only render passes, and `ClearDepth`
+  records one so a disabled scene clears the shadow maps instead of keeping stale
+  contents.
+- **Vulkan immediate bindings** - the command list cached one descriptor set per
+  pipeline. Vulkan resolves descriptor sets at submit time, so every draw after
+  the first binding change saw the last value written; all scene meshes were
+  drawn with the final mesh's instance buffer. Bindings are now snapshotted per
+  draw and the sets are recycled at pass boundaries.
+
 ## [0.13.0] - 2026-10-31
 
 0.13.0 couples the high-fidelity flow to the scene and the debris. Obstacle walls

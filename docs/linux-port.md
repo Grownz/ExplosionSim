@@ -261,6 +261,17 @@ batches, renders Voronoi chunks, and runs the sky, ground, scene, volume,
 particle, shock, bloom and composite chain on top of the RHI. CI compares the
 Windows and Linux captures with a tolerance.
 
+The shell's scene and shadows are shared code now: `LinuxPreview` initialises
+`SceneRenderer` from the embedded SPIR-V, derives the cascades with
+`SceneRenderer::ComputeShadows`, fills the static and cascade shadow maps before
+the ground pass and draws buildings, vehicles, trees and rubble through
+`RenderScene`. The preview's own scene/chunk pipelines remain only as a fallback.
+On Vulkan the immediate binding API snapshots descriptors per draw (D3D11
+semantics) and depth-only passes are supported, so both platforms record the
+same passes. Capture parity for the reduced-order frame is 13.79 % of pixels
+above the 32 threshold (tolerance 20 %) and 17.45 % for the high-fidelity frame
+(tolerance 30 %); the Windows captures stay bit-identical.
+
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,
   particles and the shadow maps.
 - Port the volume bake GPU path and the CPU upload path.
