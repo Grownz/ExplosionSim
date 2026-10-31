@@ -1007,7 +1007,8 @@ void TestVoronoiChunks() {
 
             // Every hull vertex lies inside the building box and inside the
             // fitted collision box.
-            const XMVECTOR center = XMLoadFloat3(&chunk.center);
+            const XMVECTOR center =
+                XMVectorSet(chunk.center.x, chunk.center.y, chunk.center.z, 0.0f);
             const XMVECTOR orientation = XMLoadFloat4(&chunk.orientation);
             for (const DirectX::XMFLOAT3& point : chunk.hullPositions) {
                 CHECK(point.x >= object.position.x - object.size.x * 0.5f - 0.01f);
@@ -1018,7 +1019,8 @@ void TestVoronoiChunks() {
                 CHECK(point.z <= object.position.z + object.size.z * 0.5f + 0.01f);
 
                 const XMVECTOR local = XMVector3InverseRotate(
-                    XMLoadFloat3(&point) - center, orientation);
+                    XMVectorSet(point.x, point.y, point.z, 0.0f) - center,
+                    orientation);
                 CHECK(std::abs(XMVectorGetX(local)) <= chunk.half.x + 0.05f);
                 CHECK(std::abs(XMVectorGetY(local)) <= chunk.half.y + 0.05f);
                 CHECK(std::abs(XMVectorGetZ(local)) <= chunk.half.z + 0.05f);
@@ -1168,7 +1170,13 @@ void TestAsyncSceneGeneration() {
 
     bool previewSeen = false;
     const auto waitForScene = [&previewSeen](ex::sim::Simulation& sim) {
-        for (int guard = 0; guard < 6000; ++guard) {
+        // Sanitizer builds generate a town an order of magnitude slower than
+        // release builds (tens of seconds), so wait against a wall-clock
+        // deadline instead of a fixed iteration count. Release builds return
+        // as soon as the completion flag is set.
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::minutes(10);
+        while (std::chrono::steady_clock::now() < deadline) {
             sim.PollSceneGeneration();
             if (sim.ConsumeScenePreview()) {
                 previewSeen = true;
