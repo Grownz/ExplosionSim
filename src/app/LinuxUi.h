@@ -45,6 +45,7 @@ struct LinuxUiState {
     double heightOfBurstM = 0.4;
     double timeScale = 0.06;
     bool highFidelity = false;
+    bool flowAround = true;
     int solverResolution = 128;
 
     // Update panel.

@@ -43,6 +43,9 @@ struct SimulationSettings {
     int solverStepsPerFrame = 96; // max solver steps per rendered frame
     bool solverAutoScale = true;
     bool solverHemisphere = false;
+    // Flow-around variant: voxelize the procedural objects into a solid mask so
+    // the high-fidelity flow bends around buildings and debris.
+    bool solverFlowAround = true;
 
     // Performance
     int particleBudget = 40000;

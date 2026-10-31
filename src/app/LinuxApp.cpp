@@ -83,6 +83,7 @@ struct Options {
     bool gpuVolumeBake = true;
     bool gpuParticles = true;
     bool highFidelity = false;
+    bool flowAround = true;
     int solverResolution = 0;
     int solverSteps = 0;
     double solverTime = -1.0;
@@ -280,6 +281,7 @@ void LoadSettingsFile(const std::string& path, Options& options) {
     options.solverAutoScaleSet = true;
     options.solverHemisphere =
         boolean("solverHemisphere", options.solverHemisphere);
+    options.flowAround = boolean("solverFlowAround", options.flowAround);
 
     options.sceneEnabled = boolean("sceneEnabled", options.sceneEnabled);
     options.sceneEnabledSet = true;
@@ -366,6 +368,7 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
     file << "solverAutoScale=" << IniBoolText(options.solverAutoScale) << "\n";
     file << "solverHemisphere=" << IniBoolText(options.solverHemisphere)
          << "\n";
+    file << "solverFlowAround=" << IniBoolText(options.flowAround) << "\n";
     file << "particleBudget=" << options.particleBudget << "\n";
     file << "gpuParticles=" << IniBoolText(options.gpuParticles) << "\n";
     file << "volumeResolution="
@@ -414,6 +417,14 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--settings") == 0 && i + 1 < argc) {
             ++i;
+            continue;
+        }
+        if (std::strcmp(arg, "--no-flow-around") == 0) {
+            options.flowAround = false;
+            continue;
+        }
+        if (std::strcmp(arg, "--flow-around") == 0) {
+            options.flowAround = true;
             continue;
         }
         if (std::strcmp(arg, "--high-fidelity") == 0) {
@@ -854,7 +865,10 @@ struct HighFidelityRuntime {
                 ex::LogError("High-fidelity solver could not be initialised.");
                 return false;
             }
-            solver.SetObstacles(ex::gfx::SceneObstacles(simulation.Scene()));
+            solver.SetObstacles(
+                simulation.Settings().solverFlowAround
+                    ? ex::gfx::SceneObstacles(simulation.Scene())
+                    : std::vector<ex::gfx::ObstacleBox>{});
             blastSerial = simulation.BlastSerial();
             capWarned = false;
         }
@@ -1157,6 +1171,7 @@ int main(int argc, char** argv) {
         std::clamp(options.solverSteps > 0 ? options.solverSteps : 96, 8, 256);
     simulationSettings.solverAutoScale = options.solverAutoScale;
     simulationSettings.solverHemisphere = options.solverHemisphere;
+    simulationSettings.solverFlowAround = options.flowAround;
     simulationSettings.gpuParticles = gpuParticlesReady;
     simulationSettings.gpuVolumeBake = gpuVolumeReady;
     simulationSettings.timeScale = options.timeScale;
@@ -1441,6 +1456,7 @@ int main(int argc, char** argv) {
             uiState.heightOfBurstM = simulation.Settings().heightOfBurstM;
             uiState.timeScale = simulation.Settings().timeScale;
             uiState.highFidelity = highFidelity;
+            uiState.flowAround = options.flowAround;
             uiState.solverResolution = simulation.Settings().solverResolution;
             uiState.solverAvailable = solverReady;
             uiState.updateCheckEnabled = options.checkForUpdates;
@@ -1585,6 +1601,15 @@ int main(int argc, char** argv) {
                 if (uiState.detonateRequested) {
                     simulation.DetonateNow();
                     uiState.detonateRequested = false;
+                }
+                if (uiState.flowAround != options.flowAround) {
+                    options.flowAround = uiState.flowAround;
+                    if (highFidelityRuntime.solver.HasVolume()) {
+                        highFidelityRuntime.solver.SetObstacles(
+                            options.flowAround
+                                ? ex::gfx::SceneObstacles(simulation.Scene())
+                                : std::vector<ex::gfx::ObstacleBox>{});
+                    }
                 }
                 if (uiState.applySimulation) {
                     ex::sim::SimulationSettings settings = simulation.Settings();

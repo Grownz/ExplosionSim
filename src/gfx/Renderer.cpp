@@ -1337,9 +1337,21 @@ void Renderer::UpdatePlumeModel(sim::Simulation& simulation) {
                           float(state.cloudRiseSpeed));
 }
 
+namespace {
+void ApplySolverObstacles(GpuEulerSolver& solver,
+                          const sim::Simulation& simulation) {
+    if (simulation.Settings().solverFlowAround) {
+        solver.SetObstacles(SceneObstacles(simulation.Scene()));
+    } else {
+        solver.SetObstacles({});
+    }
+}
+} // namespace
+
 bool Renderer::EnsureSolver(sim::Simulation& simulation) {
     if (solverBlastSerial_ != simulation.BlastSerial()) {
         if (solver_.Reset(MakeEulerConfig(simulation))) {
+            ApplySolverObstacles(solver_, simulation);
             solverBlastSerial_ = simulation.BlastSerial();
             solverCapWarned_ = false;
             solverPrepared_ = false;
@@ -1413,6 +1425,7 @@ void Renderer::PrepareHighFidelity(sim::Simulation& simulation, double targetTim
         solverPrepared_ = false;
         return;
     }
+    ApplySolverObstacles(solver_, simulation);
     solverBlastSerial_ = simulation.BlastSerial();
     solverCapWarned_ = false;
     solver_.SetDeterministic(true);
@@ -1456,6 +1469,7 @@ void Renderer::PrepareHighFidelitySteps(sim::Simulation& simulation, long long t
         solverPrepared_ = false;
         return;
     }
+    ApplySolverObstacles(solver_, simulation);
     solverBlastSerial_ = simulation.BlastSerial();
     solverCapWarned_ = false;
     solver_.SetDeterministic(true);
@@ -1517,6 +1531,7 @@ SolverBenchmarkResult Renderer::BenchmarkSolver(sim::Simulation& simulation,
         LogError("Solver benchmark: solver could not be initialised.");
         return result;
     }
+    ApplySolverObstacles(solver_, simulation);
     solverBlastSerial_ = simulation.BlastSerial();
     solverCapWarned_ = false;
     solverPrepared_ = false;

@@ -200,6 +200,7 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
     ImGui::Checkbox("High fidelity", &state.highFidelity);
     ImGui::EndDisabled();
     if (state.highFidelity) {
+        ImGui::Checkbox("Flow around objects", &state.flowAround);
         ImGui::SliderInt("Solver grid", &state.solverResolution, 32, 256);
     }
     if (ImGui::Button("Apply blast settings")) {

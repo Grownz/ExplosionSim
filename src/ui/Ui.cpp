@@ -854,6 +854,10 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
     }
 
     if (settings.simulation.mode == sim::SimulationMode::HighFidelity) {
+        if (ImGui::Checkbox("Flow around objects",
+                            &settings.simulation.solverFlowAround)) {
+            actions.applySimulationSettings = true;
+        }
         const int solverResolutions[] = {64, 96, 128, 192, 256, 512};
         const char* solverResolutionLabels[] = {"64³", "96³", "128³", "192³", "256³", "512³"};
         int current = 2;
