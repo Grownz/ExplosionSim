@@ -4,6 +4,60 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.3] - 2026-10-31
+
+0.12.3 makes the blast and the smoke obstacle-aware. The high-fidelity Euler
+solver now treats the scene's buildings and vehicles as solid walls and flows
+around them, and the reduced-order bake clips its analytic field inside them.
+Both platforms get the same behaviour.
+
+### Highlights
+
+- **Flow around objects** - the high-fidelity solver voxelizes the intact
+  buildings and vehicles into a solid mask and uses no-slip walls, so the shock
+  and the smoke are deflected around the scene instead of passing through it.
+- **Reduced-order clipping** - the analytic volume bake uses the same
+  voxelization and writes empty voxels inside solids, so the smoke and its
+  shadows no longer appear inside buildings.
+- **Tests and docs** - a unit test covers the voxelization and the mask
+  application, and the capture-parity references still match on Windows.
+
+### Added
+
+- **Flow-around obstacle mask** - `ObstacleBox`, `VoxelizeObstacles` and
+  `SceneObstacles` live in `src/sim/Obstacles.*` and feed both the D3D11
+  (`GpuEulerSolver`) and Vulkan (`RhiEulerSolver`) solvers. Solid cells keep
+  their state, a face between a fluid and a solid cell mirrors the velocity,
+  and the init, render, light and reduce passes skip solids. Destroyed and
+  collapsed objects stop being obstacles; trees are excluded.
+- **Runtime toggle** - the new `solverFlowAround` setting (default on) is
+  exposed as *Flow around objects* in the Windows and Linux ImGui panels and as
+  `--flow-around` / `--no-flow-around` on Linux. Toggling it rebuilds the mask
+  immediately.
+- **Reduced-order solids** - `VolumeBaker` caches a solid mask over a world-space
+  box that contains the current volume box (capped at 32³) and rebuilds it only
+  when the scene obstacles change or the volume box grows past the coverage. The
+  CPU bake, the D3D11 GPU bake and the Vulkan GPU bake read the same mask, so the
+  reduced-order chain matches across platforms and backends.
+- **Tests** - `core_tests` covers box voxelization (including rotation and empty
+  input), the mask cache and the CPU bake clipping every solid voxel to zero.
+
+### Fixed
+
+- **Vulkan solid mask layout** - the `R32F` mask is explicitly transitioned to
+  `ShaderRead` after creation, including the 1³ placeholder, so the Vulkan
+  validation layers no longer report it as `UNDEFINED` when the compute passes
+  sample it.
+
+### Changed
+
+- **Shared obstacle source** - the obstacle types moved from `src/gfx` to
+  `src/sim` so the platform-independent volume bake can use the same
+  voxelization as the GPU solvers without a `gfx` dependency.
+- **Shader regeneration** - `tools/embed_spirv.py` regenerates an embedded
+  Vulkan compute shader header from a SPIR-V binary; `VolumeBakeShader.h` was
+  rebuilt from the updated `volume_bake.hlsl`.
+
 ## [0.12.2] - 2026-10-31
 
 0.12.2 is a packaging and update-dialog fix over 0.12.1. The Windows release
