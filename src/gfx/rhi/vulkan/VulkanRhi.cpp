@@ -1029,8 +1029,10 @@ public:
     }
 
     // Called at the start of every pass. Passes are submitted and waited for
-    // one at a time, so every set referenced by earlier passes is idle again
-    // and can be reused.
+    // one at a time, so sets referenced by earlier passes are idle again and
+    // can be reused. The pipeline/set bound on the device survives the pass
+    // boundary (D3D11 semantics), so only the sets that a draw already used
+    // are released.
     void RecycleSets() {
         for (auto& entry : bindings_) {
             PipelineBindings& state = entry.second;
@@ -1038,14 +1040,10 @@ public:
                 state.freeSets.push_back(std::move(set));
             }
             state.retired.clear();
-            if (state.current) {
-                state.freeSets.push_back(std::move(state.current));
-            }
+            // The previous pass has completed, so its draws no longer pin the
+            // current set and it may be updated in place again.
             state.inUse = false;
         }
-        currentPipeline_ = nullptr;
-        currentSet_ = nullptr;
-        explicitSetBound_ = false;
     }
 
     void Draw(uint32_t vertexCount, uint32_t firstVertex) override {

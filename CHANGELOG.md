@@ -32,7 +32,7 @@ Windows.
   `SceneRenderer`, using the same cascades, instancing, LOD and static shadow
   cache as Windows. Headless capture parity against the Windows reference
   improves from 15.01 % to 13.79 % of pixels for the reduced-order frame and from
-  38.57 % to 17.45 % for the high-fidelity frame; the Windows captures stay
+  38.57 % to 17.56 % for the high-fidelity frame; the Windows captures stay
   bit-identical.
 
 ### Added
@@ -94,6 +94,12 @@ Windows.
   the first binding change saw the last value written and all scene meshes were
   drawn with the final mesh's instance buffer. Bindings are now snapshotted per
   draw and the sets are recycled at pass boundaries.
+- **Shadow cascade pass** - beginning a render pass clears the backend's bound
+  pipeline state, but `RenderShadow` bound the shadow pipeline once before the
+  cascade loop. The cascades were recorded with no pipeline bound and stayed
+  empty on Vulkan; the pipeline is now bound inside each cascade, and the shadow
+  passes bind the caller's frame constants that the shadow vertex shader reads
+  for the tree sway.
 - **Linux facade and vehicle style tags** - the preview passed a constant texture
   style tag for every building and vehicle, while Windows derives the facade
   pattern and the procedural paint from `object.meshVariant`; the preview now uses

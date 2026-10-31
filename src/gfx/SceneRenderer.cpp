@@ -1174,7 +1174,8 @@ bool SceneRenderer::EnsureStaticInstanceCapacity(uint32_t capacity) {
 void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
                                        const scene::Scene& scene,
                                        const XMFLOAT4X4& lightViewProj,
-                                       uint64_t key) {
+                                       uint64_t key,
+                                       rhi::Buffer* frameConstants) {
     if (!rhiDevice_ || !commandList || !staticShadowTexture_ ||
         !staticShadowTexture_->NativeDepthStencilView()) {
         return;
@@ -1232,6 +1233,10 @@ void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
     }
     commandList->BindConstantBuffer(shadowCascadeBuffer_.get(),
                                     rhi::ShaderStage::Vertex, 3);
+    if (frameConstants) {
+        commandList->BindConstantBuffer(frameConstants,
+                                        rhi::ShaderStage::Vertex, 0);
+    }
 
     const Mesh& mesh = meshes_[0];
     if (mesh.vertexBuffer && mesh.indexBuffer && mesh.indexCount > 0) {
@@ -1248,7 +1253,8 @@ void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
 void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
                                  const scene::Scene& scene, const ViewInfo& view,
                                  const XMFLOAT4X4* lightViewProj,
-                                 const XMFLOAT3& burstCenter) {
+                                 const XMFLOAT3& burstCenter,
+                                 rhi::Buffer* frameConstants) {
     if (!rhiDevice_ || !commandList) {
         return;
     }
@@ -1485,11 +1491,12 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
     UpdateChunkInstances(scene);
 
     // --- Shadow pass: one draw per cascade -------------------------------
-    commandList->BindPipeline(sceneShadowPipeline_.get());
-
     for (int cascade = 0; cascade < kShadowCascades; ++cascade) {
         commandList->BeginRenderPass(nullptr, shadowTexture_[cascade].get(),
                                      false, true, clearColor);
+        // A render pass resets the device bindings, so the pipeline is bound
+        // inside each cascade (the Windows backend ignores the repeat).
+        commandList->BindPipeline(sceneShadowPipeline_.get());
 
         void* mapped = shadowCascadeBuffer_->Map();
         if (mapped) {
@@ -1498,6 +1505,10 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
         }
         commandList->BindConstantBuffer(shadowCascadeBuffer_.get(),
                                         rhi::ShaderStage::Vertex, 3);
+        if (frameConstants) {
+            commandList->BindConstantBuffer(frameConstants,
+                                            rhi::ShaderStage::Vertex, 0);
+        }
 
         // Intact buildings (mesh 0) are cached in the static shadow map; the
         // dynamic cascades contain debris, vehicles and trees in every cascade,

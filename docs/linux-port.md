@@ -269,7 +269,7 @@ the ground pass and draws buildings, vehicles, trees and rubble through
 On Vulkan the immediate binding API snapshots descriptors per draw (D3D11
 semantics) and depth-only passes are supported, so both platforms record the
 same passes. Capture parity for the reduced-order frame is 13.79 % of pixels
-above the 32 threshold (tolerance 20 %) and 17.45 % for the high-fidelity frame
+above the 32 threshold (tolerance 20 %) and 17.56 % for the high-fidelity frame
 (tolerance 30 %); the Windows captures stay bit-identical.
 
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,

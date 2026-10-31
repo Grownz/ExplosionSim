@@ -89,18 +89,21 @@ public:
     };
 
     // Renders the intact buildings into the cached static shadow map. Skips the
-    // work when `key` matches the previous call.
+    // work when `key` matches the previous call. `frameConstants` is bound for
+    // backends that use explicit bindings; Windows binds it natively.
     void RenderStaticShadow(rhi::CommandList* commandList,
                             const scene::Scene& scene,
                             const DirectX::XMFLOAT4X4& lightViewProj,
-                            uint64_t key);
+                            uint64_t key,
+                            rhi::Buffer* frameConstants = nullptr);
 
     // Renders the scene into the cascaded directional shadow maps and clears
     // them when the scene is disabled. Must run before the ground pass.
     void RenderShadow(rhi::CommandList* commandList, const scene::Scene& scene,
                       const ViewInfo& view,
                       const DirectX::XMFLOAT4X4* lightViewProj,
-                      const DirectX::XMFLOAT3& burstCenter);
+                      const DirectX::XMFLOAT3& burstCenter,
+                      rhi::Buffer* frameConstants = nullptr);
 
     // Main opaque scene pass. Must run after the ground pass and before the
     // depth snapshot / volumetric pass.

@@ -1800,10 +1800,11 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         sceneRenderer_.RenderStaticShadow(commandList_.get(),
                                           simulation.Scene(),
                                           shadows.staticLightViewProj,
-                                          staticShadowKey);
+                                          staticShadowKey,
+                                          frameConstants_.get());
         sceneRenderer_.RenderShadow(commandList_.get(), simulation.Scene(),
                                     sceneView, shadows.lightViewProj,
-                                    burstCenter);
+                                    burstCenter, frameConstants_.get());
 
         // The ground descriptor was built before the shadow maps existed, so
         // point it at the shared maps now that their layouts are sampled.
