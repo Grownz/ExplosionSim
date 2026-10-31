@@ -87,6 +87,18 @@ public:
 
     bool Minimized() const override { return minimized_; }
 
+    void Raise() override {
+        if (window_) {
+            SDL_RaiseWindow(window_);
+        }
+    }
+
+    void SetAlwaysOnTop(bool enabled) override {
+        if (window_) {
+            SDL_SetWindowAlwaysOnTop(window_, enabled);
+        }
+    }
+
     void SetEventCallback(EventCallback callback, void* user) override {
         eventCallback_ = callback;
         eventUser_ = user;

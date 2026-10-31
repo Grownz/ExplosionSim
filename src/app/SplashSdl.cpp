@@ -407,17 +407,40 @@ void SplashSdl::Render(float displayProgress, float pulse,
         fadeActive_ = false;
     }
 
-    // Bottom-up dark gradient, matching the Windows overlay.
-    constexpr int kStrips = 32;
+    // Bottom-up dark gradient, matching the Windows overlay. A single texture
+    // is stretched over the lower part of the window; drawing it as tiled
+    // strips left a dark seam where neighbouring strips overlapped.
     const int gradientTop = int(float(height) * 0.40f);
-    for (int i = 0; i < kStrips; ++i) {
-        const float t = float(i + 1) / float(kStrips);
-        const int y0 = gradientTop + (height - gradientTop) * i / kStrips;
-        const int y1 = gradientTop + (height - gradientTop) * (i + 1) / kStrips;
-        const int alpha = int(225.0f * t * t);
-        SDL_SetRenderDrawColor(renderer_, 8, 9, 11, uint8_t(alpha));
-        SDL_FRect rect{0.0f, float(y0), float(width), float(y1 - y0 + 1)};
-        SDL_RenderFillRect(renderer_, &rect);
+    const int gradientHeight = height - gradientTop;
+    if (gradientHeight > 0) {
+        if (!gradient_ || gradientHeight_ != gradientHeight) {
+            if (gradient_) {
+                SDL_DestroyTexture(gradient_);
+                gradient_ = nullptr;
+            }
+            std::vector<uint32_t> pixels(
+                static_cast<size_t>(gradientHeight));
+            for (int y = 0; y < gradientHeight; ++y) {
+                const float t = float(y + 1) / float(gradientHeight);
+                const uint8_t alpha =
+                    uint8_t(std::min(225.0f, 225.0f * t * t));
+                pixels[size_t(y)] =
+                    (uint32_t(alpha) << 24) | 0x0008090Bu;
+            }
+            gradient_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888,
+                                          SDL_TEXTUREACCESS_STATIC, 1,
+                                          gradientHeight);
+            if (gradient_) {
+                SDL_SetTextureBlendMode(gradient_, SDL_BLENDMODE_BLEND);
+                SDL_UpdateTexture(gradient_, nullptr, pixels.data(), 4);
+                gradientHeight_ = gradientHeight;
+            }
+        }
+        if (gradient_) {
+            SDL_FRect gradientRect{0.0f, float(gradientTop), float(width),
+                                   float(gradientHeight)};
+            SDL_RenderTexture(renderer_, gradient_, nullptr, &gradientRect);
+        }
     }
 
     const float scale = float(height) / 640.0f;
@@ -571,6 +594,11 @@ void SplashSdl::DestroyResources() {
     if (frame_) {
         SDL_DestroyTexture(frame_);
         frame_ = nullptr;
+    }
+    if (gradient_) {
+        SDL_DestroyTexture(gradient_);
+        gradient_ = nullptr;
+        gradientHeight_ = 0;
     }
     if (renderer_) {
         SDL_DestroyRenderer(renderer_);

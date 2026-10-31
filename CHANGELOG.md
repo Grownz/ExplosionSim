@@ -12,10 +12,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   ImGui panels (Segoe UI on Windows; DejaVu Sans, Liberation Sans or Noto Sans
   on Linux) instead of SDL's 8x8 bitmap debug font, so the startup screen
   matches the rest of the program again.
+- **Splash gradient seams** - the dark bottom gradient is drawn as one texture
+  instead of 32 overlapping strips, which left a dark horizontal line at every
+  strip boundary.
 - **Splash crossfade** - stills now blend into each other instead of snapping.
   The fade duration follows the measured loading speed (60 % of the time
   between two images, clamped to 120-1000 ms), so a fast load fades quickly and
   a slow load fades gently.
+- **Window stays in front after the splash** - the splash is always-on-top, so
+  the main window used to drop behind other applications when it closed. The
+  window is now shown and focused while the splash is still the foreground
+  window (Windows keeps it topmost until it has the foreground, then drops the
+  flag; Linux raises it through SDL).
 
 ### Added
 

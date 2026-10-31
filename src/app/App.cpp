@@ -259,9 +259,23 @@ int App::Run(const LaunchOptions& options) {
     if (splashVisible) {
         splash.SetProgress(1.0f, L"Ready", 0.12f);
         std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        // Keep the application on the splash's z-level. The splash is
+        // topmost, so a plain ShowWindow leaves the main window behind other
+        // applications. Make it topmost while the splash is still the
+        // foreground window, take the foreground, then drop the topmost flag.
+        SetWindowPos(window_, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         ShowWindow(window_, SW_SHOW);
         UpdateWindow(window_);
+        SetForegroundWindow(window_);
         splash.Close();
+        SetWindowPos(window_, HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE);
+        SetForegroundWindow(window_);
+    } else {
+        // No splash: show the window that was created hidden.
+        ShowWindow(window_, SW_SHOW);
+        UpdateWindow(window_);
         SetForegroundWindow(window_);
     }
 

@@ -1351,7 +1351,16 @@ int main(int argc, char** argv) {
             splash->Pump();
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
+        // The splash is always-on-top; raise the application window as the
+        // splash closes so it keeps the same z-level instead of dropping
+        // behind other applications.
+        if (window) {
+            window->Raise();
+        }
         splash->Close();
+        if (window) {
+            window->Raise();
+        }
         splashVisible = false;
     }
 

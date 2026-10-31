@@ -61,6 +61,10 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* frame_ = nullptr;
+    // Single-row-per-pixel gradient overlay; one texture avoids the seams of
+    // tiled strips.
+    SDL_Texture* gradient_ = nullptr;
+    int gradientHeight_ = 0;
     // Outgoing frame of the current crossfade.
     SDL_Texture* previousFrame_ = nullptr;
     int previousFrameWidth_ = 0;

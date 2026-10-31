@@ -28,6 +28,10 @@ public:
     virtual void SetTitle(const char* title) = 0;
     // True while the window is minimized; the application can skip rendering.
     virtual bool Minimized() const = 0;
+    // Brings the window to the front and gives it focus.
+    virtual void Raise() = 0;
+    // Keeps the window above other applications while enabled.
+    virtual void SetAlwaysOnTop(bool enabled) = 0;
     // Optional raw-event sink. The event is a backend event object (SDL_Event
     // on the SDL3 backend) and is only valid for the duration of the call.
     using EventCallback = void (*)(void* user, const void* event);
