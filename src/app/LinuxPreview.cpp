@@ -1,6 +1,7 @@
 #include "app/LinuxPreview.h"
 
 #include "core/Log.h"
+#include "core/FrameProfile.h"
 #include "gfx/Camera.h"
 #include "gfx/SceneMeshLibrary.h"
 #include "scene/SceneTypes.h"
@@ -1778,15 +1779,6 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         staticShadowKey ^=
             uint64_t(int(std::lround(settings_.sunElevationDeg * 10.0f)))
             << 32;
-        int collapsedBuildings = 0;
-        for (const ex::scene::SceneObject& object :
-             simulation.Scene().Objects()) {
-            if (object.collapsed) {
-                ++collapsedBuildings;
-            }
-        }
-        staticShadowKey ^=
-            uint64_t(collapsedBuildings) * 0xBF58476D1CE4E5B9ull;
 
         ex::gfx::SceneRenderer::ViewInfo sceneView{};
         DirectX::XMStoreFloat4x4(&sceneView.viewProj,
@@ -1920,6 +1912,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     }
 
     if (settings_.enableVolume && volumePipeline_ && volumeSet_) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Volume);
         commandList_->BeginRenderPass(hdrTarget_.get(),
                                       volumeDepthTarget_.get(), false, false,
                                       clear);
@@ -1931,6 +1924,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     if (settings_.enableParticles && gpuParticleIndirect_ &&
         particleGpuAdditiveSet_ && particleGpuAlphaSet_ &&
         particleGpuFireSet_) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Particles);
         auto drawIndirect = [&](ex::rhi::Pipeline* pipeline,
                                 ex::rhi::DescriptorSet* set,
                                 uint64_t offset) {
@@ -1950,6 +1944,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         drawIndirect(particleAlphaPipeline_.get(), particleGpuAlphaSet_.get(),
                      16);
     } else {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Particles);
         if (settings_.enableParticles && particlePipeline_ && particleSet_ &&
             particleCount_ > 0) {
             commandList_->BeginRenderPass(hdrTarget_.get(),
@@ -1992,6 +1987,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     }
 
     if (settings_.enableBloom && bloomDownPipeline_ && bloomDownSet_) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Bloom);
         commandList_->BeginRenderPass(bloomDownTarget_.get(),
                                       volumeDepthTarget_.get(), true, false,
                                       clear);
@@ -2001,6 +1997,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         commandList_->EndRenderPass();
     }
     if (settings_.enableBloom && bloomUpPipeline_ && bloomUpSet_) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Bloom);
         commandList_->BeginRenderPass(bloomUpTarget_.get(),
                                       volumeDepthTarget_.get(), true, false,
                                       clear);
@@ -2011,13 +2008,16 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     }
 
     device->BeginFrame(clear[0], clear[1], clear[2], clear[3]);
-    if (compositePipeline_ && compositeSet_) {
-        device->BindPipeline(compositePipeline_.get());
-        device->BindDescriptorSet(compositeSet_.get());
-        device->Draw(3);
-    }
-    if (overlay_) {
-        overlay_();
+    {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Composite);
+        if (compositePipeline_ && compositeSet_) {
+            device->BindPipeline(compositePipeline_.get());
+            device->BindDescriptorSet(compositeSet_.get());
+            device->Draw(3);
+        }
+        if (overlay_) {
+            overlay_();
+        }
     }
     device->EndFrame(vsync);
 }

@@ -8,6 +8,7 @@
 #include "app/SettingsPath.h"
 #include "app/SplashSdl.h"
 #include "core/Log.h"
+#include "core/FrameProfile.h"
 #include "core/ThreadPool.h"
 #include "gfx/Camera.h"
 #include "gfx/ImageIO.h"
@@ -96,6 +97,9 @@ struct Options {
     long long solverStepCount = 0;
     bool splashTest = false;
     bool benchmark = false;
+    // Steps the simulation inside the benchmark loop so the measured frame
+    // includes physics and debris instead of a frozen scene.
+    bool benchmarkSim = false;
     std::string splashScreenshot;
     std::string writeSettings;
     int raymarchSteps = 128;
@@ -144,6 +148,7 @@ void PrintUsage() {
     std::printf("  --body-drag / --no-body-drag      Toggle 4C debris drag (default on).\n");
     std::printf("  --splash-test        Show the SDL3 splash briefly and exit.\n");
     std::printf("  --benchmark          Render a fixed frame count and report the average.\n");
+    std::printf("  --benchmark-sim      Like --benchmark, but steps the simulation each frame.\n");
     std::printf("  --write-settings <path>  Write the active settings and exit.\n");
     std::printf("  --no-solver-auto-scale  Disable high-fidelity domain auto-scale.\n");
     std::printf("  --raymarch-steps <n>     Volume raymarch steps (default 128).\n");
@@ -491,6 +496,14 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--benchmark") == 0) {
             options.benchmark = true;
+            options.headless = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--benchmark-sim") == 0) {
+            // Keeps the simulation running inside the benchmark loop so the
+            // measurement covers physics and debris, not just a frozen frame.
+            options.benchmark = true;
+            options.benchmarkSim = true;
             options.headless = true;
             continue;
         }
@@ -1548,6 +1561,8 @@ int main(int argc, char** argv) {
         options.headless ? std::max(1, options.frames) : options.frames;
     int rendered = 0;
     double lastTime = NowSeconds();
+    // The pre-roll above is not part of the measurement.
+    ex::core::FrameProfiler::Get().Reset();
     const double benchmarkStart = NowSeconds();
     float frameMs = 0.0f;
     bool running = true;
@@ -1777,8 +1792,12 @@ int main(int argc, char** argv) {
             }
         }
 
+        if (options.benchmarkSim) {
+            simulation.Update(1.0f / 60.0f);
+        }
         preview.Render(device.get(), simulation, camera, device->Width(),
                        device->Height(), options.vsync);
+        ex::core::FrameProfiler::Get().Frame();
         ++rendered;
         if (frameLimit > 0 && rendered >= frameLimit) {
             running = false;
@@ -1786,12 +1805,22 @@ int main(int argc, char** argv) {
     }
 
     if (options.benchmark && rendered > 0) {
+        ex::core::FrameProfiler::Get().Flush();
         const double elapsed = NowSeconds() - benchmarkStart;
         ex::LogInfo("Benchmark: %d frames at %dx%d in %.3f s", rendered,
                     device->Width(), device->Height(), elapsed);
         ex::LogInfo("Average: %.2f ms/frame (%.1f fps)",
                     elapsed * 1000.0 / double(rendered),
                     double(rendered) / std::max(elapsed, 1e-9));
+        const ex::scene::SceneStats sceneStats = simulation.Scene().Stats();
+        ex::LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, "
+                    "%d rigid bodies (%d static structure)",
+                    sceneStats.buildings, sceneStats.vehicles, sceneStats.trees,
+                    sceneStats.chunks, sceneStats.bodies,
+                    sceneStats.staticBodies);
+        ex::LogInfo("Physics: %d awake of %d bodies",
+                    simulation.Scene().Physics().AwakeCount(),
+                    simulation.Scene().Physics().BodyCount());
     }
 
     // Persist the update bookkeeping (skipped version, last check) the same

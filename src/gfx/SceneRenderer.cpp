@@ -1,6 +1,7 @@
 #include "gfx/SceneRenderer.h"
 
 #include "core/Log.h"
+#include "core/FrameProfile.h"
 #include "gfx/Frustum.h"
 #include "platform/Platform.h"
 
@@ -953,6 +954,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
         ChunkDraw draw;
         draw.indexOffset = uint32_t(indices.size());
         draw.objectIndex = int(objectIndex);
+        draw.instanceFirst = chunkInstanceCount_;
         for (const scene::SceneChunk& chunk : object.chunks) {
             if (chunk.hullPositions.empty() ||
                 chunk.hullNormals.size() != chunk.hullPositions.size()) {
@@ -969,6 +971,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
             }
         }
         draw.indexCount = uint32_t(indices.size()) - draw.indexOffset;
+        draw.instanceCount = chunkInstanceCount_ - draw.instanceFirst;
         if (draw.indexCount > 0) {
             chunkDraws_.push_back(draw);
         }
@@ -1001,7 +1004,17 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
     }
 
     chunkInstances_.assign(chunkInstanceCount_, Instance{});
-    return EnsureChunkInstanceCapacity(std::max(64u, chunkInstanceCount_));
+    if (!EnsureChunkInstanceCapacity(std::max(64u, chunkInstanceCount_))) {
+        return false;
+    }
+    // Give the buffer defined contents once; afterwards only the collapsed
+    // objects' ranges are rewritten each frame.
+    if (chunkInstanceBuffer_ && chunkInstanceCount_ > 0) {
+        chunkInstanceBuffer_->Update(
+            chunkInstances_.data(), 0,
+            uint64_t(chunkInstanceCount_) * sizeof(Instance));
+    }
+    return true;
 }
 
 bool SceneRenderer::EnsureChunkInstanceCapacity(uint32_t capacity) {
@@ -1030,16 +1043,32 @@ void SceneRenderer::UpdateChunkInstances(const scene::Scene& scene) {
     if (!chunkInstanceBuffer_ || chunkInstances_.empty() || chunkDraws_.empty()) {
         return;
     }
+    ex::core::ProfileScope profile(ex::core::ProfilePhase::ChunkInstances);
     const auto& bodies = scene.Physics().Bodies();
-    uint32_t index = 0;
-    for (const scene::SceneObject& object : scene.Objects()) {
-        if (object.chunks.empty() || object.chunks.front().hullPositions.empty()) {
+    const auto& objects = scene.Objects();
+    for (const ChunkDraw& draw : chunkDraws_) {
+        if (draw.objectIndex < 0 || draw.objectIndex >= int(objects.size()) ||
+            draw.instanceCount == 0) {
             continue;
         }
+        const scene::SceneObject& object = objects[draw.objectIndex];
+        // Intact objects are drawn with the classic instanced mesh, so their
+        // chunk transforms are never sampled.
+        if (!object.collapsed) {
+            continue;
+        }
+        const uint32_t end = draw.instanceFirst + draw.instanceCount;
+        if (end > chunkInstances_.size()) {
+            continue;
+        }
+        uint32_t index = draw.instanceFirst;
         for (const scene::SceneChunk& chunk : object.chunks) {
             if (chunk.hullPositions.empty() ||
-                index >= uint32_t(chunkInstances_.size())) {
+                chunk.hullNormals.size() != chunk.hullPositions.size()) {
                 continue;
+            }
+            if (index >= end) {
+                break;
             }
             Instance& instance = chunkInstances_[index++];
             XMMATRIX world = XMMatrixIdentity();
@@ -1068,17 +1097,14 @@ void SceneRenderer::UpdateChunkInstances(const scene::Scene& scene) {
             instance.textureScale = XMFLOAT4(1.0f, 1.0f, 1.0f,
                                              float(object.meshVariant & 3));
         }
+        const uint32_t written = index - draw.instanceFirst;
+        if (written > 0) {
+            chunkInstanceBuffer_->Update(
+                &chunkInstances_[draw.instanceFirst],
+                uint64_t(draw.instanceFirst) * sizeof(Instance),
+                uint64_t(written) * sizeof(Instance));
+        }
     }
-    if (index == 0) {
-        return;
-    }
-
-    void* mapped = chunkInstanceBuffer_->Map();
-    if (!mapped) {
-        return;
-    }
-    std::memcpy(mapped, chunkInstances_.data(), size_t(index) * sizeof(Instance));
-    chunkInstanceBuffer_->Unmap();
 }
 
 void SceneRenderer::BindSceneResources(rhi::CommandList* commandList) {
@@ -1184,11 +1210,28 @@ void SceneRenderer::RenderStaticShadow(rhi::CommandList* commandList,
         !staticShadowTexture_->NativeDepthStencilView()) {
         return;
     }
-    if (staticShadowValid_ && key == staticShadowKey_) {
+    ex::core::ProfileScope profile(ex::core::ProfilePhase::StaticShadow);
+    ++staticShadowFrame_;
+
+    int collapsed = 0;
+    for (const scene::SceneObject& object : scene.Objects()) {
+        if (object.collapsed) {
+            ++collapsed;
+        }
+    }
+    const bool structuralChange = !staticShadowValid_ || key != staticShadowKey_;
+    const bool collapseChange = collapsed != staticShadowCollapsed_;
+    const bool refreshDue = staticShadowFrame_ - staticShadowRenderedFrame_ >=
+                            kStaticShadowRefreshFrames;
+    // A collapsing building has to leave the cached map, but the refresh is
+    // throttled so a blast wave does not rebuild the 4096^2 map per building.
+    if (!structuralChange && (!collapseChange || !refreshDue)) {
         return;
     }
     staticShadowKey_ = key;
     staticShadowValid_ = true;
+    staticShadowCollapsed_ = collapsed;
+    staticShadowRenderedFrame_ = staticShadowFrame_;
 
     // Always clear: a disabled or regenerated scene must not keep stale
     // building shadows.
@@ -1262,6 +1305,7 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
     if (!rhiDevice_ || !commandList) {
         return;
     }
+    ex::core::ProfileScope profile(ex::core::ProfilePhase::CascadeShadow);
     // Always clear so the ground samples a fully lit map when the scene is off.
     const float clearColor[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     if (!scene.Settings().enabled || scene.Empty()) {
@@ -1552,6 +1596,7 @@ void SceneRenderer::RenderScene(rhi::CommandList* commandList,
     if (!scene.Settings().enabled || scene.Empty()) {
         return;
     }
+    ex::core::ProfileScope profile(ex::core::ProfilePhase::Scene);
 
     frameResources_ = frameResources;
     frameSurfaceSampler_ = surfaceSampler;

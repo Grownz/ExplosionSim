@@ -46,6 +46,11 @@ public:
     // World-space map for the cached static casters. It is independent of the
     // camera, so it only has to be re-rendered when the scene or sun changes.
     static constexpr int kStaticShadowSize = 4096;
+    // A collapsing building changes the static caster set, but rebuilding the
+    // whole world-space map for each one causes a spike during the blast wave.
+    // Collapse-driven refreshes are therefore rate limited to one every N
+    // frames; structural changes (scene, sun) still apply immediately.
+    static constexpr uint64_t kStaticShadowRefreshFrames = 8;
 
     // Camera data used for culling and level of detail.
     struct ViewInfo {
@@ -89,8 +94,11 @@ public:
     };
 
     // Renders the intact buildings into the cached static shadow map. Skips the
-    // work when `key` matches the previous call. `frameConstants` is bound for
-    // backends that use explicit bindings; Windows binds it natively.
+    // work when `key` matches the previous call. `key` must describe the
+    // structural state only (scene generation, sun, extent): the renderer adds
+    // the collapsed-building set itself and rate limits collapse-driven
+    // refreshes. `frameConstants` is bound for backends that use explicit
+    // bindings; Windows binds it natively.
     void RenderStaticShadow(rhi::CommandList* commandList,
                             const scene::Scene& scene,
                             const DirectX::XMFLOAT4X4& lightViewProj,
@@ -156,6 +164,10 @@ private:
     struct ChunkDraw {
         uint32_t indexOffset = 0;
         uint32_t indexCount = 0;
+        // Instance range owned by this object (the chunk ids are global, so
+        // the instances stay contiguous per object).
+        uint32_t instanceFirst = 0;
+        uint32_t instanceCount = 0;
         int objectIndex = -1; // only drawn once the building is collapsing
 
     };
@@ -214,6 +226,12 @@ private:
     uint32_t staticInstanceCapacity_ = 0;
     uint64_t staticShadowKey_ = 0;
     bool staticShadowValid_ = false;
+    // Collapse-driven refreshes are throttled; the frame counter keeps the
+    // behaviour deterministic (a wall-clock throttle would change the
+    // captures from run to run).
+    int staticShadowCollapsed_ = -1;
+    uint64_t staticShadowFrame_ = 0;
+    uint64_t staticShadowRenderedFrame_ = 0;
 
     // Voronoi chunk geometry and per-frame instance data.
     std::unique_ptr<rhi::Buffer> chunkVertexBuffer_;

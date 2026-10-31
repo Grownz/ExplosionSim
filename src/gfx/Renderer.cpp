@@ -1,6 +1,7 @@
 #include "gfx/Renderer.h"
 
 #include "core/Log.h"
+#include "core/FrameProfile.h"
 #include "gfx/Shader.h"
 
 #include <algorithm>
@@ -1962,21 +1963,15 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     sceneView.eye = camera.Position();
     sceneView.projScale =
         float(hdr_.height) / (2.0f * std::tan(camera.FovY() * 0.5f));
-    // The static cache only depends on the scene, the sun and the set of
-    // collapsed buildings, not on the camera.
+    // The static cache only depends on the scene and the sun, not on the
+    // camera. Collapsed buildings are handled inside the renderer, which rate
+    // limits how often they trigger a rebuild.
     uint64_t staticShadowKey = simulation.Scene().GenerationHash();
     staticShadowKey ^=
         uint64_t(int(std::lround(settings.sunAzimuthDeg * 10.0f))) *
         0x9E3779B97F4A7C15ull;
     staticShadowKey ^=
         uint64_t(int(std::lround(settings.sunElevationDeg * 10.0f))) << 32;
-    int collapsedBuildings = 0;
-    for (const scene::SceneObject& object : simulation.Scene().Objects()) {
-        if (object.collapsed) {
-            ++collapsedBuildings;
-        }
-    }
-    staticShadowKey ^= uint64_t(collapsedBuildings) * 0xBF58476D1CE4E5B9ull;
 
     std::unique_ptr<rhi::CommandList> commandList =
         device_->Rhi()->CreateCommandList();
@@ -2085,6 +2080,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     // Hot debris and sparks are drawn before the volume so that the optically
     // thick fireball correctly occludes the material inside it.
     if (!highFidelity && settings.enableParticles && (gpuParticles || info_.additiveParticles > 0)) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Particles);
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);
@@ -2111,6 +2107,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     // composites over the flames: the cloud occludes them and scatters its own
     // light over the fire.
     if (settings.enableParticles && (gpuParticles || info_.fireParticles > 0)) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Particles);
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);
@@ -2134,6 +2131,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     // --- Volumetric fireball / smoke ---------------------------------------
     if (settings.enableVolume && activeVolumeValid_ && volumeView) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Volume);
         // Refresh the sun transmittance volume for the HF solver. The light
         // volume is view-independent and sampled by the raymarcher.
         if (highFidelity && solverVolume) {
@@ -2176,6 +2174,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     // Soft smoke and dust puffs composite over the volume.
     if (!highFidelity && settings.enableParticles && (gpuParticles || info_.alphaParticles > 0)) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Particles);
         context->OMSetRenderTargets(1, &hdrRTV, device_->DepthDSV());
         context->OMSetDepthStencilState(depthTest_.Get(), 0);
         SetViewport(hdr_.width, hdr_.height);
@@ -2225,6 +2224,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     // --- Post processing ---------------------------------------------------
     if (settings.enableBloom) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Bloom);
         RenderBloom();
     }
 
@@ -2244,10 +2244,13 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     }
 
     ID3D11ShaderResourceView* compositeInputs[2] = {hdr_.SRV(), bloom_[0].SRV()};
-    context->PSSetShaderResources(0, 2, compositeInputs);
-    context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
-    context->PSSetShader(compositePS_.Get(), nullptr, 0);
-    context->Draw(3, 0);
+    {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Composite);
+        context->PSSetShaderResources(0, 2, compositeInputs);
+        context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
+        context->PSSetShader(compositePS_.Get(), nullptr, 0);
+        context->Draw(3, 0);
+    }
 
     ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
     context->PSSetShaderResources(0, 2, nullSRVs);

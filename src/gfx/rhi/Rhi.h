@@ -179,6 +179,9 @@ public:
     // until Unmap(); returns nullptr on failure.
     virtual void* Map() = 0;
     virtual void Unmap() = 0;
+    // Writes a sub-range of a dynamic buffer. Backends that cannot update
+    // part of a buffer must copy the untouched remainder themselves.
+    virtual bool Update(const void* data, uint64_t offset, uint64_t size) = 0;
     virtual void* NativeHandle() const = 0;
     // Structured/typed buffer view for shader reads; nullptr when the buffer
     // was not created with BufferUsage::ShaderRead.

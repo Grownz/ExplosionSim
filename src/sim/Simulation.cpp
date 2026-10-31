@@ -1,6 +1,7 @@
 #include "sim/Simulation.h"
 
 #include "core/Log.h"
+#include "core/FrameProfile.h"
 #include "core/ThreadPool.h"
 
 #include <algorithm>
@@ -380,6 +381,7 @@ void Simulation::Update(float realDt) {
     if (!initialized_) {
         return;
     }
+    ex::core::ProfileScope profile(ex::core::ProfilePhase::Simulation);
 
     PollSceneGeneration();
 
@@ -450,6 +452,7 @@ void Simulation::AdvanceExternal(double dtSim, double realDt) {
 
 std::vector<ObstacleBox> Simulation::CollectSolverObstacles(
     const VolumeBounds& bounds) const {
+    ex::core::ProfileScope profile(ex::core::ProfilePhase::Obstacles);
     std::vector<ObstacleBox> boxes = SceneObstacles(scene_);
     std::vector<ObstacleBox> bodies = PhysicsObstacles(scene_.Physics(), bounds);
     boxes.insert(boxes.end(), bodies.begin(), bodies.end());

@@ -1,6 +1,7 @@
 #include "scene/SceneTypes.h"
 
 #include "core/Log.h"
+#include "core/FrameProfile.h"
 #include "core/Random.h"
 #include "core/ThreadPool.h"
 #include "scene/VehicleModels.h"
@@ -1497,6 +1498,7 @@ void Scene::StepPhysics(float dtSim) {
     if (dtSim <= 0.0f) {
         return;
     }
+    ex::core::ProfileScope profile(ex::core::ProfilePhase::Physics);
     physicsAccumulator_ += double(dtSim);
     const double step = 1.0 / 120.0;
     int guard = 0;

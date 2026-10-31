@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Frame profile** - setting `EXPLOSION_FRAME_PROFILE=1` logs one line per second
+  with the average milliseconds per phase: simulation, physics, obstacle
+  collection, static and cascade shadow passes, chunk instance updates, scene,
+  volume, particles, bloom and composite. Both applications report the same
+  phases. `--benchmark-sim` (Linux) keeps the simulation running inside the
+  benchmark, so the measurement covers a moving scene with debris instead of a
+  frozen frame.
+
+### Changed
+
+- **Static shadow refresh** - a collapsing building no longer rebuilds the whole
+  4096² static shadow map. Collapse-driven refreshes are limited to one every
+  eight frames (frame based, so captures stay deterministic); scene and sun
+  changes still apply immediately.
+- **Chunk instance updates** - only collapsed objects rebuild and upload their
+  chunk transforms, in one sub-range write per object. Intact buildings keep
+  their instances untouched, and the RHI gained `Buffer::Update` for sub-range
+  writes on both backends.
+
 ## [0.13.0] - 2026-10-31
 
 0.13.0 makes the blast obstacle-aware end to end. The high-fidelity flow treats

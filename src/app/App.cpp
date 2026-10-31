@@ -3,6 +3,7 @@
 #include "Version.h"
 #include "app/SplashSdl.h"
 #include "core/Log.h"
+#include "core/FrameProfile.h"
 #include "gfx/ImageIO.h"
 #include "gfx/Shader.h"
 #include "ui/Ui.h"
@@ -754,6 +755,7 @@ int App::RunInteractive() {
 
         renderer_.Render(simulation_, camera_, settings_.render);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        ex::core::FrameProfiler::Get().Frame();
 
         if (captureNow) {
             ++screenshotCounter_;
@@ -948,11 +950,14 @@ int App::RunHeadless() {
 
     if (options_.benchmark) {
         const int frames = std::max(1, options_.benchmarkFrames);
+        // The single setup frame above is not part of the measurement.
+        ex::core::FrameProfiler::Get().Reset();
         const double start = clock.Now();
         for (int frame = 0; frame < frames; ++frame) {
             renderer_.Render(simulation_, camera_, settings_.render);
             graphics_.Present(false);
             graphics_.Context()->Flush();
+            ex::core::FrameProfiler::Get().Frame();
         }
         std::vector<uint8_t> pixels;
         int width = 0;
@@ -960,6 +965,7 @@ int App::RunHeadless() {
         graphics_.ReadBack(pixels, width, height);
 
         const double elapsed = clock.Now() - start;
+        ex::core::FrameProfiler::Get().Flush();
         LogInfo("Benchmark: %d frames at %dx%d in %.3f s", frames, width, height, elapsed);
         LogInfo("Average: %.2f ms/frame (%.1f fps)", elapsed * 1000.0 / frames,
                 double(frames) / std::max(elapsed, 1e-6));
