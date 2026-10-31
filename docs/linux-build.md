@@ -4,7 +4,9 @@ The portable simulation core, the Vulkan bring-up target and the native Linux
 application shell build and run on Linux. The shell owns the SDL3 window and the
 Vulkan RHI device, resizes the swapchain and writes offscreen PNG/PPM captures;
 the reduced-order renderer and the high-fidelity GPU Euler solver are ported
-into it (milestones M2-M4 in [`linux-port.md`](linux-port.md)).
+into it (milestones M2-M4 in [`linux-port.md`](linux-port.md)). For
+installation, running, settings and troubleshooting, see
+[`linux-usage.md`](linux-usage.md).
 
 ## Current Linux targets
 
@@ -128,6 +130,11 @@ Hardening in M6:
   from a non-ASCII settings path.
 - Volume texture descriptor rewrites are cached until the texture changes, and
   the Vulkan device uses a pipeline cache.
+- CI runs the Vulkan validation layers on lavapipe for both the reduced-order
+  and high-fidelity paths, and a separate ASan/UBSan job builds and runs the
+  core and physics tests.
+- A tag-triggered `release` job attaches the Windows zip and Linux tar.gz to a
+  GitHub release.
 
 ## Linux application shell
 

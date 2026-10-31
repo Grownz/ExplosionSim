@@ -314,10 +314,13 @@ timestamps. The Linux shell has `--benchmark` (frame timing) and the solver
 benchmark (per-pass GPU timestamps). Descriptor rewrites are cached when the
 volume texture is unchanged, and the Vulkan device uses a pipeline cache.
 Minimized windows skip rendering, the swapchain uses pixel sizes for high-DPI
-windows, and CI renders from a non-ASCII settings path. The Windows and Linux
-CI jobs upload release artifacts. The 10 % same-GPU-class performance target
-still needs a hardware comparison run; the lavapipe numbers are documented as a
-functional baseline, not a hardware-parity claim.
+windows, and CI renders from a non-ASCII settings path. CI also runs the Vulkan
+validation layers on lavapipe (reduced-order and HF) and an ASan/UBSan job for
+the core and physics tests. The Windows and Linux CI jobs upload release
+artifacts, and a tag-triggered `release` job attaches them to a GitHub release.
+The 10 % same-GPU-class performance target still needs a hardware comparison
+run; the lavapipe numbers are documented as a functional baseline, not a
+hardware-parity claim.
 
 - Run the full test matrix on Windows and Linux, hardware and lavapipe.
 - Profile and tune Vulkan barriers, descriptor updates and pipeline caches.

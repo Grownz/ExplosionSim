@@ -844,107 +844,6 @@ struct HighFidelityRuntime {
     }
 };
 
-uint32_t Crc32Update(uint32_t crc, const uint8_t* data, size_t size) {
-    for (size_t i = 0; i < size; ++i) {
-        crc ^= data[i];
-        for (int bit = 0; bit < 8; ++bit) {
-            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-        }
-    }
-    return crc;
-}
-
-void AppendU32(std::vector<uint8_t>& out, uint32_t value) {
-    out.push_back(uint8_t(value >> 24));
-    out.push_back(uint8_t(value >> 16));
-    out.push_back(uint8_t(value >> 8));
-    out.push_back(uint8_t(value));
-}
-
-void WriteChunk(std::ofstream& file, const char type[4],
-                const std::vector<uint8_t>& data) {
-    std::vector<uint8_t> header;
-    AppendU32(header, uint32_t(data.size()));
-    file.write(reinterpret_cast<const char*>(header.data()),
-               std::streamsize(header.size()));
-    file.write(type, 4);
-    if (!data.empty()) {
-        file.write(reinterpret_cast<const char*>(data.data()),
-                   std::streamsize(data.size()));
-    }
-    uint32_t crc = Crc32Update(0xFFFFFFFFu,
-                               reinterpret_cast<const uint8_t*>(type), 4);
-    crc = Crc32Update(crc, data.data(), data.size()) ^ 0xFFFFFFFFu;
-    std::vector<uint8_t> tail;
-    AppendU32(tail, crc);
-    file.write(reinterpret_cast<const char*>(tail.data()),
-               std::streamsize(tail.size()));
-}
-
-bool WritePng(const std::string& path, const std::vector<uint8_t>& bgra,
-              int width, int height) {
-    if (width <= 0 || height <= 0 ||
-        bgra.size() < size_t(width) * size_t(height) * 4) {
-        return false;
-    }
-    std::vector<uint8_t> raw;
-    raw.reserve(size_t(height) * (1 + size_t(width) * 3));
-    for (int y = 0; y < height; ++y) {
-        raw.push_back(0); // filter: none
-        for (int x = 0; x < width; ++x) {
-            const size_t index = (size_t(y) * size_t(width) + size_t(x)) * 4;
-            raw.push_back(bgra[index + 2]);
-            raw.push_back(bgra[index + 1]);
-            raw.push_back(bgra[index + 0]);
-        }
-    }
-
-    std::vector<uint8_t> zlib;
-    zlib.reserve(raw.size() + raw.size() / 65535 * 5 + 16);
-    zlib.push_back(0x78);
-    zlib.push_back(0x01);
-    size_t offset = 0;
-    while (offset < raw.size()) {
-        const size_t block = std::min<size_t>(65535, raw.size() - offset);
-        const bool finalBlock = offset + block == raw.size();
-        zlib.push_back(finalBlock ? 1 : 0);
-        zlib.push_back(uint8_t(block & 0xFF));
-        zlib.push_back(uint8_t((block >> 8) & 0xFF));
-        zlib.push_back(uint8_t((~block) & 0xFF));
-        zlib.push_back(uint8_t(((~block) >> 8) & 0xFF));
-        zlib.insert(zlib.end(), raw.begin() + std::ptrdiff_t(offset),
-                    raw.begin() + std::ptrdiff_t(offset + block));
-        offset += block;
-    }
-    uint32_t a = 1;
-    uint32_t b = 0;
-    for (uint8_t value : raw) {
-        a = (a + value) % 65521u;
-        b = (b + a) % 65521u;
-    }
-    AppendU32(zlib, (b << 16) | a);
-
-    std::ofstream file(path, std::ios::binary);
-    if (!file) {
-        return false;
-    }
-    const uint8_t signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
-    file.write(reinterpret_cast<const char*>(signature), 8);
-
-    std::vector<uint8_t> ihdr;
-    AppendU32(ihdr, uint32_t(width));
-    AppendU32(ihdr, uint32_t(height));
-    ihdr.push_back(8); // bit depth
-    ihdr.push_back(2); // truecolour
-    ihdr.push_back(0);
-    ihdr.push_back(0);
-    ihdr.push_back(0);
-    WriteChunk(file, "IHDR", ihdr);
-    WriteChunk(file, "IDAT", zlib);
-    WriteChunk(file, "IEND", {});
-    return file.good();
-}
-
 bool WritePpm(const std::string& path, const std::vector<uint8_t>& bgra,
               int width, int height) {
     std::ofstream file(path, std::ios::binary);
@@ -967,7 +866,7 @@ bool WriteImage(const std::string& path, const std::vector<uint8_t>& bgra,
                      (path.compare(path.size() - 4, 4, ".ppm") == 0 ||
                       path.compare(path.size() - 4, 4, ".PPM") == 0);
     return ppm ? WritePpm(path, bgra, width, height)
-               : WritePng(path, bgra, width, height);
+               : ex::gfx::SavePng(path, bgra.data(), width, height);
 }
 
 std::filesystem::path FindAssetDirectory(const char* argv0) {

@@ -16,8 +16,12 @@ VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
     VkDebugUtilsMessageSeverityFlagBitsEXT severity,
     VkDebugUtilsMessageTypeFlagsEXT,
     const VkDebugUtilsMessengerCallbackDataEXT* data, void*) {
-    if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-        LogWarn("Vulkan: %s", data && data->pMessage ? data->pMessage : "(null)");
+    const char* message =
+        data && data->pMessage ? data->pMessage : "(null)";
+    if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+        LogError("Vulkan: %s", message);
+    } else if (severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+        LogWarn("Vulkan: %s", message);
     }
     return VK_FALSE;
 }

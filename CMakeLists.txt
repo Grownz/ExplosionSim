@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
 
 project(ExplosionSim
-    VERSION 0.10.5
+    VERSION 0.11.0
     DESCRIPTION "Physically based 3D explosion simulation"
     LANGUAGES C CXX)
 
@@ -26,6 +26,7 @@ option(EXPLOSION_BUILD_TESTS "Build the physics and core tests" ON)
 option(EXPLOSION_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ${MSVC})
 option(EXPLOSION_BUILD_APP "Build the graphical application" ${WIN32})
 option(EXPLOSION_BUILD_VULKAN_SMOKE "Build the Vulkan bring-up test" ON)
+option(EXPLOSION_SANITIZE "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 set(EXPLOSION_RHI "d3d11" CACHE STRING "Graphics backend (d3d11; vulkan is planned)")
 set(EXPLOSION_PLATFORM "win32" CACHE STRING "Platform layer (win32; sdl3 is planned)")
 
@@ -61,6 +62,14 @@ function(ex_target_warnings target)
         endif()
     endif()
 endfunction()
+
+if(EXPLOSION_SANITIZE AND NOT MSVC)
+    # Jolt is built without RTTI; the UBSan vptr check needs typeinfo, so keep
+    # the address/undefined checks but disable the vptr instrumentation.
+    add_compile_options(-fsanitize=address,undefined -fno-sanitize=vptr
+                        -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
 
 # ---------------------------------------------------------------------------
 # Generated version metadata
@@ -420,6 +429,10 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         COMMAND ${CMAKE_COMMAND} -E copy
                 ${CMAKE_SOURCE_DIR}/packaging/README-linux.txt
                 ${EXPLOSION_LINUX_PACKAGE_DIR}/README-linux.txt
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_SOURCE_DIR}/packaging/install.sh
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/install.sh
+        COMMAND chmod +x ${EXPLOSION_LINUX_PACKAGE_DIR}/install.sh
         COMMAND ${CMAKE_COMMAND} -E tar czf
                 ${CMAKE_BINARY_DIR}/${EXPLOSION_LINUX_PACKAGE_NAME}.tar.gz
                 --format=gnutar ${EXPLOSION_LINUX_PACKAGE_NAME}

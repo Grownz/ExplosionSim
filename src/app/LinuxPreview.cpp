@@ -602,7 +602,7 @@ bool LinuxPreview::CreateGround(ex::rhi::Device* device) {
                               frameConstants_->Size());
         groundSet_->SetBuffer(2, shadowConstants_.get(), 0,
                               shadowConstants_->Size());
-        groundSet_->SetImage(9, depthTarget_.get());
+        groundSet_->SetImage(9, volumeDepthTexture_.get());
         for (int i = 0; i < 4; ++i) {
             groundSet_->SetImage(uint32_t(10 + i), shadowTextures_[i].get());
         }
@@ -1106,7 +1106,7 @@ bool LinuxPreview::CreateParticles(ex::rhi::Device* device) {
     if (particleSet_) {
         particleSet_->SetBuffer(0, frameConstants_.get(), 0,
                                 frameConstants_->Size());
-        particleSet_->SetImage(9, depthTarget_.get());
+        particleSet_->SetImage(9, volumeDepthTexture_.get());
         particleSet_->SetSampler(16, volumeSampler_.get());
     }
 
@@ -1122,7 +1122,7 @@ bool LinuxPreview::CreateParticles(ex::rhi::Device* device) {
     if (particleFireSet_) {
         particleFireSet_->SetBuffer(0, frameConstants_.get(), 0,
                                     frameConstants_->Size());
-        particleFireSet_->SetImage(9, depthTarget_.get());
+        particleFireSet_->SetImage(9, volumeDepthTexture_.get());
         particleFireSet_->SetSampler(16, volumeSampler_.get());
     }
 
@@ -1136,7 +1136,7 @@ bool LinuxPreview::CreateParticles(ex::rhi::Device* device) {
     if (particleAlphaSet_) {
         particleAlphaSet_->SetBuffer(0, frameConstants_.get(), 0,
                                      frameConstants_->Size());
-        particleAlphaSet_->SetImage(9, depthTarget_.get());
+        particleAlphaSet_->SetImage(9, volumeDepthTexture_.get());
         particleAlphaSet_->SetSampler(16, volumeSampler_.get());
     }
     return particleVS_ && particlePS_ && particlePipeline_ && particleSet_ &&
@@ -1365,7 +1365,7 @@ void LinuxPreview::SetGpuParticles(ex::rhi::Buffer* additive,
             set->SetBuffer(0, frameConstants_.get(), 0,
                            frameConstants_->Size());
             set->SetBuffer(8, buffer, 0, buffer->Size());
-            set->SetImage(9, depthTarget_.get());
+            set->SetImage(9, volumeDepthTexture_.get());
             set->SetSampler(16, volumeSampler_.get());
         }
         return set;

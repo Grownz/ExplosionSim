@@ -7,9 +7,6 @@
 #include "app/Settings.h"
 #endif
 #include "gfx/Frustum.h"
-#ifdef _WIN32
-#include "gfx/Shader.h"
-#endif
 #include "scene/PhysicsWorld.h"
 #include "scene/SceneTypes.h"
 #include "scene/VoronoiFracture.h"
@@ -31,16 +28,6 @@
 #include <cwchar>
 #include <thread>
 #include <vector>
-
-#ifdef _WIN32
-// The settings serializer only needs this symbol for DefaultSettingsPath; the
-// round-trip test passes an explicit path.
-namespace ex::gfx {
-std::wstring ResolveAssetPath(const std::wstring&) {
-    return {};
-}
-} // namespace ex::gfx
-#endif
 
 namespace {
 

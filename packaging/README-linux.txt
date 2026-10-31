@@ -5,9 +5,15 @@ This archive is self-contained. Run it from this directory:
 
     ./ExplosionSim
 
+or install it into the per-user XDG directories:
+
+    bash install.sh
+
 The renderer needs a Vulkan 1.2 capable driver. The assets (shaders are
 embedded, but the splash frames and scene models are loaded from ./assets)
-must stay next to the executable.
+must stay next to the executable. The archive is built on Ubuntu 24.04 and
+therefore needs glibc 2.39 or newer; use a newer distribution or rebuild from
+source on older systems.
 
 Command-line examples
 ---------------------

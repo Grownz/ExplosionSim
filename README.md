@@ -131,7 +131,9 @@ cmake --build build --target package_linux
 ```
 
 See [docs/linux-build.md](docs/linux-build.md) for dependencies, the WSL flow,
-settings paths, the splash test, benchmarks and the packaging/capture commands.
+settings paths, the splash test, benchmarks and the packaging/capture commands,
+and [docs/linux-usage.md](docs/linux-usage.md) for installation, running,
+settings and troubleshooting.
 
 ## Run
 

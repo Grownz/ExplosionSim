@@ -53,4 +53,24 @@ std::filesystem::path UserSettingsPath(bool createDirectory) {
     return path;
 }
 
+std::filesystem::path ExecutableDirectory() {
+#ifdef _WIN32
+    wchar_t buffer[MAX_PATH * 2] = {};
+    const DWORD length =
+        GetModuleFileNameW(nullptr, buffer, DWORD(std::size(buffer)));
+    if (length == 0 || length >= std::size(buffer)) {
+        return {};
+    }
+    return std::filesystem::path(buffer).parent_path();
+#else
+    std::error_code error;
+    const std::filesystem::path executable =
+        std::filesystem::read_symlink("/proc/self/exe", error);
+    if (error || executable.empty()) {
+        return {};
+    }
+    return executable.parent_path();
+#endif
+}
+
 } // namespace ex::app

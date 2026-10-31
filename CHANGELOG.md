@@ -4,6 +4,58 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-10-31
+
+0.11.0 is the native Linux port milestone. The same simulation core, scene
+generator and GPU Euler solver now run through a backend-neutral RHI on Vulkan
+and D3D11, and the Windows application keeps its existing D3D11 path. The Linux
+shell ships as a self-contained tar.gz with the reduced-order renderer, the
+high-fidelity solver, GPU volume bake/particles, an SDL3 splash, portable
+settings and CI-verified capture parity.
+
+### Added
+
+- **Native Linux application** - `explosion_linux` builds with SDL3 + Vulkan,
+  renders the reduced-order chain (sky, ground, procedural town, volume,
+  particles, shock, bloom, composite) and runs the high-fidelity GPU Euler
+  solver with render and light volumes.
+- **Multi-platform RHI** - backend-neutral device, command list, compute,
+  storage-image/buffer, indirect-draw and timestamp-query interfaces with D3D11
+  and Vulkan implementations.
+- **GPU Euler solver on Vulkan** - `RhiEulerSolver` ports the state ping-pong,
+  init/sweep/reduce/render/light/rescale passes and the fused source terms.
+- **GPU volume bake and particles** - the analytic volume bake and the
+  spawn/reset/integrate/finalize particle path run as compute shaders, with CPU
+  fallbacks (`--no-gpu-volume-bake`, `--no-gpu-particles`).
+- **GPU timestamp benchmark** - the Linux solver benchmark reports the GPU total
+  and per-pass sweep/reduce/render timings, matching the Windows benchmark.
+- **Portable image I/O** - stb_image/stb_image_write replace WIC for PNG/JPEG
+  loading and PNG saving.
+- **SDL3 Linux splash** - the 980x640, 20-frame, 5 %-step splash with
+  `--splash-test` and `--splash-screenshot`.
+- **Portable settings** - XDG paths on Linux, `%LOCALAPPDATA%` on Windows,
+  portable `settings.ini` preferred, and `--write-settings` with an exact
+  round-trip.
+- **Linux package** - `package_linux` produces a self-contained tar.gz with the
+  binary, assets, desktop entry, icon and README; CI extracts and runs it.
+- **Test matrix** - Linux `core`, `physics` and `gpu_vulkan`; Windows `core`,
+  `physics` and `gpu`.
+- **Benchmarks and hardening** - frame benchmark, descriptor-update caching,
+  Vulkan pipeline cache, minimized-window rendering pause, high-DPI pixel sizes
+  and a non-ASCII settings-path test.
+
+### Known limitations
+
+- Linux v1 has no in-app self-updater; replace the release archive to update.
+- The Windows splash still uses GDI for its threaded animation (image decoding
+  uses stb).
+- The Linux shell has no ImGui UI; it is configured through settings and
+  command-line options.
+- The volume pass uses a far-depth placeholder instead of the real scene depth,
+  so volumes are not occluded by buildings.
+- The same-GPU-class performance comparison is pending; lavapipe benchmarks are
+  functional baselines only.
+
 ## [0.10.5] - 2026-10-29
 
 0.10.5 is a feature patch over 0.10.0: the procedural town now uses ten

@@ -10,4 +10,8 @@ namespace ex::app {
 // available.
 std::filesystem::path UserSettingsPath(bool createDirectory = true);
 
+// Directory containing the running executable, or an empty path when it cannot
+// be resolved.
+std::filesystem::path ExecutableDirectory();
+
 } // namespace ex::app

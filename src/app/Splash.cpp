@@ -2,8 +2,6 @@
 
 #include "gfx/ImageIO.h"
 
-#include <objbase.h>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -89,14 +87,8 @@ void Splash::Close() {
 }
 
 void Splash::ThreadMain() {
-    // The later frames are decoded lazily on this thread, so it needs its own
-    // COM apartment for WIC.
-    const HRESULT comResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    auto releaseCom = [&comResult]() {
-        if (SUCCEEDED(comResult)) {
-            CoUninitialize();
-        }
-    };
+    // Later frames are decoded lazily on this thread with the portable stb
+    // loader, so no COM apartment is needed.
     dpi_ = std::max(96, int(GetDpiForSystem()));
     width_ = Scale(980, dpi_);
     height_ = Scale(640, dpi_);
@@ -151,7 +143,6 @@ void Splash::ThreadMain() {
             ready_.store(true);
             running_.store(false);
             ReleaseResources();
-            releaseCom();
             return;
         }
         classRegistered_ = true;
@@ -163,7 +154,6 @@ void Splash::ThreadMain() {
         ready_.store(true);
         running_.store(false);
         ReleaseResources();
-        releaseCom();
         return;
     }
 
@@ -194,7 +184,6 @@ void Splash::ThreadMain() {
     window_.store(nullptr);
     ReleaseResources();
     ready_.store(false);
-    releaseCom();
 }
 
 void Splash::CreateFonts() {

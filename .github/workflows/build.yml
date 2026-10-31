@@ -3,6 +3,7 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
 
 jobs:
@@ -17,7 +18,7 @@ jobs:
           sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers \
             libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
             libxfixes-dev libxss-dev libwayland-dev libxkbcommon-dev \
-            python3-pil
+            python3-pil vulkan-validationlayers
 
       - name: Install DXC
         run: |
@@ -170,11 +171,46 @@ jobs:
             "$GITHUB_WORKSPACE/tools/reference/win_capture.png" \
             /tmp/package_capture.png --tolerance 20 --max-fraction 0.20
 
+      - name: Vulkan validation layers (lavapipe)
+        run: |
+          ./build/explosion_linux --settings tools/capture_settings.ini --debug \
+            --headless --width 320 --height 180 --frames 1 --time 0.1 \
+            --charge 0.2 --distance-scale 0.55 \
+            --screenshot /tmp/validation.png 2>&1 | tee /tmp/validation.log
+          ./build/explosion_linux --settings tools/capture_settings.ini --debug \
+            --high-fidelity --solver-resolution 32 --no-solver-auto-scale \
+            --headless --width 320 --height 180 --frames 1 --time 0.01 \
+            --charge 0.2 --distance-scale 0.55 \
+            --screenshot /tmp/validation_hf.png 2>&1 | tee -a /tmp/validation.log
+          ! grep -q "validation layer is not available" /tmp/validation.log
+          ! grep -q "\[error\] Vulkan:" /tmp/validation.log
+
       - name: Upload Linux package
         uses: actions/upload-artifact@v6
         with:
           name: ExplosionSim-linux-x86_64
           path: build/ExplosionSim-linux-x86_64.tar.gz
+
+  linux-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build g++ cmake
+
+      - name: Configure with ASan/UBSan
+        run: |
+          cmake -S . -B build-asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DEXPLOSION_SANITIZE=ON -DEXPLOSION_BUILD_VULKAN_SMOKE=OFF
+
+      - name: Build
+        run: cmake --build build-asan --parallel
+
+      - name: Test
+        run: ctest --test-dir build-asan --output-on-failure
 
   windows:
     runs-on: windows-2022
@@ -240,3 +276,39 @@ jobs:
             tools/reference/win_hf_capture.png \
             artifacts/linux-hf/linux_hf_capture.png \
             --tolerance 22 --max-fraction 0.30
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    needs: [windows, linux-core]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: ExplosionSim-win64
+          path: artifacts/windows
+
+      - name: Download Linux package
+        uses: actions/download-artifact@v6
+        with:
+          name: ExplosionSim-linux-x86_64
+          path: artifacts/linux
+
+      - name: Package the Windows artifact
+        run: |
+          cd artifacts/windows
+          zip -r ../../ExplosionSim-win64.zip .
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            ExplosionSim-win64.zip \
+            artifacts/linux/ExplosionSim-linux-x86_64.tar.gz \
+            --title "Explosion Simulator $GITHUB_REF_NAME" \
+            --generate-notes
