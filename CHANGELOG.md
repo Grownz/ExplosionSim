@@ -4,7 +4,22 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.1] - 2026-10-31
+
+0.12.1 is a splash and update patch over 0.12.0. The startup splash uses the
+same TTF family as the application again, blends between its stills and no
+longer shows dark seams; the main window keeps the splash's z-level when it
+closes. The Linux build gained the in-app updater that the Windows build
+already had.
+
+### Highlights
+
+- **Splash polish** - shared TTF text, crossfaded stills, a seam-free gradient
+  and a main window that stays in front when the splash closes.
+- **Linux in-app updater** - `ExplosionSimUpdater` checks GitHub, verifies the
+  SHA-256 digest, swaps the per-user install and restarts the application.
+- **Headless splash and updater tests** - both run in CI on the matching
+  platforms.
 
 ### Fixed
 
@@ -43,6 +58,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   the install swap including the relaunch.
 - The Linux CI installs `fonts-dejavu-core` so the shared font is always
   available.
+
+### Known limitations
+
+- The Linux updater manages per-user installations only; a system-wide install
+  should be updated through the package manager.
+- The Linux updater does not use an explicit proxy setting yet.
 
 ## [0.12.0] - 2026-10-31
 

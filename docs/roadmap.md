@@ -6,7 +6,7 @@ alternatives and the acceptance criteria. The guiding rule for every item is: **
 physically correct as the budget allows, and fast enough to stay above 60 fps at
 1920x1080 with `scene.density = 3`**.
 
-Target releases: `0.12.0` (current), `1.0.0` (future).
+Target releases: `0.12.1` (current), `1.0.0` (future).
 
 ## Status (2026-10-25)
 
