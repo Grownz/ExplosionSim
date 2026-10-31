@@ -61,6 +61,19 @@ Useful flags:
 | `--splash-test` | Render the splash briefly and exit. |
 | `--debug` | Enable Vulkan validation layers when installed. |
 
+## User interface
+
+Windowed runs show an ImGui panel (F1 toggles it). It provides:
+
+- pause, detonate, reset and frame-camera buttons;
+- charge mass, height of burst and time scale, plus a high-fidelity toggle and
+  solver grid;
+- exposure, bloom, raymarch steps and volume/particle/ground/bloom/grid toggles.
+
+"Apply blast settings" restarts the blast with the edited values; the render
+controls apply immediately. The panel needs a desktop session; headless
+captures, benchmarks and the splash test do not initialize it.
+
 ## Settings
 
 The app looks for `settings.ini` in this order:

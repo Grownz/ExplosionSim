@@ -47,6 +47,9 @@ public:
     bool Poll() override {
         SDL_Event event{};
         while (SDL_PollEvent(&event)) {
+            if (eventCallback_) {
+                eventCallback_(eventUser_, &event);
+            }
             switch (event.type) {
             case SDL_EVENT_QUIT:
                 return false;
@@ -84,6 +87,11 @@ public:
 
     bool Minimized() const override { return minimized_; }
 
+    void SetEventCallback(EventCallback callback, void* user) override {
+        eventCallback_ = callback;
+        eventUser_ = user;
+    }
+
     const char* const* VulkanInstanceExtensions(uint32_t& count) const override {
         count = 0;
         return SDL_Vulkan_GetInstanceExtensions(&count);
@@ -106,6 +114,8 @@ public:
 private:
     SDL_Window* window_ = nullptr;
     bool minimized_ = false;
+    EventCallback eventCallback_ = nullptr;
+    void* eventUser_ = nullptr;
 };
 
 } // namespace

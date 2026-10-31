@@ -26,8 +26,9 @@ installation, running, settings and troubleshooting, see
   reduced-order chain (sky, ground, procedural scene, volume bake, particles,
   shock, bloom and composite) through the RHI. `--high-fidelity` switches the
   volume source to the GPU Euler solver (state sweeps, reduction, render and
-  light volumes). It shows the SDL3 splash in windowed mode and can write an
-  offscreen `--screenshot` as PNG or PPM.
+  light volumes). Windowed runs show an ImGui settings/controls panel (F1). It
+  shows the SDL3 splash in windowed mode and can write an offscreen
+  `--screenshot` as PNG or PPM.
 - `package_linux`: builds a self-contained `ExplosionSim-linux-x86_64.tar.gz`
   with the binary, assets, desktop entry, icon and Linux README.
 - `vulkan_smoke`: Vulkan 1.2 device, offscreen target, clear, readback and

@@ -122,8 +122,9 @@ ctest --test-dir build --output-on-failure
 `ctest` runs `core`, `physics` and the offscreen Vulkan `gpu_vulkan` solver
 suite. The native Linux application builds as `explosion_linux` and renders
 through Vulkan. It supports the reduced-order renderer, the high-fidelity GPU
-Euler solver, GPU volume bake/particles, the SDL3 splash, frame and solver
-benchmarks and a self-contained package:
+Euler solver, GPU volume bake/particles, the SDL3 splash, an ImGui
+settings/controls panel (F1), frame and solver benchmarks and a self-contained
+package:
 
 ```sh
 cmake --build build --target package_linux

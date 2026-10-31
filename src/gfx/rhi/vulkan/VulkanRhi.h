@@ -79,6 +79,20 @@ public:
     const std::string& AdapterName() const { return adapterName_; }
     uint64_t DedicatedVideoMemory() const { return dedicatedVideoMemory_; }
 
+    // Vulkan handles for the optional Linux ImGui overlay. These are
+    // Linux-only consumers of the RHI; the D3D11 backend does not expose them.
+    VkInstance Instance() const { return instance_; }
+    VkPhysicalDevice PhysicalDevice() const { return physicalDevice_; }
+    VkDevice DeviceHandle() const { return device_; }
+    VkQueue Queue() const { return queue_; }
+    uint32_t QueueFamily() const { return queueFamily_; }
+    VkRenderPass ActiveRenderPass() const { return renderPass_; }
+    VkCommandBuffer ActiveCommandBuffer() const { return commandBuffer_; }
+    VkPipelineCache PipelineCache() const { return pipelineCache_; }
+    uint32_t SwapchainImageCount() const {
+        return uint32_t(swapchainImages_.size());
+    }
+
 private:
     friend class CommandListImpl;
 

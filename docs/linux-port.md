@@ -318,8 +318,10 @@ windows, and CI renders from a non-ASCII settings path. CI also runs the Vulkan
 validation layers on lavapipe (reduced-order and HF) and an ASan/UBSan job for
 the core and physics tests. The volume, particle and shock passes now sample the
 real scene depth with a dummy depth attachment, so they are occluded by
-buildings. The Windows and Linux CI jobs upload release artifacts, and a
-tag-triggered `release` job attaches them to a GitHub release.
+buildings. The Linux shell has an optional ImGui panel (F1) for blast, solver
+and render settings, pause/reset/detonate and camera framing. The Windows and
+Linux CI jobs upload release artifacts, and a tag-triggered `release` job
+attaches them to a GitHub release.
 The 10 % same-GPU-class performance target still needs a hardware comparison
 run; the lavapipe numbers are documented as a functional baseline, not a
 hardware-parity claim.

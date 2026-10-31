@@ -6,6 +6,7 @@
 #include "sim/VolumeBaker.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -50,6 +51,10 @@ public:
     void SetHighFidelity(bool enabled) { highFidelity_ = enabled; }
     void SetGpuParticles(ex::rhi::Buffer* additive, ex::rhi::Buffer* alpha,
                          ex::rhi::Buffer* fire, ex::rhi::Buffer* indirect);
+    // Optional UI overlay, invoked inside the final swapchain render pass.
+    void SetOverlayCallback(std::function<void()> callback) {
+        overlay_ = std::move(callback);
+    }
     void Render(ex::rhi::Device* device, ex::sim::Simulation& simulation,
                 const ex::gfx::Camera& camera, int width, int height,
                 bool vsync);
@@ -231,6 +236,7 @@ private:
     float frameConstantsData_[112]{};
     float bloomConstantsData_[8]{};
     Settings settings_{};
+    std::function<void()> overlay_;
     float lastSimTime_ = 0.0f;
     uint32_t frameIndex_ = 0;
 };

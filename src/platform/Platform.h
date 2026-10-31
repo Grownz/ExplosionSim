@@ -28,6 +28,10 @@ public:
     virtual void SetTitle(const char* title) = 0;
     // True while the window is minimized; the application can skip rendering.
     virtual bool Minimized() const = 0;
+    // Optional raw-event sink. The event is a backend event object (SDL_Event
+    // on the SDL3 backend) and is only valid for the duration of the call.
+    using EventCallback = void (*)(void* user, const void* event);
+    virtual void SetEventCallback(EventCallback callback, void* user) = 0;
 
     virtual const char* const* VulkanInstanceExtensions(
         uint32_t& count) const = 0;

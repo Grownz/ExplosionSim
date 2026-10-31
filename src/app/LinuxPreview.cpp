@@ -1903,6 +1903,9 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         device->BindDescriptorSet(compositeSet_.get());
         device->Draw(3);
     }
+    if (overlay_) {
+        overlay_();
+    }
     device->EndFrame(vsync);
 }
 

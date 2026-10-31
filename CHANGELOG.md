@@ -19,6 +19,8 @@ settings and CI-verified capture parity.
   renders the reduced-order chain (sky, ground, procedural town, volume,
   particles, shock, bloom, composite) and runs the high-fidelity GPU Euler
   solver with render and light volumes.
+- **Linux ImGui UI** - a settings/controls panel (F1) for blast, solver and
+  render settings, pause/reset/detonate and camera framing.
 - **Multi-platform RHI** - backend-neutral device, command list, compute,
   storage-image/buffer, indirect-draw and timestamp-query interfaces with D3D11
   and Vulkan implementations.
@@ -47,8 +49,6 @@ settings and CI-verified capture parity.
 ### Known limitations
 
 - Linux v1 has no in-app self-updater; replace the release archive to update.
-- The Linux shell has no ImGui UI; it is configured through settings and
-  command-line options.
 - The ground pass samples a far-depth proxy because it renders inside the main
   depth pass; the volume, particle and shock passes sample the real scene depth
   and are occluded by buildings.

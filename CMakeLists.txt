@@ -189,7 +189,7 @@ if(TARGET explosion_vulkan)
     ex_target_warnings(explosion_platform_sdl3)
 endif()
 
-if(EXPLOSION_BUILD_APP)
+if(EXPLOSION_BUILD_APP OR (NOT WIN32 AND TARGET explosion_vulkan_rhi))
     # Dear ImGui ships without a CMakeLists.txt; SOURCE_SUBDIR points to a
     # non-existent folder so FetchContent only downloads it.
     FetchContent_Declare(imgui
@@ -199,21 +199,41 @@ if(EXPLOSION_BUILD_APP)
         SOURCE_SUBDIR cmake/no-subdirectory)
     FetchContent_MakeAvailable(imgui)
 
-    add_library(imgui STATIC
-        ${imgui_SOURCE_DIR}/imgui.cpp
-        ${imgui_SOURCE_DIR}/imgui_draw.cpp
-        ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
+    if(EXPLOSION_BUILD_APP)
+        add_library(imgui STATIC
+            ${imgui_SOURCE_DIR}/imgui.cpp
+            ${imgui_SOURCE_DIR}/imgui_draw.cpp
+            ${imgui_SOURCE_DIR}/imgui_tables.cpp
+            ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+            ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
+            ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp)
 
-    target_include_directories(imgui SYSTEM PUBLIC
-        ${imgui_SOURCE_DIR}
-        ${imgui_SOURCE_DIR}/backends)
+        target_include_directories(imgui SYSTEM PUBLIC
+            ${imgui_SOURCE_DIR}
+            ${imgui_SOURCE_DIR}/backends)
 
-    target_link_libraries(imgui PUBLIC d3d11 dxgi d3dcompiler)
-    target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
-    target_compile_options(imgui PRIVATE /W3 /utf-8)
+        target_link_libraries(imgui PUBLIC d3d11 dxgi d3dcompiler)
+        target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+        target_compile_options(imgui PRIVATE /W3 /utf-8)
+    endif()
+
+    if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
+        add_library(imgui_linux STATIC
+            ${imgui_SOURCE_DIR}/imgui.cpp
+            ${imgui_SOURCE_DIR}/imgui_draw.cpp
+            ${imgui_SOURCE_DIR}/imgui_tables.cpp
+            ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+            ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+            ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp)
+        target_include_directories(imgui_linux SYSTEM PUBLIC
+            ${imgui_SOURCE_DIR}
+            ${imgui_SOURCE_DIR}/backends)
+        target_link_libraries(imgui_linux PUBLIC
+            ${EXPLOSION_SDL3_TARGET}
+            explosion_vulkan)
+        target_compile_definitions(imgui_linux PUBLIC
+            IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+    endif()
 endif()
 
 # Jolt Physics (MIT) provides the rigid-body solver. The Build subdirectory
@@ -373,6 +393,7 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
     add_executable(explosion_linux
         src/app/LinuxApp.cpp
         src/app/LinuxPreview.cpp
+        src/app/LinuxUi.cpp
         src/app/SplashSdl.cpp
         src/app/SettingsPath.cpp
         src/gfx/GpuVolumeBaker.cpp
@@ -387,6 +408,7 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         explosion_vulkan_rhi
         explosion_platform_sdl3
         explosion_core
+        imgui_linux
         stb)
     ex_target_warnings(explosion_linux)
 

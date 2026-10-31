@@ -3,6 +3,7 @@
 
 #include "Version.h"
 #include "app/LinuxPreview.h"
+#include "app/LinuxUi.h"
 #include "app/SettingsPath.h"
 #include "app/SplashSdl.h"
 #include "core/Log.h"
@@ -13,6 +14,7 @@
 #include "gfx/GpuParticleSystem.h"
 #include "gfx/RhiEulerSolver.h"
 #include "gfx/rhi/Rhi.h"
+#include "gfx/rhi/vulkan/VulkanRhi.h"
 #include "platform/Platform.h"
 #include "sim/Simulation.h"
 #include "EulerInitShader.h"
@@ -860,6 +862,10 @@ bool WritePpm(const std::string& path, const std::vector<uint8_t>& bgra,
     return file.good();
 }
 
+void LinuxUiEventCallback(void* user, const void* event) {
+    static_cast<ex::app::LinuxUi*>(user)->ProcessEvent(event);
+}
+
 bool WriteImage(const std::string& path, const std::vector<uint8_t>& bgra,
                 int width, int height) {
     const bool ppm = path.size() >= 4 &&
@@ -1039,8 +1045,9 @@ int main(int argc, char** argv) {
     pumpSplash(0.30f, "Initializing Vulkan...", 0.20f);
 
     HighFidelityRuntime highFidelityRuntime;
+    bool solverReady = false;
     bool highFidelity = false;
-    if (options.highFidelity) {
+    if (options.highFidelity || !options.headless) {
         ex::gfx::RhiEulerSolver::Shaders eulerShaders{
             {kEulerCSInit, kEulerCSInitSize},
             {kEulerCSSweepX, kEulerCSSweepXSize},
@@ -1054,9 +1061,10 @@ int main(int argc, char** argv) {
             {kEulerCSLight, kEulerCSLightSize},
             {kEulerCSRescale, kEulerCSRescaleSize},
         };
-        highFidelity =
+        solverReady =
             highFidelityRuntime.solver.Initialize(device.get(), eulerShaders);
-        if (!highFidelity) {
+        highFidelity = options.highFidelity && solverReady;
+        if (options.highFidelity && !solverReady) {
             ex::LogWarn("High-fidelity solver unavailable; using the "
                         "reduced-order path.");
         }
@@ -1346,6 +1354,48 @@ int main(int argc, char** argv) {
         splash->Close();
         splashVisible = false;
     }
+
+    ex::rhi::vulkan::Device* vkDevice =
+        dynamic_cast<ex::rhi::vulkan::Device*>(device.get());
+    ex::app::LinuxUi linuxUi;
+    ex::app::LinuxUiState uiState{};
+    bool uiReady = false;
+    if (!options.headless && window && vkDevice) {
+        ex::app::LinuxUiHandles handles{};
+        handles.instance = reinterpret_cast<void*>(vkDevice->Instance());
+        handles.physicalDevice =
+            reinterpret_cast<void*>(vkDevice->PhysicalDevice());
+        handles.device = reinterpret_cast<void*>(vkDevice->DeviceHandle());
+        handles.queue = reinterpret_cast<void*>(vkDevice->Queue());
+        handles.queueFamily = vkDevice->QueueFamily();
+        handles.renderPass =
+            reinterpret_cast<void*>(vkDevice->ActiveRenderPass());
+        handles.pipelineCache =
+            reinterpret_cast<void*>(vkDevice->PipelineCache());
+        handles.imageCount = vkDevice->SwapchainImageCount();
+        uiReady = linuxUi.Initialize(window->NativeHandle(), handles);
+        if (uiReady) {
+            window->SetEventCallback(&LinuxUiEventCallback, &linuxUi);
+            preview.SetOverlayCallback([&linuxUi, vkDevice]() {
+                linuxUi.Render(reinterpret_cast<void*>(
+                    vkDevice->ActiveCommandBuffer()));
+            });
+            uiState.exposure = options.exposure;
+            uiState.bloomStrength = options.bloomStrength;
+            uiState.raymarchSteps = options.raymarchSteps;
+            uiState.enableVolume = options.volumeEnabled;
+            uiState.enableParticles = options.particlesEnabled;
+            uiState.enableGround = options.groundEnabled;
+            uiState.enableBloom = options.bloomEnabled;
+            uiState.showGrid = options.showGrid;
+            uiState.chargeMassKg = simulation.Settings().chargeMassKg;
+            uiState.heightOfBurstM = simulation.Settings().heightOfBurstM;
+            uiState.timeScale = simulation.Settings().timeScale;
+            uiState.highFidelity = highFidelity;
+            uiState.solverResolution = simulation.Settings().solverResolution;
+            uiState.solverAvailable = solverReady;
+        }
+    }
     FrameCamera(simulation, camera, options,
                 highFidelity ? &highFidelityRuntime.solver.Stats() : nullptr);
 
@@ -1354,6 +1404,7 @@ int main(int argc, char** argv) {
     int rendered = 0;
     double lastTime = NowSeconds();
     const double benchmarkStart = NowSeconds();
+    float frameMs = 0.0f;
     bool running = true;
     while (running) {
         if (window) {
@@ -1385,6 +1436,58 @@ int main(int argc, char** argv) {
             const double now = NowSeconds();
             const float dt = float(std::clamp(now - lastTime, 0.0, 0.05));
             lastTime = now;
+            frameMs = dt * 1000.0f;
+            if (uiReady) {
+                linuxUi.NewFrame();
+                linuxUi.Draw(uiState, simulation, frameMs);
+                if (uiState.quitRequested) {
+                    running = false;
+                }
+                if (uiState.resetRequested) {
+                    simulation.Reset();
+                    uiState.resetRequested = false;
+                }
+                if (uiState.detonateRequested) {
+                    simulation.DetonateNow();
+                    uiState.detonateRequested = false;
+                }
+                if (uiState.applySimulation) {
+                    ex::sim::SimulationSettings settings = simulation.Settings();
+                    settings.chargeMassKg =
+                        std::max(uiState.chargeMassKg, 0.01);
+                    settings.heightOfBurstM =
+                        std::max(uiState.heightOfBurstM, 0.0);
+                    settings.timeScale = std::max(uiState.timeScale, 0.01);
+                    settings.mode =
+                        (uiState.highFidelity && solverReady)
+                            ? ex::sim::SimulationMode::HighFidelity
+                            : ex::sim::SimulationMode::ReducedOrder;
+                    settings.solverResolution =
+                        std::clamp(uiState.solverResolution, 32, 256);
+                    simulation.ApplySettings(settings);
+                    highFidelity = settings.mode ==
+                                   ex::sim::SimulationMode::HighFidelity;
+                    preview.SetHighFidelity(highFidelity);
+                    uiState.applySimulation = false;
+                }
+                if (uiState.reframeRequested) {
+                    FrameCamera(
+                        simulation, camera, options,
+                        highFidelity ? &highFidelityRuntime.solver.Stats()
+                                     : nullptr);
+                    uiState.reframeRequested = false;
+                }
+                previewSettings.exposure = uiState.exposure;
+                previewSettings.bloomStrength = uiState.bloomStrength;
+                previewSettings.raymarchSteps = uiState.raymarchSteps;
+                previewSettings.enableVolume = uiState.enableVolume;
+                previewSettings.enableParticles = uiState.enableParticles;
+                previewSettings.enableGround = uiState.enableGround;
+                previewSettings.enableBloom = uiState.enableBloom;
+                previewSettings.showGrid = uiState.showGrid;
+                preview.SetSettings(previewSettings);
+            }
+            if (!uiState.paused) {
             if (highFidelity) {
                 if (simulation.IsArmed()) {
                     // Tick the fuse through the analytic model; the solver
@@ -1453,6 +1556,7 @@ int main(int argc, char** argv) {
                     simulation.Volume().Poll();
                 }
             }
+            }
         }
 
         preview.Render(device.get(), simulation, camera, device->Width(),
@@ -1489,6 +1593,11 @@ int main(int argc, char** argv) {
                     width, height);
     }
 
+    if (uiReady) {
+        device->WaitIdle();
+        window->SetEventCallback(nullptr, nullptr);
+        linuxUi.Shutdown();
+    }
     device->WaitIdle();
     ex::LogInfo("Rendered %d frame(s).", rendered);
     return 0;
