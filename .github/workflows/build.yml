@@ -233,7 +233,7 @@ jobs:
           Copy-Item build/Release/ExplosionSim.exe artifact/
           Copy-Item build/Release/ExplosionSimUpdater.exe artifact/
           Copy-Item -Recurse build/Release/assets artifact/
-          Copy-Item README.md, LICENSE artifact/
+          Copy-Item README.md, LICENSE, CHANGELOG.md artifact/
           Copy-Item third_party/miniz/LICENSE artifact/LICENSE-miniz.txt
 
       - name: Upload artifact

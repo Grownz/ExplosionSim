@@ -326,6 +326,13 @@ void DrawUpdates(UiContext& context, app::AppSettings& settings, UiActions& acti
     if (update.available) {
         ImGui::Spacing();
         ImGui::Text("Version %s is available.", update.version.c_str());
+        if (!update.notes.empty() &&
+            ImGui::CollapsingHeader("Release notes##update_notes")) {
+            ImGui::BeginChild("##update_notes_scroll", ImVec2(0.0f, 180.0f),
+                              ImGuiChildFlags_Borders);
+            DrawMarkdown(update.notes);
+            ImGui::EndChild();
+        }
         if (ImGui::Button("Download", ImVec2(-1.0f, 0.0f))) {
             actions.downloadUpdate = true;
         }

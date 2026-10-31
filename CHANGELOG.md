@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Changelog in the Windows package** - the release zip omitted
+  `CHANGELOG.md`, so fresh installs had no changelog and updates never replaced
+  the installed copy. The file is now part of the artifact and therefore of the
+  update.
+- **Release notes in the Windows update dialog** - the update panel now shows
+  the available release's notes in a collapsible section, matching Linux.
+
 ## [0.12.1] - 2026-10-31
 
 0.12.1 is a splash and update patch over 0.12.0. The startup splash uses the
