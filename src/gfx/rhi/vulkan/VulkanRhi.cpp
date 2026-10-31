@@ -779,6 +779,26 @@ bool Device::UploadTexture(rhi::Texture* texture, const void* data) {
 // device until the swapchain abstraction lands.
 class CommandListImpl final : public rhi::CommandList {
 public:
+    // Immediate-mode bindings (the SceneRenderer path) are turned into one
+    // descriptor set per recorded draw state.
+    enum class BindingKind { Buffer, Image, Sampler };
+    struct PendingBinding {
+        BindingKind kind = BindingKind::Buffer;
+        uint32_t binding = 0;
+        rhi::Buffer* buffer = nullptr;
+        uint64_t offset = 0;
+        uint64_t range = 0;
+        rhi::Texture* texture = nullptr;
+        rhi::Sampler* sampler = nullptr;
+    };
+    struct PipelineBindings {
+        std::vector<PendingBinding> pending;
+        std::unique_ptr<rhi::DescriptorSet> current;
+        std::vector<std::unique_ptr<rhi::DescriptorSet>> retired;
+        std::vector<std::unique_ptr<rhi::DescriptorSet>> freeSets;
+        bool inUse = false;
+    };
+
     explicit CommandListImpl(Device* device) : device_(device) {}
 
     void Begin() override {}
@@ -787,7 +807,9 @@ public:
     void BeginRenderPass(rhi::Texture* color, rhi::Texture* depth,
                          bool clearColor, bool clearDepth,
                          const float clearColorValue[4]) override {
-        if (!device_ || !color || !depth) {
+        // A null colour target is a depth-only pass (shadow maps). The device
+        // selects the matching render pass and framebuffer.
+        if (!device_ || !depth) {
             return;
         }
         const float r = clearColorValue ? clearColorValue[0] : 0.0f;
@@ -796,6 +818,11 @@ public:
         const float a = clearColorValue ? clearColorValue[3] : 1.0f;
         device_->BeginFrameTexture(color, depth, clearColor || clearDepth, r, g,
                                    b, a);
+        // The previous pass was submitted before this one started, so its
+        // descriptor sets are idle and can be reused.
+        if (device_->frameActive_) {
+            RecycleSets();
+        }
     }
 
     void EndRenderPass() override {
@@ -815,7 +842,23 @@ public:
         vkCmdSetScissor(device_->commandBuffer_, 0, 1, &scissor);
     }
 
-    void ClearDepth(rhi::Texture*, float) override {}
+    void ClearDepth(rhi::Texture* depth, float value) override {
+        // Depth-only clears outside a render pass run through the depth-only
+        // render pass. It clears to 1.0, which is the value the shadow passes
+        // use for a fully lit map.
+        if (!device_ || !depth || device_->frameActive_) {
+            return;
+        }
+        if (value != 1.0f) {
+            LogWarn("Vulkan ClearDepth only supports the 1.0 default; got %g.",
+                    value);
+        }
+        device_->BeginFrameTexture(nullptr, depth, true, 0.0f, 0.0f, 0.0f,
+                                   1.0f);
+        if (device_->frameActive_) {
+            device_->EndFrame(false);
+        }
+    }
 
     void BindPipeline(rhi::Pipeline* pipeline) override {
         if (!device_) {
@@ -824,20 +867,27 @@ public:
         device_->BindPipeline(pipeline);
         currentSet_ = nullptr;
         if (!pipeline) {
+            currentPipeline_ = nullptr;
+            currentSet_ = nullptr;
+            explicitSetBound_ = false;
             return;
         }
-        auto& set = sets_[pipeline];
-        if (!set) {
-            set = device_->CreateDescriptorSet(pipeline);
-        }
-        currentSet_ = set.get();
-        if (currentSet_) {
+        currentPipeline_ = pipeline;
+        auto& state = bindings_[pipeline];
+        if (!state.current) {
+            BindNewSet(pipeline, state);
+        } else {
+            currentSet_ = state.current.get();
             device_->BindDescriptorSet(currentSet_);
         }
+        explicitSetBound_ = false;
     }
     void BindDescriptorSet(rhi::DescriptorSet* set, uint32_t index) override {
         if (device_) {
             device_->BindDescriptorSet(set, index);
+            // An explicitly supplied set replaces the implicit one for the
+            // draws that follow; it must not be recycled while in flight.
+            explicitSetBound_ = true;
         }
     }
     void BindVertexBuffer(rhi::Buffer* buffer, uint32_t stride,
@@ -854,37 +904,160 @@ public:
 
     void BindConstantBuffer(rhi::Buffer* buffer, rhi::ShaderStage,
                             uint32_t slot) override {
-        if (currentSet_ && buffer) {
-            currentSet_->SetBuffer(slot, buffer, 0, buffer->Size());
+        if (!device_ || !currentPipeline_ || !buffer) {
+            return;
         }
+        PendingBinding value{};
+        value.kind = BindingKind::Buffer;
+        value.binding = slot;
+        value.buffer = buffer;
+        value.range = buffer->Size();
+        SetBinding(currentPipeline_, value);
     }
     void BindShaderResource(rhi::Buffer* buffer, rhi::ShaderStage,
                             uint32_t slot) override {
-        if (currentSet_ && buffer) {
-            currentSet_->SetBuffer(8 + slot, buffer, 0, buffer->Size());
+        if (!device_ || !currentPipeline_ || !buffer) {
+            return;
         }
+        PendingBinding value{};
+        value.kind = BindingKind::Buffer;
+        value.binding = 8 + slot;
+        value.buffer = buffer;
+        value.range = buffer->Size();
+        SetBinding(currentPipeline_, value);
     }
     void BindShaderResource(rhi::Texture* texture, rhi::ShaderStage,
                             uint32_t slot) override {
-        if (currentSet_ && texture) {
-            currentSet_->SetImage(8 + slot, texture);
+        if (!device_ || !currentPipeline_ || !texture) {
+            return;
         }
+        PendingBinding value{};
+        value.kind = BindingKind::Image;
+        value.binding = 8 + slot;
+        value.texture = texture;
+        SetBinding(currentPipeline_, value);
     }
     void BindSampler(rhi::Sampler* sampler, rhi::ShaderStage,
                      uint32_t slot) override {
-        if (currentSet_ && sampler) {
-            currentSet_->SetSampler(16 + slot, sampler);
+        if (!device_ || !currentPipeline_ || !sampler) {
+            return;
         }
+        PendingBinding value{};
+        value.kind = BindingKind::Sampler;
+        value.binding = 16 + slot;
+        value.sampler = sampler;
+        SetBinding(currentPipeline_, value);
+    }
+
+    // Immediate-mode bindings are snapshotted per draw: Vulkan evaluates a
+    // descriptor set at submit time, so a single mutable set per pipeline
+    // would make every draw see the last binding written. Each binding change
+    // that happens after a draw starts a new set, so recorded draws keep the
+    // state they were recorded with (the D3D11 behaviour the RHI models).
+    void SetBinding(rhi::Pipeline* pipeline, const PendingBinding& value) {
+        auto& state = bindings_[pipeline];
+        bool replaced = false;
+        for (PendingBinding& entry : state.pending) {
+            if (entry.binding == value.binding && entry.kind == value.kind) {
+                entry = value;
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced) {
+            state.pending.push_back(value);
+        }
+
+        if (!state.current || state.inUse) {
+            BindNewSet(pipeline, state);
+            return;
+        }
+        ApplyBinding(state.current.get(), value);
+    }
+
+    void BindNewSet(rhi::Pipeline* pipeline, PipelineBindings& state) {
+        if (state.current) {
+            state.retired.push_back(std::move(state.current));
+        }
+        std::unique_ptr<rhi::DescriptorSet> set;
+        if (!state.freeSets.empty()) {
+            set = std::move(state.freeSets.back());
+            state.freeSets.pop_back();
+        } else {
+            set = device_->CreateDescriptorSet(pipeline);
+        }
+        if (!set) {
+            return;
+        }
+        for (const PendingBinding& entry : state.pending) {
+            ApplyBinding(set.get(), entry);
+        }
+        state.current = std::move(set);
+        state.inUse = false;
+        currentSet_ = state.current.get();
+        device_->BindDescriptorSet(currentSet_);
+        explicitSetBound_ = false;
+    }
+
+    static void ApplyBinding(rhi::DescriptorSet* set,
+                             const PendingBinding& value) {
+        if (!set) {
+            return;
+        }
+        switch (value.kind) {
+        case BindingKind::Buffer:
+            set->SetBuffer(value.binding, value.buffer, value.offset,
+                           value.range);
+            break;
+        case BindingKind::Image:
+            set->SetImage(value.binding, value.texture);
+            break;
+        case BindingKind::Sampler:
+            set->SetSampler(value.binding, value.sampler);
+            break;
+        }
+    }
+
+    void MarkDrawUsesBindings() {
+        if (!currentPipeline_ || explicitSetBound_) {
+            return;
+        }
+        auto found = bindings_.find(currentPipeline_);
+        if (found != bindings_.end()) {
+            found->second.inUse = true;
+        }
+    }
+
+    // Called at the start of every pass. Passes are submitted and waited for
+    // one at a time, so every set referenced by earlier passes is idle again
+    // and can be reused.
+    void RecycleSets() {
+        for (auto& entry : bindings_) {
+            PipelineBindings& state = entry.second;
+            for (std::unique_ptr<rhi::DescriptorSet>& set : state.retired) {
+                state.freeSets.push_back(std::move(set));
+            }
+            state.retired.clear();
+            if (state.current) {
+                state.freeSets.push_back(std::move(state.current));
+            }
+            state.inUse = false;
+        }
+        currentPipeline_ = nullptr;
+        currentSet_ = nullptr;
+        explicitSetBound_ = false;
     }
 
     void Draw(uint32_t vertexCount, uint32_t firstVertex) override {
         if (device_) {
+            MarkDrawUsesBindings();
             device_->Draw(vertexCount, firstVertex);
         }
     }
     void DrawInstanced(uint32_t vertexCount, uint32_t instanceCount,
                        uint32_t firstVertex, uint32_t firstInstance) override {
         if (device_) {
+            MarkDrawUsesBindings();
             device_->DrawInstanced(vertexCount, instanceCount, firstVertex,
                                    firstInstance);
         }
@@ -893,6 +1066,7 @@ public:
                               uint32_t firstIndex, int32_t baseVertex,
                               uint32_t firstInstance) override {
         if (device_) {
+            MarkDrawUsesBindings();
             device_->DrawIndexedInstanced(indexCount, instanceCount, firstIndex,
                                           baseVertex, firstInstance);
         }
@@ -932,6 +1106,7 @@ public:
         device_->boundPipelineLayout_ = VK_NULL_HANDLE;
         device_->boundDescriptorSet_ = VK_NULL_HANDLE;
         computeActive_ = true;
+        RecycleSets();
     }
 
     void EndCompute() override {
@@ -1093,10 +1268,12 @@ public:
 private:
     Device* device_ = nullptr;
     bool computeActive_ = false;
-    // Immediate-mode bindings (SceneRenderer) map to one descriptor set per
-    // pipeline. The set stays alive with the command list.
-    std::unordered_map<rhi::Pipeline*, std::unique_ptr<rhi::DescriptorSet>> sets_;
+    std::unordered_map<rhi::Pipeline*, PipelineBindings> bindings_;
+    rhi::Pipeline* currentPipeline_ = nullptr;
     rhi::DescriptorSet* currentSet_ = nullptr;
+    // True while an explicitly supplied descriptor set is bound, so the
+    // implicit set does not get recycled underneath it.
+    bool explicitSetBound_ = false;
 };
 
 Device::~Device() {
