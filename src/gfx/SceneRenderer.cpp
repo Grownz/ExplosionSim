@@ -434,6 +434,10 @@ bool SceneRenderer::Initialize(rhi::Device* rhiDevice, const Shaders& shaders) {
         {20, rhi::DescriptorType::Sampler, 1, rhi::ShaderStage::Pixel, 2},
     };
     const rhi::DescriptorBinding shadowBindings[] = {
+        // The shadow vertex shader reads the frame constants for the sway
+        // phase, so the slot has to be part of this layout as well.
+        {0, rhi::DescriptorType::UniformBuffer, 1, rhi::ShaderStage::Vertex,
+         1},
         {3, rhi::DescriptorType::UniformBuffer, 1, rhi::ShaderStage::Vertex,
          1},
         {8, rhi::DescriptorType::StorageBuffer, 1, rhi::ShaderStage::Vertex,

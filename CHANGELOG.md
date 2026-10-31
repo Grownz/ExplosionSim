@@ -98,8 +98,8 @@ Windows.
   pipeline state, but `RenderShadow` bound the shadow pipeline once before the
   cascade loop. The cascades were recorded with no pipeline bound and stayed
   empty on Vulkan; the pipeline is now bound inside each cascade, and the shadow
-  passes bind the caller's frame constants that the shadow vertex shader reads
-  for the tree sway.
+  descriptor layout declares the frame constants that the shadow vertex shader
+  reads for the tree sway.
 - **Linux facade and vehicle style tags** - the preview passed a constant texture
   style tag for every building and vehicle, while Windows derives the facade
   pattern and the procedural paint from `object.meshVariant`; the preview now uses
