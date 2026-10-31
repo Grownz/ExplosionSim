@@ -95,6 +95,16 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
+The repository also ships a `linux-x64` configure preset and `linux-release`
+build/test presets, which mirror the Windows `windows-x64`/`release` presets
+and build into `build-linux`:
+
+```sh
+cmake --preset linux-x64
+cmake --build --preset linux-release
+ctest --preset linux-release
+```
+
 `EXPLOSION_BUILD_APP` defaults to `OFF` on Linux, so the configure step does not
 try to build the Win32/D3D11 application. The native Linux shell is built as the
 separate `explosion_linux` target whenever Vulkan and SDL3 are available.

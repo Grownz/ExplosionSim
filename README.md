@@ -112,6 +112,11 @@ folder is copied next to it. `physics` covers the blast model, atmosphere,
 volume baker, scene and settings; `gpu` exercises the Euler solver and is
 skipped when no Direct3D 11 device is available.
 
+`CMakePresets.json` provides the same flow as presets: `windows-x64` with the
+`release` build/test presets on Windows, and `linux-x64` with `linux-release`
+on Linux. Every change must build and pass the tests on both platforms; see
+[AGENTS.md](AGENTS.md).
+
 The portable simulation core and its tests also build natively on Linux:
 
 ```sh

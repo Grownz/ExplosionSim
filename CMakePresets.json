@@ -12,6 +12,15 @@
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "linux-x64",
+      "displayName": "Linux x64 (Ninja, Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-linux",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     }
   ],
   "buildPresets": [
@@ -25,6 +34,15 @@
       "name": "debug",
       "configurePreset": "windows-x64",
       "configuration": "Debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-x64"
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-x64",
+      "configuration": "Debug"
     }
   ],
   "testPresets": [
@@ -32,6 +50,13 @@
       "name": "release",
       "configurePreset": "windows-x64",
       "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-x64",
       "output": {
         "outputOnFailure": true
       }
