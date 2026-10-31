@@ -1,7 +1,10 @@
 #pragma once
 
+#include "app/SplashFont.h"
+
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -53,10 +56,25 @@ private:
     void DestroyResources();
     bool LoadFrame(int index);
     void Render(float displayProgress, float pulse, const std::string& status);
+    float FadeAlpha(uint64_t now) const;
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
     SDL_Texture* frame_ = nullptr;
+    // Outgoing frame of the current crossfade.
+    SDL_Texture* previousFrame_ = nullptr;
+    int previousFrameWidth_ = 0;
+    int previousFrameHeight_ = 0;
+    uint64_t fadeStartMs_ = 0;
+    uint64_t fadeDurationMs_ = 0;
+    uint64_t lastFrameChangeMs_ = 0;
+    bool fadeActive_ = false;
+
+    std::unique_ptr<SplashFont> titleFont_;
+    std::unique_ptr<SplashFont> subtitleFont_;
+    std::unique_ptr<SplashFont> statusFont_;
+    std::unique_ptr<SplashFont> percentFont_;
+
     std::vector<std::string> framePaths_;
     std::string title_;
     std::string subtitle_;

@@ -1,6 +1,7 @@
 #include "ui/Ui.h"
 
 #include "Version.h"
+#include "app/FontPaths.h"
 
 #include <imgui.h>
 
@@ -1171,17 +1172,24 @@ void LoadFonts(float dpiScale) {
     config.OversampleV = 1;
     config.PixelSnapH = true;
 
-    ImFont* font = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", fontSize, &config,
-                                               io.Fonts->GetGlyphRangesDefault());
+    const std::string fontPath = ex::app::UiFontPath();
+    ImFont* font = nullptr;
+    if (!fontPath.empty()) {
+        font = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), fontSize,
+                                            &config,
+                                            io.Fonts->GetGlyphRangesDefault());
+    }
     if (!font) {
         io.Fonts->AddFontDefault();
     }
 
     // The changelog viewer uses a font two points larger than the UI.
     const float changelogSize = std::round((16.5f + 2.0f) * dpiScale);
-    gChangelogFont = io.Fonts->AddFontFromFileTTF(
-        "C:\\Windows\\Fonts\\segoeui.ttf", changelogSize, &config,
-        io.Fonts->GetGlyphRangesDefault());
+    if (!fontPath.empty()) {
+        gChangelogFont = io.Fonts->AddFontFromFileTTF(
+            fontPath.c_str(), changelogSize, &config,
+            io.Fonts->GetGlyphRangesDefault());
+    }
 }
 
 UiActions Draw(UiContext& context) {

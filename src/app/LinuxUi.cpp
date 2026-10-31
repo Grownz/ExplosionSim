@@ -1,5 +1,6 @@
 #include "app/LinuxUi.h"
 
+#include "app/FontPaths.h"
 #include "core/Log.h"
 #include "sim/Simulation.h"
 
@@ -12,6 +13,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <string>
 
 namespace ex::app {
 
@@ -33,6 +35,22 @@ bool LinuxUi::Initialize(void* sdlWindow, const LinuxUiHandles& handles) {
     // Keep the working directory clean; the UI is not user-configurable yet.
     io.IniFilename = nullptr;
     ImGui::StyleColorsDark();
+
+    // Use the same TTF family as the splash and the Windows panel.
+    const std::string fontPath = ex::app::UiFontPath();
+    ImFont* font = nullptr;
+    if (!fontPath.empty()) {
+        ImFontConfig fontConfig{};
+        fontConfig.OversampleH = 2;
+        fontConfig.OversampleV = 1;
+        fontConfig.PixelSnapH = true;
+        font = io.Fonts->AddFontFromFileTTF(
+            fontPath.c_str(), 16.0f, &fontConfig,
+            io.Fonts->GetGlyphRangesDefault());
+    }
+    if (!font) {
+        io.Fonts->AddFontDefault();
+    }
 
     if (!ImGui_ImplSDL3_InitForVulkan(static_cast<SDL_Window*>(sdlWindow))) {
         LogWarn("Linux UI: ImGui SDL3 backend initialization failed.");

@@ -109,9 +109,9 @@ ctest --preset linux-release
 try to build the Win32/D3D11 application. The native Linux shell is built as the
 separate `explosion_linux` target whenever Vulkan and SDL3 are available.
 
-`ctest` runs three suites on Linux: `core`, `physics` and `gpu_vulkan`. On
-Windows the suites are `core`, `physics` and `gpu` (D3D11). The GPU suite is
-skipped only when no compatible device exists.
+`ctest` runs four suites on Linux: `core`, `splash`, `physics` and
+`gpu_vulkan`. On Windows the suites are `core`, `splash`, `physics` and `gpu`
+(D3D11). The GPU suite is skipped only when no compatible device exists.
 
 ### Benchmarks and hardening
 
@@ -224,12 +224,24 @@ one per 5 % progress step. The frames are decoded by the portable stb image
 loader; no WIC or SDL_image is required. Linux pumps the splash cooperatively
 between initialisation stages; the Windows application runs the same SDL3
 splash on a worker thread so the animation continues during shader compilation.
+
+The text is rasterized from the same TTF family as the ImGui panel with
+stb_truetype, so the splash matches the rest of the program: Segoe UI on
+Windows, and DejaVu Sans, Liberation Sans or Noto Sans on Linux. If no TTF is
+found, the splash falls back to SDL's bitmap font. Consecutive stills crossfade
+instead of snapping; the fade lasts 60 % of the measured time between two
+images, clamped to 120-1000 ms, so it follows the loading speed.
+
 The splash can be exercised without a display:
 
 ```sh
 SDL_VIDEODRIVER=dummy ./build/explosion_linux --splash-test \
   --splash-screenshot /tmp/splash.png
 ```
+
+`ctest` also runs the `splash` suite, which renders the splash with the dummy
+video driver, checks that the title uses the shared TTF and samples a frame in
+the middle of a crossfade. It runs on Windows and Linux.
 
 Settings are resolved in this order: `settings.ini` in the working directory,
 next to the executable, then the per-user path

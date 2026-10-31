@@ -18,7 +18,7 @@ jobs:
           sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers \
             libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
             libxfixes-dev libxss-dev libwayland-dev libxkbcommon-dev \
-            python3-pil vulkan-validationlayers
+            python3-pil vulkan-validationlayers fonts-dejavu-core
 
       - name: Install DXC
         run: |

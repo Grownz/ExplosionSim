@@ -394,7 +394,9 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         src/app/LinuxApp.cpp
         src/app/LinuxPreview.cpp
         src/app/LinuxUi.cpp
+        src/app/SplashFont.cpp
         src/app/SplashSdl.cpp
+        src/app/FontPaths.cpp
         src/app/SettingsPath.cpp
         src/gfx/GpuVolumeBaker.cpp
         src/gfx/GpuParticleSystem.cpp
@@ -500,8 +502,10 @@ if(EXPLOSION_BUILD_APP)
         src/main.cpp
         src/app/App.cpp
         src/app/Changelog.cpp
+        src/app/FontPaths.cpp
         src/app/Settings.cpp
         src/app/SettingsPath.cpp
+        src/app/SplashFont.cpp
         src/app/SplashSdl.cpp
         src/gfx/GfxDevice.cpp
         src/gfx/rhi/d3d11/D3D11Rhi.cpp
@@ -567,6 +571,35 @@ if(EXPLOSION_BUILD_TESTS)
     target_link_libraries(core_tests PRIVATE explosion_core)
     ex_target_warnings(core_tests)
     add_test(NAME core COMMAND core_tests)
+
+    # Headless splash test: verifies the shared TTF text and the image
+    # crossfade on both platforms without a desktop session.
+    if(DEFINED EXPLOSION_SDL3_TARGET)
+        add_executable(splash_render_test
+            tests/splash_tests.cpp
+            src/app/FontPaths.cpp
+            src/app/SplashFont.cpp
+            src/app/SplashSdl.cpp
+            src/gfx/ImageIO.cpp)
+        target_include_directories(splash_render_test PRIVATE
+            src
+            ${CMAKE_BINARY_DIR}/generated)
+        target_link_libraries(splash_render_test PRIVATE
+            explosion_core
+            ${EXPLOSION_SDL3_TARGET}
+            stb)
+        if(WIN32)
+            target_compile_definitions(splash_render_test PRIVATE
+                NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
+        endif()
+        ex_target_warnings(splash_render_test)
+        add_custom_command(TARGET splash_render_test POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    ${CMAKE_SOURCE_DIR}/assets
+                    $<TARGET_FILE_DIR:splash_render_test>/assets
+            COMMENT "Copying assets next to the splash test")
+        add_test(NAME splash COMMAND splash_render_test)
+    endif()
 
     if(EXPLOSION_BUILD_APP)
         add_executable(explosion_tests

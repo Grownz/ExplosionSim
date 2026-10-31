@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Splash font** - the splash now renders with the same TTF family as the
+  ImGui panels (Segoe UI on Windows; DejaVu Sans, Liberation Sans or Noto Sans
+  on Linux) instead of SDL's 8x8 bitmap debug font, so the startup screen
+  matches the rest of the program again.
+- **Splash crossfade** - stills now blend into each other instead of snapping.
+  The fade duration follows the measured loading speed (60 % of the time
+  between two images, clamped to 120-1000 ms), so a fast load fades quickly and
+  a slow load fades gently.
+
+### Added
+
+- A headless `splash` test on Windows and Linux that checks the shared TTF text
+  and samples a frame in the middle of a crossfade.
+- The Linux CI installs `fonts-dejavu-core` so the shared font is always
+  available.
+
 ## [0.12.0] - 2026-10-31
 
 0.12.0 is the first public release of the native Linux port, building on the
