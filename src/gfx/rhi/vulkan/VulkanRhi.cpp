@@ -1093,6 +1093,7 @@ public:
         }
         vkCmdDrawIndirect(device_->commandBuffer_, impl->Handle(), offset, 1,
                           0);
+        MarkDrawUsesBindings();
     }
 
     void BeginCompute() override {

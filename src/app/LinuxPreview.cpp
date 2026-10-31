@@ -1719,7 +1719,9 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
     }
     sceneKey ^= collapsed * 0x9E3779B97F4A7C15ull;
     if (sceneKey != sceneKey_) {
-        if (SetScene(simulation.Scene())) {
+        // With the shared renderer the preview's own instancing is unused, so
+        // only build it when it is the fallback.
+        if (sceneRendererReady_ || SetScene(simulation.Scene())) {
             sceneKey_ = sceneKey;
         }
     }
