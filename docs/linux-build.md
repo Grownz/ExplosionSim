@@ -210,8 +210,10 @@ the benchmark itself adds no per-step synchronisation.
 Windowed runs show the SDL3 splash while the device, pipelines and scene are
 prepared. It uses the same 980x640 layout and 20 stills as the Windows splash,
 one per 5 % progress step. The frames are decoded by the portable stb image
-loader; no WIC or SDL_image is required. The splash can be exercised without a
-display:
+loader; no WIC or SDL_image is required. Linux pumps the splash cooperatively
+between initialisation stages; the Windows application runs the same SDL3
+splash on a worker thread so the animation continues during shader compilation.
+The splash can be exercised without a display:
 
 ```sh
 SDL_VIDEODRIVER=dummy ./build/explosion_linux --splash-test \

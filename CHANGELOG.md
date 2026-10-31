@@ -47,8 +47,6 @@ settings and CI-verified capture parity.
 ### Known limitations
 
 - Linux v1 has no in-app self-updater; replace the release archive to update.
-- The Windows splash still uses GDI for its threaded animation (image decoding
-  uses stb).
 - The Linux shell has no ImGui UI; it is configured through settings and
   command-line options.
 - The ground pass samples a far-depth proxy because it renders inside the main

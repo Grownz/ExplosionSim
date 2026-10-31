@@ -1,7 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 struct SDL_Window;
@@ -10,30 +13,46 @@ struct SDL_Texture;
 
 namespace ex::app {
 
-// SDL3 splash used by the native Linux shell. It keeps the Windows layout
-// (980x640, one still per 5 % step, progress bar) but renders through SDL's 2D
-// renderer and the portable stb image loader, so it needs no GDI, WIC or a
-// desktop toolkit. The shell pumps it cooperatively between initialisation
-// stages; no extra thread is required.
+// SDL3 splash. It keeps the Windows layout (980x640, one still per 5 % step,
+// progress bar) and renders through SDL's 2D renderer and the portable stb
+// image loader, so it needs no GDI, WIC or a desktop toolkit.
+//
+// Two modes are supported:
+//   * cooperative (Linux shell): Show() creates the window and the caller
+//     pumps it between initialisation stages;
+//   * threaded (Windows app): ShowThreaded() runs the animation on a worker
+//     thread so it keeps moving during the long shader compilation.
 class SplashSdl {
 public:
     ~SplashSdl();
 
-    // framePaths are shown in order as the progress crosses each 5 % step.
     bool Show(const std::vector<std::string>& framePaths,
               const std::string& title, const std::string& subtitle);
+    bool Show(const std::vector<std::wstring>& framePaths,
+              const std::wstring& title, const std::wstring& subtitle);
+    bool ShowThreaded(const std::vector<std::string>& framePaths,
+                      const std::string& title, const std::string& subtitle);
+    bool ShowThreaded(const std::vector<std::wstring>& framePaths,
+                      const std::wstring& title, const std::wstring& subtitle);
+
     void SetProgress(float progress, const std::string& status,
                      float expectedSeconds = 0.35f);
-    // Processes events, advances the animated progress and redraws.
+    void SetProgress(float progress, const std::wstring& status,
+                     float expectedSeconds = 0.35f);
+    // Cooperative mode: processes events, advances the progress and redraws.
     void Pump();
     // Reads the current splash framebuffer as BGRA (used by --splash-test).
     bool Capture(std::vector<uint8_t>& bgra, int& width, int& height);
     void Close();
-    bool Visible() const { return window_ != nullptr; }
+    bool Visible() const { return visible_.load(std::memory_order_acquire); }
 
 private:
+    bool CreateWindowAndRenderer();
+    void ThreadMain();
+    void PumpFrame();
+    void DestroyResources();
     bool LoadFrame(int index);
-    void Render();
+    void Render(float displayProgress, float pulse, const std::string& status);
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
@@ -41,21 +60,30 @@ private:
     std::vector<std::string> framePaths_;
     std::string title_;
     std::string subtitle_;
-    std::string status_ = "Loading...";
 
     int frameWidth_ = 0;
     int frameHeight_ = 0;
     int currentFrame_ = -1;
     int width_ = 980;
     int height_ = 640;
+
+    // Shared with the UI thread in threaded mode.
+    std::mutex mutex_;
+    std::string status_ = "Loading...";
     float progress_ = 0.0f;
     float displayProgress_ = 0.0f;
     float stageStartProgress_ = 0.0f;
     float stageTarget_ = 0.0f;
     float stageDuration_ = 0.35f;
+    float pulse_ = 0.0f;
     uint64_t stageStartMs_ = 0;
     bool stageActive_ = false;
-    float pulse_ = 0.0f;
+
+    std::thread thread_;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> ready_{false};
+    std::atomic<bool> visible_{false};
+    bool threaded_ = false;
     bool videoInitialized_ = false;
 };
 

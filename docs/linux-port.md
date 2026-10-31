@@ -293,16 +293,16 @@ timings as the Windows benchmark.
 ### M5 — Splash, image I/O, settings, packaging (10–15 days)
 
 Status: **done.** WIC is replaced by stb_image/stb_image_write on both
-platforms. The Linux shell uses a cooperative SDL3 splash with the same
-980x640 layout, 20 frames and 5 % progress steps as the Windows splash;
+platforms. Both platforms use the SDL3 splash with the same 980x640 layout,
+20 frames and 5 % progress steps; Linux pumps it cooperatively and Windows runs
+it on a worker thread so the animation continues during shader compilation.
 `--splash-test` renders it with the dummy video driver for CI. Settings use an
 XDG path on Linux and `%LOCALAPPDATA%` on Windows while still preferring a
 portable `settings.ini` next to the executable. `--write-settings` round-trips
 the active profile exactly. `package_linux` produces a self-contained tar.gz
 with the binary, assets, desktop entry, icon and README; CI extracts it and runs
-a parity capture from the clean directory. The Windows splash still uses GDI for
-its threaded animation; its image decoding now goes through stb. The Linux v1
-updater is the GitHub release archive (no self-updater).
+a parity capture from the clean directory. The Linux v1 updater is the GitHub
+release archive (no self-updater).
 
 ### M6 — Parity, performance and hardening (10–20 days)
 

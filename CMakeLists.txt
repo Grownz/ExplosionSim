@@ -108,6 +108,38 @@ FetchContent_MakeAvailable(stb)
 add_library(stb INTERFACE)
 target_include_directories(stb SYSTEM INTERFACE ${stb_SOURCE_DIR})
 
+# SDL3 supplies the window/input layer for the Linux application and the
+# portable splash used by both platforms. Fetch it whenever either consumer is
+# being built.
+if(EXPLOSION_BUILD_APP OR EXPLOSION_BUILD_VULKAN_SMOKE)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TESTS OFF CACHE BOOL "" FORCE)
+    set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+    if(NOT WIN32)
+        find_package(X11 QUIET)
+        if(NOT X11_FOUND)
+            # Headless/CI environments without desktop development headers
+            # build SDL in console mode; the offscreen Vulkan path still
+            # works and the windowed path is exercised on desktop builds.
+            set(SDL_UNIX_CONSOLE_BUILD ON CACHE BOOL "" FORCE)
+            set(SDL_X11 OFF CACHE BOOL "" FORCE)
+            set(SDL_WAYLAND OFF CACHE BOOL "" FORCE)
+            set(SDL_KMSDRM OFF CACHE BOOL "" FORCE)
+        endif()
+    endif()
+    FetchContent_Declare(sdl3
+        URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.2.10.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(sdl3)
+    if(TARGET SDL3::SDL3-static)
+        set(EXPLOSION_SDL3_TARGET SDL3::SDL3-static)
+    else()
+        set(EXPLOSION_SDL3_TARGET SDL3::SDL3)
+    endif()
+endif()
+
 if(EXPLOSION_BUILD_VULKAN_SMOKE)
     # Vulkan-Headers are fetched so the backend can be built without a local
     # Vulkan SDK. The loader itself comes from the SDK or the system package.
@@ -133,35 +165,6 @@ if(EXPLOSION_BUILD_VULKAN_SMOKE)
         target_include_directories(explosion_vulkan INTERFACE
             ${vulkan_headers_SOURCE_DIR}/include)
         target_link_libraries(explosion_vulkan INTERFACE ${VULKAN_LIBRARY})
-
-        # SDL3 supplies the window, input and Vulkan surface for the smoke app
-        # and, from M3 on, for the Linux application.
-        set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-        set(SDL_STATIC ON CACHE BOOL "" FORCE)
-        set(SDL_TESTS OFF CACHE BOOL "" FORCE)
-        set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
-        set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
-        if(NOT WIN32)
-            find_package(X11 QUIET)
-            if(NOT X11_FOUND)
-                # Headless/CI environments without desktop development headers
-                # build SDL in console mode; the offscreen Vulkan path still
-                # works and the windowed path is exercised on desktop builds.
-                set(SDL_UNIX_CONSOLE_BUILD ON CACHE BOOL "" FORCE)
-                set(SDL_X11 OFF CACHE BOOL "" FORCE)
-                set(SDL_WAYLAND OFF CACHE BOOL "" FORCE)
-                set(SDL_KMSDRM OFF CACHE BOOL "" FORCE)
-            endif()
-        endif()
-        FetchContent_Declare(sdl3
-            URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-3.2.10.zip
-            DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-        FetchContent_MakeAvailable(sdl3)
-        if(TARGET SDL3::SDL3-static)
-            set(EXPLOSION_SDL3_TARGET SDL3::SDL3-static)
-        else()
-            set(EXPLOSION_SDL3_TARGET SDL3::SDL3)
-        endif()
     else()
         message(STATUS "Vulkan loader not found; skipping vulkan_smoke.")
     endif()
@@ -477,7 +480,7 @@ if(EXPLOSION_BUILD_APP)
         src/app/Changelog.cpp
         src/app/Settings.cpp
         src/app/SettingsPath.cpp
-        src/app/Splash.cpp
+        src/app/SplashSdl.cpp
         src/gfx/GfxDevice.cpp
         src/gfx/rhi/d3d11/D3D11Rhi.cpp
         src/gfx/Renderer.cpp
@@ -504,10 +507,10 @@ if(EXPLOSION_BUILD_APP)
         dwmapi
         winmm
         winhttp
-        msimg32
         ole32
         shell32
-        stb)
+        stb
+        ${EXPLOSION_SDL3_TARGET})
 
     target_compile_definitions(ExplosionSim PRIVATE
         NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _USE_MATH_DEFINES)

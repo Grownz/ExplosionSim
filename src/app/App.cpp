@@ -1,7 +1,7 @@
 #include "app/App.h"
 
 #include "Version.h"
-#include "app/Splash.h"
+#include "app/SplashSdl.h"
 #include "core/Log.h"
 #include "gfx/ImageIO.h"
 #include "gfx/Shader.h"
@@ -161,7 +161,7 @@ int App::Run(const LaunchOptions& options) {
 
     // The splash has to exist before the Direct3D device and ImGui, otherwise
     // the main window stays blank while the shaders and the scene are prepared.
-    Splash splash;
+    ex::app::SplashSdl splash;
     bool splashVisible = false;
     if (!options_.headless) {
         // 20 stills from the first ten seconds of the promo, one per 5 % step.
@@ -173,7 +173,7 @@ int App::Run(const LaunchOptions& options) {
             swprintf_s(path, L"assets\\splash\\frame_%02d.jpg", i);
             splashFrames.push_back(gfx::ResolveAssetPath(path));
         }
-        splashVisible = splash.Show(splashFrames, L"Explosion Simulator",
+        splashVisible = splash.ShowThreaded(splashFrames, L"Explosion Simulator",
                                     std::wstring(L"Version ") + EXPLOSION_VERSION_WSTRING);
         if (splashVisible) {
             // Measured stage shares (reference machine): window 0.1 %, device
