@@ -714,6 +714,9 @@ void TestFuseAndDetonation() {
     settings.heightOfBurstM = 0.4;
     settings.fuseSeconds = 1.0;
     settings.loop = false;
+    // The analytic particle burst is a reduced-order feature; pin the mode so
+    // the check below does not depend on the application default.
+    settings.mode = ex::sim::SimulationMode::ReducedOrder;
     settings.volumeResolution = 32;
     settings.particleBudget = 4000;
     settings.gpuParticles = false;

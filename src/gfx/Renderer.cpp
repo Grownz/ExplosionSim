@@ -146,8 +146,9 @@ bool Renderer::Initialize(GfxDevice& device) {
         return false;
     }
 
-    if (!solver_.Initialize(device_->Device(), device_->Context(),
-                            device_->DedicatedVideoMemory())) {
+    solverReady_ = solver_.Initialize(device_->Device(), device_->Context(),
+                                      device_->DedicatedVideoMemory());
+    if (!solverReady_) {
         LogWarn("High-fidelity GPU solver unavailable.");
     }
     if (!InitializeSceneRenderer()) {

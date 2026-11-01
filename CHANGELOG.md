@@ -6,6 +6,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **New first-start defaults** - a fresh `settings.ini` now starts with the
+  high-fidelity Euler solver (`HFSolver`) instead of the reduced-order model, a
+  500 kg TNT charge instead of 0.2 kg and a 5 m height of burst instead of
+  0.4 m. Explicit CLI options (`--charge`, `--hob`, `--high-fidelity`,
+  `--reduced-order`) and `tools/capture_settings.ini` still override them, so the
+  reference captures and the parity numbers are unchanged. If the device cannot
+  create the GPU solver, the app now logs a warning and falls back to the
+  reduced-order model instead of rendering without a volume.
+
 ## [0.14.6] - 2026-11-01
 
 0.14.6 is a hotfix release: the high-fidelity debris drag no longer acts on the

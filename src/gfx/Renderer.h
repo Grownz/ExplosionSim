@@ -66,6 +66,10 @@ public:
     void Render(sim::Simulation& simulation, const Camera& camera, const RenderSettings& settings);
     void SetSolverPaused(bool paused) { solverPaused_ = paused; }
 
+    // True when the GPU Euler solver initialised, so the high-fidelity model
+    // can actually produce a volume on this device.
+    bool SolverAvailable() const { return solverReady_; }
+
     // Advances the high-fidelity solver so its simulated time matches the
     // playback time scale for this frame. Returns the advanced simulation time.
     double AdvanceSolver(sim::Simulation& simulation, float realDt);
@@ -266,6 +270,7 @@ private:
     bool solverPrepared_ = false;
     bool solverCapWarned_ = false;
     bool solverPaused_ = false;
+    bool solverReady_ = false;
     bool solverBudgetHit_ = false;
     int solverObstacleFrame_ = 0;
 

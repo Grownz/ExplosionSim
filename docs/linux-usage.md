@@ -33,10 +33,10 @@ indirect draws. `vulkaninfo --summary` should list a device.
 ./ExplosionSim
 
 # Headless reduced-order capture:
-./ExplosionSim --headless --width 1600 --height 900 --frames 1 \
-    --time 0.12 --screenshot capture.png
+./ExplosionSim --reduced-order --headless --width 1600 --height 900 \
+    --frames 1 --time 0.12 --screenshot capture.png
 
-# High-fidelity Euler solver capture:
+# High-fidelity Euler solver capture (the default model):
 ./ExplosionSim --high-fidelity --solver-resolution 32 \
     --no-solver-auto-scale --headless --width 320 --height 180 \
     --frames 1 --time 0.01 --charge 0.2 --distance-scale 0.55 \

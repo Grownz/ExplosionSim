@@ -26,8 +26,8 @@ enum class SimulationMode : int {
 
 struct SimulationSettings {
     // Physics
-    double chargeMassKg = 0.2;
-    double heightOfBurstM = 0.4;
+    double chargeMassKg = 500.0;
+    double heightOfBurstM = 5.0;
     double ambientTemperatureK = 288.15;
     double ambientPressurePa = 101325.0;
     double relativeHumidity = 0.45;
@@ -41,7 +41,7 @@ struct SimulationSettings {
     double loopDurationS = 0.55;
 
     // Simulation model
-    SimulationMode mode = SimulationMode::ReducedOrder;
+    SimulationMode mode = SimulationMode::HighFidelity;
     int solverResolution = 128;
     int solverStepsPerFrame = 96; // max solver steps per rendered frame
     bool solverAutoScale = true;

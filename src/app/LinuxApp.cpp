@@ -84,7 +84,7 @@ struct Options {
     int volumeResolution = 0;
     bool gpuVolumeBake = true;
     bool gpuParticles = true;
-    bool highFidelity = false;
+    bool highFidelity = true;
     bool flowAround = true;
     bool bodyDrag = true;
     int solverResolution = 0;
@@ -361,9 +361,9 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
         return false;
     }
     const double chargeMassKg =
-        options.chargeMassKg > 0.0 ? options.chargeMassKg : 0.2;
+        options.chargeMassKg > 0.0 ? options.chargeMassKg : 500.0;
     const double heightOfBurstM =
-        options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 0.4;
+        options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 5.0;
     file << "# Explosion Simulator settings written by explosion_linux\n\n";
     file << "[simulation]\n";
     file << "chargeMassKg=" << chargeMassKg << "\n";
@@ -1220,9 +1220,9 @@ int main(int argc, char** argv) {
     ex::core::ThreadPool pool;
     ex::sim::SimulationSettings simulationSettings{};
     simulationSettings.chargeMassKg =
-        options.chargeMassKg > 0.0 ? options.chargeMassKg : 0.2;
+        options.chargeMassKg > 0.0 ? options.chargeMassKg : 500.0;
     simulationSettings.heightOfBurstM =
-        options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 0.4;
+        options.heightOfBurstM >= 0.0 ? options.heightOfBurstM : 5.0;
     simulationSettings.mode = highFidelity
                                   ? ex::sim::SimulationMode::HighFidelity
                                   : ex::sim::SimulationMode::ReducedOrder;

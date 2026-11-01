@@ -209,6 +209,12 @@ int App::Run(const LaunchOptions& options) {
         LogWarn("GPU particle path unavailable; using the CPU particle system.");
         settings_.simulation.gpuParticles = false;
     }
+    if (settings_.simulation.mode == sim::SimulationMode::HighFidelity &&
+        !renderer_.SolverAvailable()) {
+        LogWarn("High-fidelity model unavailable; falling back to the "
+                "reduced-order model.");
+        settings_.simulation.mode = sim::SimulationMode::ReducedOrder;
+    }
 
     if (splashVisible) {
         splash.SetProgress(0.988f, L"Initializing interface...", 0.01f);

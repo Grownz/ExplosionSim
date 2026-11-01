@@ -154,8 +154,9 @@ Hardening in M6:
 ## Linux application shell
 
 ```sh
-# Offscreen PNG capture through the Vulkan RHI:
-./build/explosion_linux --headless --width 1600 --height 900 \
+# Offscreen PNG capture through the Vulkan RHI (reduced-order model; the
+# high-fidelity solver is the default, so ask for the analytic model):
+./build/explosion_linux --reduced-order --headless --width 1600 --height 900 \
   --frames 2 --screenshot /tmp/explosion_linux.png
 
 # Interactive window (needs a desktop session and SDL3 video drivers):
@@ -165,7 +166,9 @@ Hardening in M6:
 The shell runs `sim::Simulation` and renders the full reduced-order preview
 through the Vulkan RHI: sky, ground, the generated town, the volume bake,
 the additive/fire/alpha particle batches, the shock-front refraction, bloom and
-the tonemap composite. The volume bake and particle integration run as compute
+the tonemap composite. The high-fidelity Euler solver is the default model;
+`--reduced-order` (or `simulationMode=0` in the profile) selects the analytic
+path. The volume bake and particle integration run as compute
 shaders by default; `--no-gpu-volume-bake` and `--no-gpu-particles` force the
 CPU paths. The camera follows the same reduced-order framing as the Windows
 app. `--screenshot` accepts `.png` and `.ppm`; the scene seed, density, charge,
