@@ -21,6 +21,24 @@ This applies to:
   (`src/app/LinuxUi.*`) must stay feature-equivalent;
 - packaging, settings, docs and changelog entries.
 
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `src/core` | Logging, thread pool, RNG, frame profiler |
+| `src/sim` | Blast model, particles, volume baker, 4C flow bodies, simulation settings |
+| `src/scene` | Procedural town, Voronoi fracture, Jolt rigid bodies, vehicle class data |
+| `src/gfx` | D3D11 renderer, RHI (`src/gfx/rhi/{d3d11,vulkan}`), Euler solver, GPU particles, AA, image I/O |
+| `src/app` | Win32 app (`App.cpp`), Linux shell (`LinuxApp.cpp`, `LinuxUi.cpp`), SDL splash, settings |
+| `src/ui` | Shared ImGui panels of the Windows app |
+| `src/platform` | Portable window/executable-path seams (`Platform.h`, SDL3 backend) |
+| `src/update` | Update check, HTTP client, archive extraction |
+| `tests` | `core`, `splash`, `physics`, `gpu` (Windows) / `gpu_vulkan`, `updater` (Linux) |
+| `tools` | Capture profile, PNG comparison, icon generation, SPIR-V embedding, updater |
+| `assets` | Shaders, splash stills, window icon, vehicle models |
+| `docs` | `architecture.md`, `physics.md`, `linux-port.md`, `linux-build.md`, `linux-usage.md`, `roadmap.md` |
+| `packaging`, `cmake`, `scripts` | Linux package files, generated `.rc`/`Version.h` templates, Kenney model converter |
+
 ## Required verification
 
 Windows (from the repository root):
@@ -31,6 +49,8 @@ cmake --build --preset release
 ctest --preset release
 ```
 
+Windows runs four tests: `core`, `splash`, `physics`, `gpu`.
+
 Linux (native or WSL):
 
 ```sh
@@ -38,6 +58,8 @@ cmake --preset linux-x64
 cmake --build --preset linux-release
 ctest --preset linux-release
 ```
+
+Linux runs five tests: `core`, `splash`, `updater`, `physics`, `gpu_vulkan`.
 
 For rendering changes, also run the headless capture parity check on Linux and
 compare it against the checked-in Windows reference:
@@ -65,7 +87,69 @@ ctest --test-dir build-asan --output-on-failure
 
 CI runs all of the above on every push; a change is not done until the
 `windows`, `linux-core`, `linux-sanitizers` and `capture-parity` jobs are
-green.
+green. A tag push additionally runs `release`, which attaches the two packages
+to a GitHub release.
+
+## Local build state
+
+- `build/` is the Windows (Visual Studio) tree, `build-linux/` the Linux (Ninja)
+  tree and `build-asan/` the sanitizer tree. None of them is committed.
+- The Windows binary has **no** `--settings` flag: it reads `settings.ini` next
+  to the executable (`DefaultSettingsPath()`), while the Linux shell accepts
+  `--settings <path>`. `build/Release/settings.ini` is therefore a live user
+  profile, not a fixture.
+- For parity and reference captures, copy `tools/capture_settings.ini` over
+  `build/Release/settings.ini`, run the capture and restore the previous file
+  afterwards. Never leave the capture profile behind.
+- On this machine Linux runs through WSL, with the repository at
+  `/mnt/i/AI-coding/Explosion_Sim`:
+  `wsl bash -lc "cd /mnt/i/AI-coding/Explosion_Sim && <command>"`. WSL renders
+  with llvmpipe (~1.6 s/frame at 1080p), so WSL frame times are not benchmark
+  data; use native Linux or small resolutions for timing comparisons.
+
+## Conventions
+
+- Keep the existing style: 4-space indentation, `#pragma once`, English
+  comments and log messages, `ex::` namespaces (`core`, `sim`, `scene`, `gfx`,
+  `app`, `ui`), logging through `core/Log.h`.
+- Add every new source/header to the matching list in `CMakeLists.txt`; the
+  build does not glob. Shader changes need both the DXC path and the embedded
+  SPIR-V data (`tools/embed_spirv.py`, generated `*Shader.h`).
+- A settings key is only complete when it is parsed and written in
+  `src/app/Settings.cpp` (and the Linux option handling), appears in both
+  panels and is covered by the settings round-trip test.
+- Scene generation is deterministic and hashed. Do not change the serial RNG
+  order when adding objects, and keep physics/GPU tests at their pinned step
+  counts and reference images.
+
+## Recurring workflows
+
+### Release
+
+1. Turn `[Unreleased]` in `CHANGELOG.md` into `## [x.y.z] - YYYY-MM-DD` with an
+   intro paragraph, `### Highlights` and `### Added/Changed/Fixed`, and update
+   the compare/release links at the bottom.
+2. Bump `VERSION` in `CMakeLists.txt`, the README badge and version text, and
+   `docs/roadmap.md` ("current").
+3. Verify both platforms (plus parity and the sanitizer suite where
+   applicable), commit `Release x.y.z`, create an annotated tag `vx.y.z`, push
+   `main` and the tag. The tag push builds the artifacts and creates the GitHub
+   release from the changelog section - no manual uploads.
+
+### Capture references
+
+Intentional rendering changes need new references: run the Windows capture with
+the same arguments as CI, write `tools/reference/win_capture.png` (and
+`win_hf_capture.png`), then re-run the Linux parity check and update the
+percentages in `docs/linux-port.md`.
+
+### Application icon
+
+`packaging/icon-source.png` (512 px, transparent rounded corners) is the master.
+`python tools/make_icon.py` regenerates `packaging/explosionsim.ico`
+(16-256 px), `packaging/explosionsim.png`, `packaging/explosionsim-512.png` and
+`assets/icon.png`. The Windows resource and the SDL window icon consume those
+files; nothing else needs editing.
 
 ## Platform-specific code
 
