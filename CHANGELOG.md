@@ -47,6 +47,12 @@ unchanged.
 
 ### Changed
 
+- **Rounded splash corners** - the borderless SDL3 splash window now has a 12 px
+  corner radius at the 640 px reference height (scaled with the splash). Windows
+  cuts the window with a native rounded GDI region (`SetWindowRgn`); X11 and
+  Wayland present a premultiplied alpha frame, and the splash capture applies the
+  same mask. The radius follows the common window radii (Windows 11: 8 px,
+  GNOME/libadwaita: 12 px).
 - **Anisotropic filtering control removed** - the only mip-mapped texture
   sampled through it is the isotropic surface grain on facades, vehicles and
   trees, so the setting made no visible difference (0x and 8x were measured at

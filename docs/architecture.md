@@ -61,12 +61,17 @@ The UI reports the worker count and the measured bake time.
 
 ## Startup
 
-A borderless GDI splash appears before the main window. It shows one of 20
+A borderless SDL3 splash appears before the main window. It shows one of 20
 stills taken every 0.5 s from the first ten seconds of the promo, switching at
 each 5 % progress step, together with the version, the current stage and a
 progress bar. The stills are cropped to the 980:640 splash aspect; the first is
 preloaded on the main thread and the rest are decoded on demand by the splash
-thread. The splash runs on its own thread so the bar keeps moving while the main
+thread. The window is transparent and masked with a 12 px rounded-corner radius
+at the 640 px reference height (scaled with the splash), which matches common
+window radii (Windows 11: 8 px, GNOME/libadwaita: 12 px). Windows cuts the
+borderless window with a native rounded GDI region; X11 and Wayland composite the
+premultiplied alpha frame, and the capture applies the same mask. The splash runs on its own
+thread so the bar keeps moving while the main
 thread creates the Direct3D device, compiles the shaders, initialises ImGui and
 prepares the simulation. The main window is
 created hidden and only shown when the splash closes, so no blank client area is

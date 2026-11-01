@@ -57,6 +57,10 @@ private:
     bool LoadFrame(int index);
     void Render(float displayProgress, float pulse, const std::string& status);
     float FadeAlpha(uint64_t now) const;
+    // Rounded window corners: builds the coverage mask, applies it to the
+    // window shape and presents the masked frame.
+    void UpdateRoundedMask(int width, int height);
+    void PresentRounded(int width, int height);
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
@@ -88,6 +92,14 @@ private:
     int currentFrame_ = -1;
     int width_ = 980;
     int height_ = 640;
+    // Rounded-corner mask (one byte per pixel), the masked present texture and
+    // its current size. The mask is rebuilt when the window size changes.
+    std::vector<uint8_t> roundedMask_;
+    SDL_Texture* sceneTarget_ = nullptr;
+    SDL_Texture* roundedFrame_ = nullptr;
+    int roundedWidth_ = 0;
+    int roundedHeight_ = 0;
+    int roundedRadius_ = 0;
 
     // Shared with the UI thread in threaded mode.
     std::mutex mutex_;

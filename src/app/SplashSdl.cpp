@@ -155,8 +155,16 @@ bool SplashSdl::CreateWindowAndRenderer() {
     width_ = std::max(320, std::min(980, int(float(bounds.w) * 0.92f)));
     height_ = std::max(240, std::min(640, int(float(bounds.h) * 0.92f)));
 
-    window_ = SDL_CreateWindow(title_.c_str(), width_, height_,
-                               SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP);
+    SDL_WindowFlags flags =
+        SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP;
+#ifdef _WIN32
+    // The D3D11/software window presentation on Windows does not composite a
+    // per-pixel alpha surface; the corners are cut with a GDI window region
+    // instead (see UpdateRoundedMask).
+#else
+    flags |= SDL_WINDOW_TRANSPARENT;
+#endif
+    window_ = SDL_CreateWindow(title_.c_str(), width_, height_, flags);
     if (!window_) {
         LogWarn("Splash: window creation failed (%s).", SDL_GetError());
         return false;
@@ -205,6 +213,7 @@ bool SplashSdl::CreateWindowAndRenderer() {
             break;
         }
     }
+    UpdateRoundedMask(width_, height_);
     return true;
 }
 
@@ -370,6 +379,11 @@ void SplashSdl::Render(float displayProgress, float pulse,
     SDL_GetWindowSize(window_, &width, &height);
     if (width <= 0 || height <= 0) {
         return;
+    }
+
+    UpdateRoundedMask(width, height);
+    if (sceneTarget_) {
+        SDL_SetRenderTarget(renderer_, sceneTarget_);
     }
 
     SDL_SetRenderDrawColor(renderer_, 18, 20, 24, 255);
@@ -546,6 +560,163 @@ void SplashSdl::Render(float displayProgress, float pulse,
         }
     }
 
+    PresentRounded(width, height);
+}
+
+void SplashSdl::UpdateRoundedMask(int width, int height) {
+    if (!renderer_ || width <= 0 || height <= 0) {
+        return;
+    }
+    if (width == roundedWidth_ && height == roundedHeight_ &&
+        !roundedMask_.empty()) {
+#ifdef _WIN32
+        // The GDI region is already applied; nothing to rebuild.
+        return;
+#else
+        if (roundedFrame_ && sceneTarget_) {
+            return;
+        }
+#endif
+    }
+    roundedWidth_ = width;
+    roundedHeight_ = height;
+    // Windows 11 uses an 8 px radius for top-level windows, GNOME/libadwaita
+    // 12 px; a 12 px radius at the 640 px reference height scales with the
+    // splash and reads as a normal window rounding.
+    roundedRadius_ = std::max(8, int(std::lround(12.0 * double(height) / 640.0)));
+    roundedRadius_ = std::min(roundedRadius_, std::min(width, height) / 2);
+
+    roundedMask_.assign(size_t(width) * size_t(height), 255);
+    const double radius = double(roundedRadius_);
+    const double halfWidth = width * 0.5;
+    const double halfHeight = height * 0.5;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const double px = (x + 0.5) - halfWidth;
+            const double py = (y + 0.5) - halfHeight;
+            const double qx = std::abs(px) - (halfWidth - radius);
+            const double qy = std::abs(py) - (halfHeight - radius);
+            const double ox = std::max(qx, 0.0);
+            const double oy = std::max(qy, 0.0);
+            const double distance = std::sqrt(ox * ox + oy * oy) +
+                                    std::min(std::max(qx, qy), 0.0) - radius;
+            const double coverage = std::clamp(0.5 - distance, 0.0, 1.0);
+            roundedMask_[size_t(y) * size_t(width) + size_t(x)] =
+                uint8_t(std::lround(coverage * 255.0));
+        }
+    }
+
+    if (roundedFrame_) {
+        SDL_DestroyTexture(roundedFrame_);
+        roundedFrame_ = nullptr;
+    }
+    if (sceneTarget_) {
+        SDL_DestroyTexture(sceneTarget_);
+        sceneTarget_ = nullptr;
+    }
+
+#ifdef _WIN32
+    // A normal borderless window presents through SDL correctly; a GDI region
+    // gives the rounded corners without the broken transparent-window path.
+    if (window_ && std::strcmp(SDL_GetCurrentVideoDriver(), "windows") == 0) {
+        HWND hwnd = static_cast<HWND>(SDL_GetPointerProperty(
+            SDL_GetWindowProperties(window_), SDL_PROP_WINDOW_WIN32_HWND_POINTER,
+            nullptr));
+        if (hwnd) {
+            HRGN region = ::CreateRoundRectRgn(0, 0, width + 1, height + 1,
+                                               roundedRadius_ * 2,
+                                               roundedRadius_ * 2);
+            if (region) {
+                ::SetWindowRgn(hwnd, region, TRUE);
+            }
+        }
+    }
+    return;
+#else
+    sceneTarget_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888,
+                                     SDL_TEXTUREACCESS_TARGET, width, height);
+    roundedFrame_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_ARGB8888,
+                                      SDL_TEXTUREACCESS_STREAMING, width,
+                                      height);
+#endif
+
+    // X11 uses the alpha mask for the click-through input shape. The grey RGB
+    // matches the mask because SDL's Win32 region builder reads the first
+    // channel byte (the Win32 splash uses a native GDI region instead).
+    if (window_) {
+        SDL_Surface* shape =
+            SDL_CreateSurface(width, height, SDL_PIXELFORMAT_ARGB8888);
+        if (shape) {
+            for (int y = 0; y < height; ++y) {
+                uint32_t* row = reinterpret_cast<uint32_t*>(
+                    static_cast<uint8_t*>(shape->pixels) +
+                    size_t(y) * size_t(shape->pitch));
+                for (int x = 0; x < width; ++x) {
+                    const uint32_t value = roundedMask_[size_t(y) * size_t(width) +
+                                                        size_t(x)];
+                    row[x] = (value << 24) | (value << 16) | (value << 8) |
+                             value;
+                }
+            }
+            SDL_SetWindowShape(window_, shape);
+            SDL_DestroySurface(shape);
+        }
+    }
+}
+
+void SplashSdl::PresentRounded(int width, int height) {
+    if (!renderer_) {
+        return;
+    }
+    UpdateRoundedMask(width, height);
+    if (!roundedFrame_) {
+        SDL_RenderPresent(renderer_);
+        return;
+    }
+
+    // The content was drawn into the offscreen target; read it there, then
+    // switch back to the window and present the masked copy.
+    SDL_Surface* captured = SDL_RenderReadPixels(renderer_, nullptr);
+    if (sceneTarget_) {
+        SDL_SetRenderTarget(renderer_, nullptr);
+    }
+    if (!captured) {
+        SDL_RenderPresent(renderer_);
+        return;
+    }
+    SDL_Surface* argb =
+        SDL_ConvertSurface(captured, SDL_PIXELFORMAT_ARGB8888);
+    SDL_DestroySurface(captured);
+    if (!argb) {
+        SDL_RenderPresent(renderer_);
+        return;
+    }
+
+    uint8_t* pixels = static_cast<uint8_t*>(argb->pixels);
+    for (int y = 0; y < height && y < argb->h; ++y) {
+        uint8_t* row = pixels + size_t(y) * size_t(argb->pitch);
+        const uint8_t* mask =
+            roundedMask_.data() + size_t(y) * size_t(width);
+        for (int x = 0; x < width && x < argb->w; ++x) {
+            const uint32_t coverage = mask[x];
+            if (coverage == 255) {
+                continue;
+            }
+            uint8_t* pixel = row + size_t(x) * 4;
+            pixel[3] = uint8_t((uint32_t(pixel[3]) * coverage + 127u) / 255u);
+#ifndef _WIN32
+            // X11/Wayland ARGB windows composite premultiplied alpha.
+            pixel[0] = uint8_t((uint32_t(pixel[0]) * coverage + 127u) / 255u);
+            pixel[1] = uint8_t((uint32_t(pixel[1]) * coverage + 127u) / 255u);
+            pixel[2] = uint8_t((uint32_t(pixel[2]) * coverage + 127u) / 255u);
+#endif
+        }
+    }
+    SDL_UpdateTexture(roundedFrame_, nullptr, argb->pixels, int(argb->pitch));
+    SDL_DestroySurface(argb);
+
+    SDL_SetTextureBlendMode(roundedFrame_, SDL_BLENDMODE_NONE);
+    SDL_RenderTexture(renderer_, roundedFrame_, nullptr, nullptr);
     SDL_RenderPresent(renderer_);
 }
 
@@ -553,7 +724,17 @@ bool SplashSdl::Capture(std::vector<uint8_t>& bgra, int& width, int& height) {
     if (!renderer_ || !window_ || threaded_) {
         return false;
     }
+    // Read the offscreen content target, not the window: with a transparent
+    // window the platform's window surface is not guaranteed to be readable
+    // back (the dummy driver in the test certainly is not), while the target
+    // always holds the last rendered frame.
+    if (sceneTarget_) {
+        SDL_SetRenderTarget(renderer_, sceneTarget_);
+    }
     SDL_Surface* surface = SDL_RenderReadPixels(renderer_, nullptr);
+    if (sceneTarget_) {
+        SDL_SetRenderTarget(renderer_, nullptr);
+    }
     if (!surface) {
         return false;
     }
@@ -577,6 +758,22 @@ bool SplashSdl::Capture(std::vector<uint8_t>& bgra, int& width, int& height) {
                     size_t(width) * 4);
     }
     SDL_DestroySurface(converted);
+    // Match the window shape: the corners are transparent in the capture too.
+    if (static_cast<int>(roundedMask_.size()) == width * height) {
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const uint32_t coverage =
+                    roundedMask_[size_t(y) * size_t(width) + size_t(x)];
+                if (coverage == 255) {
+                    continue;
+                }
+                uint8_t* pixel =
+                    bgra.data() + (size_t(y) * size_t(width) + size_t(x)) * 4;
+                pixel[3] = uint8_t((uint32_t(pixel[3]) * coverage + 127u) /
+                                   255u);
+            }
+        }
+    }
     return true;
 }
 
@@ -600,6 +797,18 @@ void SplashSdl::DestroyResources() {
         gradient_ = nullptr;
         gradientHeight_ = 0;
     }
+    if (roundedFrame_) {
+        SDL_DestroyTexture(roundedFrame_);
+        roundedFrame_ = nullptr;
+    }
+    if (sceneTarget_) {
+        SDL_DestroyTexture(sceneTarget_);
+        sceneTarget_ = nullptr;
+    }
+    roundedMask_.clear();
+    roundedWidth_ = 0;
+    roundedHeight_ = 0;
+    roundedRadius_ = 0;
     if (renderer_) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;
