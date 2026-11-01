@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "scene/PhysicsWorld.h"
+#include "scene/VehicleModels.h"
 #include "sim/BlastModel.h"
 
 namespace ex::core {
@@ -189,6 +190,13 @@ public:
     // coupling, which is meant for debris rather than intact structures.
     bool IsChunkBody(int bodyIndex) const;
 
+    // True when the body is the proxy of a vehicle; its class data drives the
+    // 4C flow drag.
+    bool IsVehicleBody(int bodyIndex) const;
+    // Average class data (mass, drag coefficient, reference areas) of the
+    // vehicle behind a physics body, or nullptr for any other body.
+    const VehicleModelInfo* VehicleInfoForBody(int bodyIndex) const;
+
 private:
     struct PendingJointFailure {
         double time = 0.0;
@@ -206,6 +214,8 @@ private:
     std::vector<uint8_t> ComputeSupport(const SceneObject& object) const;
     void DetachChunk(SceneObject& object, int index);
     void ApplyBlastForces(const sim::BlastModel& blast, float dtSim);
+    void ApplyVehicleBlast(SceneObject& object, const sim::BlastModel& blast,
+                           float dtSim);
     void BreakJoint(SceneObject& object, int a, int b);
     void ProcessJointFailures();
     void RegisterStructureBodies(SceneObject& object,

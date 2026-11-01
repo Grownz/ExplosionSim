@@ -628,4 +628,19 @@ void PhysicsWorld::AddImpulse(int index, const DirectX::XMFLOAT3& impulse) {
     bodyInterface.ActivateBody(id);
 }
 
+void PhysicsWorld::AddAngularImpulse(int index,
+                                     const DirectX::XMFLOAT3& impulse) {
+    if (!impl_ || index < 0 || index >= int(bodies_.size()) ||
+        index >= int(impl_->ids.size())) {
+        return;
+    }
+    const JPH::BodyID id = impl_->ids[index];
+    JPH::BodyInterface& bodyInterface = impl_->system.GetBodyInterface();
+    if (bodyInterface.GetMotionType(id) != JPH::EMotionType::Dynamic) {
+        return;
+    }
+    bodyInterface.AddAngularImpulse(id, ToJolt(impulse));
+    bodyInterface.ActivateBody(id);
+}
+
 } // namespace ex::scene

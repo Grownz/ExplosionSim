@@ -16,6 +16,18 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   256 and 512 px PNGs into `hicolor`. `tools/make_icon.py` regenerates every
   size from `packaging/icon-source.png`.
 
+### Fixed
+
+- **Vehicles react to the pressure wave and the flow** - each model now carries
+  the average class data of the real vehicle (curb mass, drag coefficient,
+  frontal/side/top reference areas: car 1.5 t, SUV 2.0 t, van 2.1 t, pickup
+  2.5 t). The blast loads them over the positive phase with the
+  reflected-pressure drag coefficient (1.8) and an overturning moment, they
+  become dynamic at light damage instead of only at heavy damage, and the
+  high-fidelity 4C coupling includes them again with their real mass and areas -
+  so a hatchback is thrown while a loaded truck barely moves. Whole-building and
+  tree proxies stay on the analytic blast path.
+
 ### Changed
 
 - **New first-start defaults** - a fresh `settings.ini` now starts with the

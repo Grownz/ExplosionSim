@@ -465,13 +465,17 @@ std::vector<FlowBody> Simulation::CollectFlowBodies(
     std::vector<FlowBody> flow;
     const std::vector<scene::RigidBody>& rigid = scene_.Physics().Bodies();
 
-    // The 4C coupling is for detached debris. Whole-building, vehicle and tree
-    // proxies carry a deliberately small collapse mass; letting the sampled
-    // flow drag them produced accelerations far above the blast-loading path
-    // and made the debris feel glued to the air.
+    // Detached debris chunks and whole vehicles are coupled. The building and
+    // tree proxies carry a deliberately small collapse mass, so the sampled
+    // flow would drag them far harder than the blast-loading path; they stay
+    // out. Vehicles use their class drag coefficient and reference areas, so
+    // the coupling scales with the real car instead of the stylised proxy.
     for (int i = 0; i < int(rigid.size()); ++i) {
         const scene::RigidBody& body = rigid[i];
-        if (body.isStatic || !scene_.IsChunkBody(i)) {
+        const bool chunk = scene_.IsChunkBody(i);
+        const scene::VehicleModelInfo* vehicle =
+            scene_.VehicleInfoForBody(i);
+        if (body.isStatic || (!chunk && !vehicle)) {
             continue;
         }
         if (body.position.x < bounds.min.x || body.position.x > bounds.max.x ||
@@ -485,6 +489,12 @@ std::vector<FlowBody> Simulation::CollectFlowBodies(
         entry.halfExtents = body.halfExtents;
         entry.orientation = body.orientation;
         entry.physicsIndex = i;
+        if (vehicle) {
+            entry.dragCoefficient = vehicle->dragCoefficient;
+            entry.frontalArea = vehicle->frontalAreaM2;
+            entry.sideArea = vehicle->sideAreaM2;
+            entry.topArea = vehicle->topAreaM2;
+        }
         flow.push_back(entry);
     }
     return flow;

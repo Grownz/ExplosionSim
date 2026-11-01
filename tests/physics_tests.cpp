@@ -499,6 +499,23 @@ void TestPhysicsWorld() {
     CHECK(settled.position.y < 1.0f);
     // Settled debris is either asleep or frozen into a static collider.
     CHECK(settled.sleeping || settled.frozen);
+
+    // Angular impulses (vehicle overturning) have to reach Jolt and the mirror.
+    {
+        ex::scene::PhysicsWorld spinWorld;
+        ex::scene::RigidBody spinner;
+        spinner.position = DirectX::XMFLOAT3(0.0f, 50.0f, 0.0f);
+        spinner.halfExtents = DirectX::XMFLOAT3(0.75f, 0.65f, 1.35f);
+        spinner.boundingRadius = 1.7f;
+        spinner.mass = 1500.0f;
+        spinner.invMass = 1.0f / 1500.0f;
+        CHECK(spinWorld.AddBody(spinner) == 0);
+        spinWorld.AddAngularImpulse(0, DirectX::XMFLOAT3(0.0f, 0.0f, 100.0f));
+        spinWorld.Step(1.0f / 120.0f);
+        std::printf("[test] angular impulse -> wz=%.3f\n",
+                    spinWorld.Bodies()[0].angularVelocity.z);
+        CHECK(std::abs(spinWorld.Bodies()[0].angularVelocity.z) > 0.1f);
+    }
 }
 
 void TestSceneDamage() {
@@ -1449,6 +1466,126 @@ void TestSha256() {
 
 #endif
 
+void TestVehicleBlastResponse() {
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 500.0;
+    charge.heightOfBurstM = 5.0;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 7;
+    settings.density = 1.0f;
+    settings.quality = 1;
+    ex::scene::Scene scene;
+    scene.Generate(settings, model);
+    CHECK(!scene.Empty());
+
+    // Resolution happens at the arrival time; run far enough for the positive
+    // phase to finish and the vehicles to slide out. Bodies are created while
+    // the scene runs, so the peak speed is sampled per enemy body index.
+    std::vector<float> peakSpeed;
+    for (int step = 0; step < 200; ++step) {
+        scene.Update(model, 0.01f);
+        const std::vector<ex::scene::RigidBody>& bodies = scene.Physics().Bodies();
+        if (peakSpeed.size() < bodies.size()) {
+            peakSpeed.resize(bodies.size(), 0.0f);
+        }
+        for (const ex::scene::SceneObject& object : scene.Objects()) {
+            if (object.type != ex::scene::SceneObjectType::Vehicle ||
+                object.bodyIndex < 0) {
+                continue;
+            }
+            const ex::scene::RigidBody& body = bodies[object.bodyIndex];
+            const float speed =
+                std::sqrt(body.velocity.x * body.velocity.x +
+                          body.velocity.y * body.velocity.y +
+                          body.velocity.z * body.velocity.z);
+            peakSpeed[object.bodyIndex] =
+                std::max(peakSpeed[object.bodyIndex], speed);
+        }
+    }
+
+    const std::vector<ex::scene::RigidBody>& bodies = scene.Physics().Bodies();
+    float fastest = 0.0f;
+    float farthest = 0.0f;
+    int moving = 0;
+    int vehicles = 0;
+    for (const ex::scene::SceneObject& object : scene.Objects()) {
+        if (object.type != ex::scene::SceneObjectType::Vehicle) {
+            continue;
+        }
+        ++vehicles;
+        if (object.bodyIndex < 0 || object.bodyIndex >= int(bodies.size())) {
+            continue;
+        }
+        const ex::scene::RigidBody& body = bodies[object.bodyIndex];
+        const ex::scene::VehicleModelInfo* info =
+            scene.VehicleInfoForBody(object.bodyIndex);
+        CHECK(info != nullptr);
+        CHECK(body.mass > 1000.0f);
+        const float moved =
+            std::sqrt((body.position.x - object.position.x) *
+                          (body.position.x - object.position.x) +
+                      (body.position.z - object.position.z) *
+                          (body.position.z - object.position.z));
+        farthest = std::max(farthest, moved);
+        fastest = std::max(fastest, peakSpeed[object.bodyIndex]);
+        if (peakSpeed[object.bodyIndex] > 0.05f) {
+            ++moving;
+        }
+        std::printf("[test]   d=%5.1f m  dmg=%d  peak=%5.2f m/s  moved=%5.2f m\n",
+                    object.distanceToBurst, int(object.damage),
+                    peakSpeed[object.bodyIndex], moved);
+    }
+    std::printf("[test] vehicles=%d moving=%d fastest=%.2f m/s farthest=%.2f m\n",
+                vehicles, moving, fastest, farthest);
+    // A vehicle inside the damage radius has to pick up a visible blast
+    // velocity and slide, not just twitch.
+    CHECK(moving > 0);
+    CHECK(fastest > 1.0f);
+    CHECK(farthest > 0.5f);
+}
+
+void TestVehicleProxyLookup() {
+    // The class data must be reachable from the physics body and must match the
+    // model table; debris and structure bodies must not resolve to a vehicle.
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 500.0;
+    charge.heightOfBurstM = 5.0;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 7;
+    settings.density = 1.0f;
+    ex::scene::Scene scene;
+    scene.Generate(settings, model);
+    scene.Update(model, 10.0f);
+
+    const std::vector<ex::scene::RigidBody>& bodies = scene.Physics().Bodies();
+    int vehicleBodies = 0;
+    int chunkBodies = 0;
+    for (int i = 0; i < int(bodies.size()); ++i) {
+        const ex::scene::VehicleModelInfo* info = scene.VehicleInfoForBody(i);
+        if (info) {
+            ++vehicleBodies;
+            CHECK(scene.IsVehicleBody(i));
+            CHECK(!scene.IsChunkBody(i));
+            CHECK(info->massKg >= 1000.0f);
+            CHECK(info->dragCoefficient > 0.2f);
+            CHECK(info->frontalAreaM2 > 1.0f);
+        } else if (scene.IsChunkBody(i)) {
+            ++chunkBodies;
+            CHECK(!scene.IsVehicleBody(i));
+        }
+    }
+    CHECK(vehicleBodies > 0);
+    CHECK(chunkBodies > 0);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -1487,6 +1624,8 @@ int main() {
     RUN(TestSceneLayoutPreview);
     RUN(TestParallelSceneGeneration);
     RUN(TestSceneReuse);
+    RUN(TestVehicleBlastResponse);
+    RUN(TestVehicleProxyLookup);
 #ifdef _WIN32
     RUN(TestSettingsRoundTrip);
 #endif

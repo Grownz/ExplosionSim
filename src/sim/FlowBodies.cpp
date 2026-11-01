@@ -27,6 +27,29 @@ float ProjectedArea(const FlowBody& body, const XMFLOAT3& direction) {
     return std::max(area, 0.01f);
 }
 
+float ReferenceArea(const FlowBody& body,
+                    const DirectX::XMFLOAT3& direction) {
+    if (body.frontalArea <= 0.0f && body.sideArea <= 0.0f &&
+        body.topArea <= 0.0f) {
+        return ProjectedArea(body, direction);
+    }
+    const XMVECTOR orientation = XMLoadFloat4(&body.orientation);
+    const XMVECTOR dir = XMVector3Normalize(XMLoadFloat3(&direction));
+    // Local +X is the vehicle's right (width), +Y up and +Z its forward axis;
+    // the renderer builds the models the same way.
+    const XMVECTOR axes[3] = {
+        XMVector3Rotate(XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), orientation),
+        XMVector3Rotate(XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), orientation),
+        XMVector3Rotate(XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), orientation)};
+    const float areas[3] = {body.sideArea, body.topArea, body.frontalArea};
+    float area = 0.0f;
+    for (int axis = 0; axis < 3; ++axis) {
+        area += std::abs(XMVectorGetX(XMVector3Dot(dir, axes[axis]))) *
+                areas[axis];
+    }
+    return std::max(area, 0.01f);
+}
+
 void ApplyBodyDrag(scene::PhysicsWorld& physics,
                    const std::vector<FlowBody>& bodies,
                    const std::vector<BodyFlowSample>& samples, float dt) {
@@ -60,8 +83,8 @@ void ApplyBodyDrag(scene::PhysicsWorld& physics,
         const float speed = std::sqrt(speedSq);
         const XMFLOAT3 direction{relative.x / speed, relative.y / speed,
                                  relative.z / speed};
-        const float area = ProjectedArea(body, direction);
-        float force = 0.5f * sample.density * kBodyDragCoefficient * area *
+        const float area = ReferenceArea(body, direction);
+        float force = 0.5f * sample.density * body.dragCoefficient * area *
                       speedSq;
         // Cap at 400 g so a numerical glitch cannot launch a body.
         force = std::min(force, 400.0f * rb.mass);

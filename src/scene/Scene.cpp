@@ -73,6 +73,37 @@ struct DamageThresholds {
     float impulseDestroy;
 };
 
+// Blast drag coefficient for a bluff body. The front face sees the reflected
+// overpressure, which is close to twice the incident value for the weak shocks
+// that dominate the vehicle response, so the side-on impulse is multiplied by
+// 1.8 (C_d = 1.0 drag + 0.8 reflection).
+inline constexpr float kBlastDragCoefficient = 1.8f;
+
+// Projected area of a vehicle class along a unit flow direction. The class
+// reference areas (frontal, side, top) come from VehicleModels.h and are
+// blended by the body orientation, so the loading follows the real vehicle
+// rather than the stylised proxy mesh.
+float VehicleReferenceArea(const VehicleModelInfo& model,
+                           const DirectX::XMFLOAT4& orientation,
+                           const DirectX::XMFLOAT3& direction) {
+    const DirectX::XMVECTOR q = DirectX::XMLoadFloat4(&orientation);
+    const DirectX::XMVECTOR dir =
+        DirectX::XMVector3Normalize(DirectX::XMLoadFloat3(&direction));
+    const DirectX::XMVECTOR axes[3] = {
+        DirectX::XMVector3Rotate(DirectX::XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f), q),
+        DirectX::XMVector3Rotate(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f), q),
+        DirectX::XMVector3Rotate(DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f), q)};
+    const float areas[3] = {model.sideAreaM2, model.topAreaM2,
+                            model.frontalAreaM2};
+    float area = 0.0f;
+    for (int axis = 0; axis < 3; ++axis) {
+        area += std::abs(DirectX::XMVectorGetX(
+                    DirectX::XMVector3Dot(dir, axes[axis]))) *
+                areas[axis];
+    }
+    return std::max(area, 0.01f);
+}
+
 DamageThresholds ThresholdsFor(SceneObjectType type) {
     switch (type) {
     case SceneObjectType::Building:
@@ -938,8 +969,31 @@ bool Scene::GenerateLayout(const SceneSettings& settings,
 }
 
 bool Scene::IsChunkBody(int bodyIndex) const {
-    return bodyIndex >= 0 && bodyIndex < int(bodyChunk_.size()) &&
-           bodyChunk_[size_t(bodyIndex)].first >= 0;
+    if (bodyIndex < 0 || bodyIndex >= int(bodyChunk_.size())) {
+        return false;
+    }
+    const std::pair<int, int>& location = bodyChunk_[size_t(bodyIndex)];
+    return location.first >= 0 && location.first < int(objects_.size()) &&
+           location.second >= 0;
+}
+
+bool Scene::IsVehicleBody(int bodyIndex) const {
+    return VehicleInfoForBody(bodyIndex) != nullptr;
+}
+
+const VehicleModelInfo* Scene::VehicleInfoForBody(int bodyIndex) const {
+    if (bodyIndex < 0 || bodyIndex >= int(bodyChunk_.size())) {
+        return nullptr;
+    }
+    const std::pair<int, int>& location = bodyChunk_[size_t(bodyIndex)];
+    if (location.first < 0 || location.first >= int(objects_.size())) {
+        return nullptr;
+    }
+    const SceneObject& object = objects_[size_t(location.first)];
+    if (object.type != SceneObjectType::Vehicle) {
+        return nullptr;
+    }
+    return &kVehicleModels[object.meshVariant % kVehicleModelCount];
 }
 
 void Scene::Update(const sim::BlastModel& blast, float dtSim) {
@@ -1004,10 +1058,18 @@ void Scene::Update(const sim::BlastModel& blast, float dtSim) {
                 object.damage == DamageState::Destroyed) {
                 StartCollapse(object);
             }
-        } else if ((object.damage == DamageState::Heavy ||
-                    object.damage == DamageState::Destroyed) &&
-                   object.bodyIndex < 0) {
-            ActivateBody(object);
+        } else if (object.bodyIndex < 0) {
+            // Vehicles start moving once the blast does any damage: the loading
+            // is graded by their class mass and area, so a light car shifts at
+            // 10 kPa while an intact one stays parked. Trees need heavy damage.
+            const bool vehicle = object.type == SceneObjectType::Vehicle;
+            const bool activate =
+                vehicle ? object.damage != DamageState::Intact
+                        : (object.damage == DamageState::Heavy ||
+                           object.damage == DamageState::Destroyed);
+            if (activate) {
+                ActivateBody(object);
+            }
         }
     }
 
@@ -1140,7 +1202,16 @@ void Scene::ActivateBody(SceneObject& object) {
     body.boundingRadius = std::sqrt(body.halfExtents.x * body.halfExtents.x +
                                     body.halfExtents.y * body.halfExtents.y +
                                     body.halfExtents.z * body.halfExtents.z);
-    body.mass = object.type == SceneObjectType::Vehicle ? 1500.0f : 600.0f;
+    body.mass = 600.0f;
+    if (object.type == SceneObjectType::Vehicle) {
+        // Same class as the visual model, scaled with the proxy: the average
+        // curb mass of the real vehicle (see scene/VehicleModels.h).
+        const VehicleModelInfo& model =
+            kVehicleModels[object.meshVariant % kVehicleModelCount];
+        const float scale =
+            model.length > 1e-3f ? object.size.z / model.length : 1.0f;
+        body.mass = model.massKg * scale * scale * scale;
+    }
     body.invMass = 1.0f / body.mass;
 
     const float halfYaw = object.yaw * 3.14159265f / 360.0f;
@@ -1151,17 +1222,41 @@ void Scene::ActivateBody(SceneObject& object) {
                                          object.position.z * object.position.z);
     const float nx = radialLength > 1e-3f ? object.position.x / radialLength : 1.0f;
     const float nz = radialLength > 1e-3f ? object.position.z / radialLength : 0.0f;
-    float speed = std::clamp(object.peakOverpressurePa / 5000.0f, 1.0f, 20.0f);
-    if (object.damage == DamageState::Heavy) {
-        speed *= 0.6f;
-    }
-    body.velocity = DirectX::XMFLOAT3(nx * speed, speed * 0.35f, nz * speed);
     const float sign = (object.id & 1u) ? 1.0f : -1.0f;
-    body.angularVelocity = DirectX::XMFLOAT3(sign * 1.5f, sign * 0.7f, -sign * 1.1f);
+
+    if (object.type == SceneObjectType::Vehicle) {
+        // The blast loading in ApplyVehicleBlast() supplies the translation
+        // from the vehicle's own mass and reference areas. Only a small tumble
+        // seed keeps heavy damage readable before the wave arrives.
+        body.velocity = DirectX::XMFLOAT3(0.0f, 0.0f, 0.0f);
+        const float tumble = object.damage == DamageState::Destroyed
+                                 ? 1.2f
+                                 : (object.damage == DamageState::Heavy ? 0.6f
+                                                                       : 0.15f);
+        body.angularVelocity =
+            DirectX::XMFLOAT3(sign * 0.5f * tumble, sign * 0.25f * tumble,
+                              -sign * 0.4f * tumble);
+    } else {
+        float speed = std::clamp(object.peakOverpressurePa / 5000.0f, 1.0f, 20.0f);
+        if (object.damage == DamageState::Heavy) {
+            speed *= 0.6f;
+        }
+        body.velocity = DirectX::XMFLOAT3(nx * speed, speed * 0.35f, nz * speed);
+        body.angularVelocity =
+            DirectX::XMFLOAT3(sign * 1.5f, sign * 0.7f, -sign * 1.1f);
+    }
     body.restitution = 0.25f;
-    body.friction = 0.7f;
+    // Wheels roll and damaged bodywork scrapes, so a blasted vehicle slides
+    // farther than a rigid box with the debris friction.
+    body.friction = object.type == SceneObjectType::Vehicle ? 0.4f : 0.7f;
 
     object.bodyIndex = physics_.AddBody(body);
+    // Register the proxy so the vehicle data can be looked up per body and the
+    // 4C drag coupling can exclude it from the debris list.
+    if (int(bodyChunk_.size()) <= object.bodyIndex) {
+        bodyChunk_.resize(object.bodyIndex + 1, std::pair<int, int>(-1, -1));
+    }
+    bodyChunk_[object.bodyIndex] = {int(&object - objects_.data()), -1};
 }
 
 void Scene::StartCollapse(SceneObject& object) {
@@ -1363,6 +1458,10 @@ void Scene::ApplyBlastForces(const sim::BlastModel& blast, float dtSim) {
     }
     const float burstY = float(blast.GetCharge().heightOfBurstM);
     for (SceneObject& object : objects_) {
+        if (object.type == SceneObjectType::Vehicle) {
+            ApplyVehicleBlast(object, blast, dtSim);
+            continue;
+        }
         if (object.chunks.empty() ||
             (!object.collapsed && !object.collapsing)) {
             continue;
@@ -1433,6 +1532,97 @@ void Scene::ApplyBlastForces(const sim::BlastModel& blast, float dtSim) {
                                 DirectX::XMFLOAT3(dx * scale, dy * scale, dz * scale));
         }
     }
+}
+
+void Scene::ApplyVehicleBlast(SceneObject& object, const sim::BlastModel& blast,
+                              float dtSim) {
+    if (object.bodyIndex < 0 ||
+        object.bodyIndex >= int(physics_.Bodies().size())) {
+        return;
+    }
+    const RigidBody& body = physics_.Bodies()[object.bodyIndex];
+    if (body.isStatic || body.mass <= 0.0f) {
+        return;
+    }
+    const double duration = blast.PositivePhaseDurationS(object.distanceToBurst);
+    if (duration <= 1e-4) {
+        return;
+    }
+    const double local = time_ - double(object.arrivalTime);
+    if (local < 0.0 || local > duration) {
+        return;
+    }
+
+    // Ground-reflected wave: the mirrored source cancels the downward part of
+    // the free-field vector, so the wave pushes the vehicle along the ground
+    // instead of pressing it into it. The impulse magnitude stays the free-air
+    // value, so the damage thresholds are unchanged.
+    const float burstY = float(blast.GetCharge().heightOfBurstM);
+    float dx = body.position.x;
+    float dy = body.position.y - burstY;
+    float dz = body.position.z;
+    float mirroredX = body.position.x;
+    float mirroredY = body.position.y + burstY;
+    float mirroredZ = body.position.z;
+    const auto normalize = [](float& x, float& y, float& z) {
+        const float length = std::sqrt(x * x + y * y + z * z);
+        if (length < 1e-3f) {
+            x = 0.0f;
+            y = 1.0f;
+            z = 0.0f;
+            return;
+        }
+        x /= length;
+        y /= length;
+        z /= length;
+    };
+    normalize(dx, dy, dz);
+    normalize(mirroredX, mirroredY, mirroredZ);
+    dx = 0.5f * (dx + mirroredX);
+    dy = 0.5f * (dy + mirroredY);
+    dz = 0.5f * (dz + mirroredZ);
+    normalize(dx, dy, dz);
+
+    // Same triangular positive phase as the debris loading, normalised to the
+    // analytic impulse so the whole phase integrates to the target velocity.
+    const double impulse = std::max(double(object.impulsePaS), 1.0);
+    const double t = std::clamp(local / duration, 0.0, 1.0);
+    const double pressure = 2.0 * impulse / duration * (1.0 - t);
+    const float pressureScale = float(pressure / impulse) * dtSim;
+
+    const VehicleModelInfo& model =
+        kVehicleModels[object.meshVariant % kVehicleModelCount];
+    const float area =
+        VehicleReferenceArea(model, body.orientation,
+                             DirectX::XMFLOAT3(dx, dy, dz));
+
+    // Drag loading of the wave on the class reference area:
+    //   J * A * C_d / m  is the velocity change over the positive phase.
+    const float targetDv = std::clamp(
+        float(double(kBlastDragCoefficient) * impulse * double(area) /
+              double(body.mass)),
+        0.0f, 60.0f);
+    if (targetDv <= 1e-4f) {
+        return;
+    }
+    const float scale = body.mass * targetDv * pressureScale;
+    physics_.AddImpulse(object.bodyIndex,
+                        DirectX::XMFLOAT3(dx * scale, dy * scale, dz * scale));
+
+    // The resultant sits above the centre of mass, so the horizontal loading
+    // rolls the vehicle over. L = r x p with r = (0, lever, 0).
+    const float height = std::max(object.size.y, 0.3f);
+    const float width = std::max(object.size.x, 0.3f);
+    const float depth = std::max(object.size.z, 0.3f);
+    const float lever = 0.25f * height;
+    const float inertiaX =
+        std::max(body.mass * (height * height + depth * depth) / 12.0f, 1e-3f);
+    const float inertiaZ =
+        std::max(body.mass * (width * width + height * height) / 12.0f, 1e-3f);
+    physics_.AddAngularImpulse(
+        object.bodyIndex,
+        DirectX::XMFLOAT3(lever * dz * scale / inertiaX, 0.0f,
+                          -lever * dx * scale / inertiaZ));
 }
 
 void Scene::RegisterStructureBodies(SceneObject& object,

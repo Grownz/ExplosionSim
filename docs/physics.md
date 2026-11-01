@@ -327,16 +327,17 @@ F = 0.5 * rho * C_d * A * |u - v| * (u - v),   C_d = 1
 ```
 
 `A` is the projected area of the body's oriented box along the relative velocity.
-The app reads the sampled flow back and applies `F * dt` through
-`PhysicsWorld::AddImpulse`. The impulse is capped at 400 g, bodies below 1 m/s
-relative speed are skipped, and a sleeping body only wakes when the drag impulse
-exceeds 5 % of its weight, so settled rubble does not twitch in a light breeze.
-The coupling is sampled once per frame, not per solver sub-step. Only detached
-debris chunks are coupled: whole-building, vehicle and tree proxies carry a
-deliberately small collapse mass for the rigid-body stack, so dragging them with
-the sampled flow produced accelerations far above the blast loading (a building
-proxy reached 2.6 g at only 15 m/s). Their motion is driven by
-`ApplyBlastForces()` instead, while the debris chunks keep the aerodynamic drag.
+Vehicles use their class drag coefficient and class reference areas instead (see
+"Vehicles" below). The app reads the sampled flow back and applies `F * dt`
+through `PhysicsWorld::AddImpulse`. The impulse is capped at 400 g, bodies below
+1 m/s relative speed are skipped, and a sleeping body only wakes when the drag
+impulse exceeds 5 % of its weight, so settled rubble does not twitch in a light
+breeze. The coupling is sampled once per frame, not per solver sub-step.
+Detached debris chunks and whole vehicles are coupled: whole-building and tree
+proxies carry a deliberately small collapse mass for the rigid-body stack, so
+dragging them with the sampled flow produced accelerations far above the blast
+loading (a building proxy reached 2.6 g at only 15 m/s). Their motion is driven
+by `ApplyBlastForces()` instead.
 
 ### Source terms
 
@@ -402,6 +403,49 @@ that remain standing are registered as static collision boxes, so falling debris
 against them; a contact impulse above 500 N s is converted to an equivalent pressure and
 damages the struck chunk's joints, which can start a local cascade.
 
+### Vehicles
+
+Vehicles are 6-DOF rigid bodies that use the average road-vehicle data of the class
+each model stands for (`src/scene/VehicleModels.h`). The masses follow the 2024
+US EPA body-style weights (sedan 1.67 t, SUV 1.8-2.1 t, van 2.1 t, pickup 2.4 t),
+the drag coefficients the CARB aerodynamic survey medians (sedan 0.30, SUV 0.37,
+van 0.40, pickup 0.42) and the reference areas the class footprint:
+
+| Model | Class | Mass | C_d | Frontal | Side | Top |
+|---|---|---|---|---|---|---|
+| sedan | mid-size sedan | 1.50 t | 0.30 | 2.2 m² | 6.6 m² | 7.9 m² |
+| taxi | mid-size sedan (fleet) | 1.50 t | 0.31 | 2.3 m² | 6.6 m² | 8.0 m² |
+| sedan-sports | sports sedan | 1.55 t | 0.32 | 2.1 m² | 6.2 m² | 7.5 m² |
+| hatchback-sports | sports hatchback | 1.25 t | 0.33 | 2.0 m² | 5.6 m² | 6.9 m² |
+| suv | mid-size SUV | 2.00 t | 0.37 | 2.7 m² | 7.2 m² | 9.4 m² |
+| suv-luxury | large SUV | 2.40 t | 0.36 | 2.9 m² | 7.6 m² | 10.0 m² |
+| van | full-size van | 2.10 t | 0.40 | 3.2 m² | 7.6 m² | 9.6 m² |
+| police | police sedan | 1.80 t | 0.31 | 2.4 m² | 6.8 m² | 8.5 m² |
+| truck | light pickup | 2.50 t | 0.42 | 3.0 m² | 7.8 m² | 9.8 m² |
+| truck-flat | flatbed | 2.30 t | 0.45 | 2.9 m² | 7.4 m² | 9.2 m² |
+
+The blast loading uses the drag form over the positive phase:
+
+```
+dv = (1/t+) * C_d,blast * J * A(theta) / m
+C_d,blast = 1.8
+```
+
+`J` is the same shielded Friedlander impulse the damage criterion uses, and
+`A(theta)` blends the frontal, side and top areas by the angle between the flow
+and the body axes. The 1.8 combines the bluff-body drag with the reflected
+overpressure on the blast-facing face. The load direction follows the mirrored
+source (free air + ground reflection), so the wave pushes the vehicle along the
+ground instead of pinning it down, and the resultant above the centre of mass
+adds an overturning moment. A vehicle becomes dynamic at light damage
+(10 kPa / 200 Pa s) and then rides the same 6-DOF world as the debris; because
+the model is a box, the friction (0.4) is a compromise between rolling on the
+wheels and scraping bodywork.
+
+In high fidelity the same class coefficient and areas feed the 4C drag above, so
+a light hatchback reacts to the flow while a loaded truck barely moves, and the
+coupling no longer depends on the stylised proxy size.
+
 Blast shielding traces a 3x3 grid of rays from the burst to the receiver's bounding box.
 Each ray accumulates the optical depth of every building AABB it crosses (slab test) and
 uses `T = exp(-depth / 3 m)`, clamped to [0.04, 1]. A diffraction floor
@@ -448,3 +492,7 @@ structure and the benchmark.
 4. Glasstone, S., Dolan, P. J. (1977). *The Effects of Nuclear Weapons.* US DoD/DoE.
 5. Kim, Y., Cho, Y., Kim, Y. (2002). *A colour temperature conversion algorithm.*
 6. Narkowicz, K. (2015). *ACES filmic tone mapping.*
+7. US Environmental Protection Agency (2025). *The 2024 EPA Automotive Trends
+   Report* - average curb weight by body style.
+8. California Air Resources Board (2020). *Technical Analysis of Vehicle Load
+   Reduction Potential* - median drag coefficients by body style.

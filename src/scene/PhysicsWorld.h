@@ -93,6 +93,8 @@ public:
     bool HasStaticSupport(int index) const;
     // Applies an impulse to a dynamic body (blast wave loading).
     void AddImpulse(int index, const DirectX::XMFLOAT3& impulse);
+    // Applies a pure angular impulse (overturning moment of the blast loading).
+    void AddAngularImpulse(int index, const DirectX::XMFLOAT3& impulse);
     const std::vector<ContactEvent>& ContactEvents() const { return contactEvents_; }
 
 private:
