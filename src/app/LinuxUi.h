@@ -67,6 +67,17 @@ struct LinuxUiState {
     float updateProgress = 0.0f;
 };
 
+// Mouse input for the camera that is not captured by the panel (same mapping
+// as the Windows application: left drag orbits, right/middle drag pans, the
+// wheel zooms).
+struct LinuxCameraInput {
+    float orbitX = 0.0f;
+    float orbitY = 0.0f;
+    float panX = 0.0f;
+    float panY = 0.0f;
+    float zoom = 0.0f;
+};
+
 // Dear ImGui overlay for the native Linux shell. It is optional: the headless
 // path and the benchmark never initialize it.
 class LinuxUi {
@@ -77,6 +88,8 @@ public:
     void Shutdown();
     void ProcessEvent(const void* sdlEvent);
     void NewFrame();
+    // Valid after Draw() of the current frame (it needs the panel hit test).
+    LinuxCameraInput CameraInput() const;
     void Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
               float frameMs);
     // Must be called inside the swapchain render pass.

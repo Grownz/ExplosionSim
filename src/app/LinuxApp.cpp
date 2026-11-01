@@ -737,7 +737,8 @@ void FrameCamera(const ex::sim::Simulation& simulation, ex::gfx::Camera& camera,
                  const ex::gfx::SolverStats* solverStats) {
     const ex::sim::BlastModel& blast = simulation.Blast();
     const ex::sim::BlastState& state = blast.State();
-    camera.SetViewport(options.width, options.height);
+    // The viewport follows the swapchain (set at start-up and on every resize);
+    // resetting it to the launch size here would distort a resized window.
     camera.SetClipPlanes(0.5f, 20000.0f);
 
     if (solverStats) {
@@ -1288,7 +1289,9 @@ int main(int argc, char** argv) {
     simulationSettings.scene.vegetation = options.sceneVegetation;
 
     ex::sim::Simulation simulation;
-    if (!simulation.Initialize(simulationSettings, pool, false)) {
+    // A window waits for the DETONATE click like the Windows application;
+    // captures and benchmarks detonate right away.
+    if (!simulation.Initialize(simulationSettings, pool, !options.headless)) {
         ex::LogError("Could not initialize the simulation.");
         return 1;
     }
@@ -1637,6 +1640,17 @@ int main(int argc, char** argv) {
             if (uiReady) {
                 linuxUi.NewFrame();
                 linuxUi.Draw(uiState, simulation, frameMs);
+                const ex::app::LinuxCameraInput cameraInput =
+                    linuxUi.CameraInput();
+                if (cameraInput.orbitX != 0.0f || cameraInput.orbitY != 0.0f) {
+                    camera.Orbit(cameraInput.orbitX, cameraInput.orbitY);
+                }
+                if (cameraInput.panX != 0.0f || cameraInput.panY != 0.0f) {
+                    camera.Pan(cameraInput.panX, cameraInput.panY);
+                }
+                if (cameraInput.zoom != 0.0f) {
+                    camera.Zoom(cameraInput.zoom);
+                }
 
                 updater.Poll();
                 const ex::app::LinuxUpdateSnapshot update = updater.Get();
@@ -1760,6 +1774,9 @@ int main(int argc, char** argv) {
                 previewSettings.showGrid = uiState.showGrid;
                 preview.SetSettings(previewSettings);
             }
+            // Smooth the interactive camera towards its goal (the Windows
+            // application does the same every frame).
+            camera.Update(dt);
             if (!uiState.paused) {
             if (highFidelity) {
                 if (simulation.IsArmed()) {
@@ -1799,6 +1816,12 @@ int main(int argc, char** argv) {
                         if (advance <= 0.0) {
                             break;
                         }
+                    }
+                    // The blast model, the town, the debris and the particles
+                    // follow the solver's simulated time (as on Windows);
+                    // without this they stay at t = 0 after the detonation.
+                    if (advanced > 0.0) {
+                        simulation.AdvanceExternal(advanced, double(dt));
                     }
                     highFidelityRuntime.EndFrame(simulation, advanced);
                     if (submitted > 0 || !highFidelityRuntime.published) {

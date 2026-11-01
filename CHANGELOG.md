@@ -41,6 +41,24 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   slightly slower than before; results of the CPU simulation differ from 0.15.0 in
   the last bits.
 
+### Fixed
+
+- **Linux: high-fidelity runs now advance the blast** - the interactive loop of
+  the Linux shell stepped the Euler solver but never advanced the simulation, so
+  after the detonation the blast model, the town (damage, collapse, debris), the
+  particles and the shock-front refraction (which needs the analytic shock
+  radius) stayed at t = 0. It now calls `Simulation::AdvanceExternal` with the
+  solver's simulated time, as the Windows application does.
+- **Linux: mouse camera** - left drag orbits, right or middle drag pans and the
+  wheel zooms (not while the pointer is over the panel), and the camera is
+  smoothed every frame like on Windows.
+- **Linux: Escape no longer closes the window while a text field is being
+  edited**; it cancels the edit instead.
+- **Linux: the window waits for DETONATE** (the fuse is held at start-up, like on
+  Windows) instead of detonating two seconds after launch.
+- **Linux: "Frame camera" keeps the current window size** instead of resetting
+  the viewport to the launch size, which distorted a resized window.
+
 ## [0.15.0] - 2026-11-01
 
 0.15.0 is a feature release: the application has a real icon on both platforms, a

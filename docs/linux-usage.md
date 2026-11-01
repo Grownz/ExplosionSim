@@ -68,10 +68,14 @@ Useful flags:
 
 Windowed runs show an ImGui panel (F1 toggles it). It provides:
 
-- pause, detonate, reset and frame-camera buttons;
+- pause, detonate, reset and frame-camera buttons (a new window waits for
+  Detonate; Escape closes the window unless a text field is being edited);
 - charge mass, height of burst and time scale, plus a high-fidelity toggle and
   solver grid;
 - exposure, bloom, raymarch steps and volume/particle/ground/bloom/grid toggles.
+
+Camera: left drag orbits, right or middle drag pans and the wheel zooms
+(outside the panel).
 
 "Apply blast settings" restarts the blast with the edited values; the render
 controls apply immediately. The panel needs a desktop session; headless

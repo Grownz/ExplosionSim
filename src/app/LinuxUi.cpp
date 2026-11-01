@@ -139,6 +139,28 @@ void LinuxUi::ProcessEvent(const void* sdlEvent) {
     ImGui_ImplSDL3_ProcessEvent(event);
 }
 
+LinuxCameraInput LinuxUi::CameraInput() const {
+    LinuxCameraInput input;
+    if (!initialized_) {
+        return input;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantCaptureMouse) {
+        return input;
+    }
+    if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+        input.orbitX = io.MouseDelta.x;
+        input.orbitY = io.MouseDelta.y;
+    }
+    if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f) ||
+        ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f)) {
+        input.panX = io.MouseDelta.x;
+        input.panY = io.MouseDelta.y;
+    }
+    input.zoom = io.MouseWheel;
+    return input;
+}
+
 void LinuxUi::NewFrame() {
     if (!initialized_) {
         return;

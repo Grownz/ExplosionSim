@@ -60,7 +60,10 @@ public:
                 minimized_ = false;
                 break;
             case SDL_EVENT_KEY_DOWN:
-                if (event.key.key == SDLK_ESCAPE) {
+                // Escape closes the window, except while a text field has the
+                // keyboard (it cancels the edit there).
+                if (event.key.key == SDLK_ESCAPE &&
+                    !(window_ && SDL_TextInputActive(window_))) {
                     return false;
                 }
                 break;
