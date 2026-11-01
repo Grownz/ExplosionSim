@@ -331,7 +331,12 @@ The app reads the sampled flow back and applies `F * dt` through
 `PhysicsWorld::AddImpulse`. The impulse is capped at 400 g, bodies below 1 m/s
 relative speed are skipped, and a sleeping body only wakes when the drag impulse
 exceeds 5 % of its weight, so settled rubble does not twitch in a light breeze.
-The coupling is sampled once per frame, not per solver sub-step.
+The coupling is sampled once per frame, not per solver sub-step. Only detached
+debris chunks are coupled: whole-building, vehicle and tree proxies carry a
+deliberately small collapse mass for the rigid-body stack, so dragging them with
+the sampled flow produced accelerations far above the blast loading (a building
+proxy reached 2.6 g at only 15 m/s). Their motion is driven by
+`ApplyBlastForces()` instead, while the debris chunks keep the aerodynamic drag.
 
 ### Source terms
 

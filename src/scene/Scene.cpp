@@ -937,6 +937,11 @@ bool Scene::GenerateLayout(const SceneSettings& settings,
     return GenerateInternal(settings, blast, progress, nullptr, true);
 }
 
+bool Scene::IsChunkBody(int bodyIndex) const {
+    return bodyIndex >= 0 && bodyIndex < int(bodyChunk_.size()) &&
+           bodyChunk_[size_t(bodyIndex)].first >= 0;
+}
+
 void Scene::Update(const sim::BlastModel& blast, float dtSim) {
     if (dtSim > 0.0f) {
         time_ += double(dtSim);

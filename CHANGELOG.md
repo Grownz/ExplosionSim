@@ -56,6 +56,14 @@ unchanged.
 
 ### Fixed
 
+- **Debris drag on whole objects (high fidelity)** - the 4C coupling fed every
+  dynamic body through `0.5 rho Cd A |u-v| (u-v)`, including the whole-building,
+  vehicle and tree collapse proxies. Those proxies carry a small mass for the
+  rigid-body stack (a building: 600 kg over a 112 m² silhouette), so the sampled
+  flow accelerated them by several g at 15 m/s and the debris felt glued to the
+  air. Only detached chunks are coupled now; the proxies stay on the blast-loading
+  path. The drag formula itself was already physical (Cd = 1, OBB silhouette
+  area, local mixture density).
 - **Bloom froze while the camera moved (D3D11)** - `RenderBloom()` never bound its
   own vertex shader. It inherited the particle VS whenever the shock pass was
   skipped (once the front had decayed), so the downsample/upsample draws wrote no

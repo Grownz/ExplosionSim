@@ -184,6 +184,11 @@ public:
     PhysicsWorld& Physics() { return physics_; }
     const PhysicsWorld& Physics() const { return physics_; }
 
+    // True when the physics body belongs to a detached debris chunk (as opposed
+    // to a whole-building, vehicle or tree proxy). Used by the 4C drag
+    // coupling, which is meant for debris rather than intact structures.
+    bool IsChunkBody(int bodyIndex) const;
+
 private:
     struct PendingJointFailure {
         double time = 0.0;

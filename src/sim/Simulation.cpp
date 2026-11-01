@@ -464,9 +464,14 @@ std::vector<FlowBody> Simulation::CollectFlowBodies(
     const VolumeBounds& bounds) const {
     std::vector<FlowBody> flow;
     const std::vector<scene::RigidBody>& rigid = scene_.Physics().Bodies();
+
+    // The 4C coupling is for detached debris. Whole-building, vehicle and tree
+    // proxies carry a deliberately small collapse mass; letting the sampled
+    // flow drag them produced accelerations far above the blast-loading path
+    // and made the debris feel glued to the air.
     for (int i = 0; i < int(rigid.size()); ++i) {
         const scene::RigidBody& body = rigid[i];
-        if (body.isStatic) {
+        if (body.isStatic || !scene_.IsChunkBody(i)) {
             continue;
         }
         if (body.position.x < bounds.min.x || body.position.x > bounds.max.x ||
