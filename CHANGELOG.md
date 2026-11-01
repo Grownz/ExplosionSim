@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Anisotropic filtering on D3D11** - the RHI sampler never set `MaxLOD`, so the
+  zero-initialised value clamped every sample to mip 0: the mip chain was unused
+  and anisotropic filtering could not do anything (0x and 8x were pixel-identical).
+  Samplers now allow the full LOD range. The Windows reference captures were
+  regenerated from the corrected build (mean difference 0.27/255, no pixel above
+  the 32 threshold).
+- **Anisotropic filtering on Linux** - the preview always bound a fixed 8x sampler
+  and the panel had no control, so the setting was ignored. It is parsed, saved,
+  exposed in the Linux panel (`Off`/`2x`/`4x`/`8x`, the same values as Windows)
+  and selects the sampler per frame.
+
+  The setting is still subtle in practice: the only mip-mapped texture sampled
+  through it is the surface grain on facades, vehicles and trees, and that texture
+  is isotropic noise, which looks nearly the same under trilinear and anisotropic
+  filtering. The ground and the smoke sample with an explicit level 0.
+
 ## [0.14.0] - 2026-11-01
 
 0.14.0 makes the debris performant without changing how it looks or behaves.

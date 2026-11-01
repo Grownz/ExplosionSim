@@ -38,6 +38,7 @@ public:
         float sunAzimuthDeg = 302.0f;
         float sunElevationDeg = 13.0f;
         float particleScale = 1.0f;
+        int anisotropicFiltering = 8;
     };
 
     bool Initialize(ex::rhi::Device* device, int width, int height);
@@ -87,6 +88,7 @@ private:
     };
 
     bool CreateTargets(ex::rhi::Device* device, int width, int height);
+    ex::rhi::Sampler* SelectedSurfaceSampler() const;
     bool CreateSky(ex::rhi::Device* device);
     bool CreateGround(ex::rhi::Device* device);
     bool CreateScene(ex::rhi::Device* device);
@@ -137,6 +139,9 @@ private:
     std::unique_ptr<ex::rhi::Sampler> shadowSampler_;
     std::unique_ptr<ex::rhi::Sampler> volumeSampler_;
     std::unique_ptr<ex::rhi::Sampler> surfaceSampler_;
+    // 2x, 4x and 8x anisotropic samplers; the selected one follows the setting.
+    std::unique_ptr<ex::rhi::Sampler> surfaceSamplerAniso_[3];
+    ex::rhi::Sampler* boundSurfaceSampler_ = nullptr;
     std::unique_ptr<ex::rhi::Shader> groundVS_;
     std::unique_ptr<ex::rhi::Shader> groundPS_;
     std::unique_ptr<ex::rhi::Pipeline> groundPipeline_;

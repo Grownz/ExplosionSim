@@ -462,8 +462,12 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
     ex::rhi::SamplerDesc surfaceSamplerDesc{};
     surfaceSamplerDesc.linear = true;
     surfaceSamplerDesc.wrap = true;
-    surfaceSamplerDesc.maxAnisotropy = 8;
     surfaceSampler_ = device->CreateSampler(surfaceSamplerDesc);
+    const int anisoLevels[3] = {2, 4, 8};
+    for (int i = 0; i < 3; ++i) {
+        surfaceSamplerDesc.maxAnisotropy = uint32_t(anisoLevels[i]);
+        surfaceSamplerAniso_[i] = device->CreateSampler(surfaceSamplerDesc);
+    }
 
     surfaceTexture_ = MakeSurfaceDetailTexture(device);
 
@@ -771,6 +775,20 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
            scenePipeline_;
 }
 
+ex::rhi::Sampler* LinuxPreview::SelectedSurfaceSampler() const {
+    const int level = settings_.anisotropicFiltering;
+    if (level >= 8 && surfaceSamplerAniso_[2]) {
+        return surfaceSamplerAniso_[2].get();
+    }
+    if (level >= 4 && surfaceSamplerAniso_[1]) {
+        return surfaceSamplerAniso_[1].get();
+    }
+    if (level >= 2 && surfaceSamplerAniso_[0]) {
+        return surfaceSamplerAniso_[0].get();
+    }
+    return surfaceSampler_.get();
+}
+
 bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
     if (!device_) {
         return false;
@@ -878,7 +896,7 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
         set->SetImage(14, surfaceTexture_.get());
         set->SetImage(15, volumeTexture_.get());
         set->SetSampler(18, shadowSampler_.get());
-        set->SetSampler(19, surfaceSampler_.get());
+        set->SetSampler(19, SelectedSurfaceSampler());
         set->SetSampler(20, volumeSampler_.get());
 
         SceneDraw draw;
@@ -1029,7 +1047,7 @@ bool LinuxPreview::BuildChunks(const ex::scene::Scene& scene) {
         chunkSet_->SetImage(14, surfaceTexture_.get());
         chunkSet_->SetImage(15, volumeTexture_.get());
         chunkSet_->SetSampler(18, shadowSampler_.get());
-        chunkSet_->SetSampler(19, surfaceSampler_.get());
+        chunkSet_->SetSampler(19, SelectedSurfaceSampler());
         chunkSet_->SetSampler(20, volumeSampler_.get());
     }
     chunkInstanceCount_ = uint32_t(instances.size());
@@ -1717,6 +1735,20 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         return;
     }
     gpuTimer_.BeginFrame();
+    // Follow the anisotropic-filtering setting: re-point the fallback sets when
+    // the selection changes (the shared renderer gets the sampler per call).
+    if (ex::rhi::Sampler* surface = SelectedSurfaceSampler();
+        surface != boundSurfaceSampler_) {
+        boundSurfaceSampler_ = surface;
+        for (SceneDraw& draw : sceneDraws_) {
+            if (draw.set) {
+                draw.set->SetSampler(19, surface);
+            }
+        }
+        if (chunkSet_) {
+            chunkSet_->SetSampler(19, surface);
+        }
+    }
     uint64_t sceneKey = simulation.Scene().GenerationHash();
     uint64_t collapsed = 0;
     for (const ex::scene::SceneObject& object : simulation.Scene().Objects()) {
@@ -1845,7 +1877,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         resources.volumeSampler = volumeSampler_.get();
         sceneRenderer_.RenderScene(commandList_.get(), simulation.Scene(),
                                    hdrTarget_.get(), depthTarget_.get(),
-                                   surfaceSampler_.get(), resources, &sceneView);
+                                   SelectedSurfaceSampler(), resources, &sceneView);
     } else {
         commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
                                       false, false, clear);

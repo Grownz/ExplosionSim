@@ -212,6 +212,25 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
     ImGui::SliderFloat("Exposure", &state.exposure, 0.1f, 3.0f, "%.2f");
     ImGui::SliderFloat("Bloom", &state.bloomStrength, 0.0f, 1.5f, "%.2f");
     ImGui::SliderInt("Raymarch steps", &state.raymarchSteps, 32, 256);
+    {
+        // Same values and labels as the Windows panel.
+        const int kValues[4] = {0, 2, 4, 8};
+        const char* kLabels[4] = {"Off", "2x", "4x", "8x"};
+        int index = 0;
+        for (int i = 0; i < 4; ++i) {
+            if (kValues[i] == state.anisotropicFiltering) {
+                index = i;
+            }
+        }
+        if (ImGui::Combo("Anisotropic filtering", &index, kLabels, 4)) {
+            state.anisotropicFiltering = kValues[index];
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Anisotropic sampling for the volumetric raymarch and "
+                              "the procedural surfaces. Higher settings keep facades "
+                              "sharp at grazing angles.");
+        }
+    }
     ImGui::Checkbox("Volume", &state.enableVolume);
     ImGui::Checkbox("Particles", &state.enableParticles);
     ImGui::Checkbox("Ground", &state.enableGround);

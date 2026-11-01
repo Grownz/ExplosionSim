@@ -1270,6 +1270,10 @@ std::unique_ptr<rhi::Sampler> Device::CreateSampler(const SamplerDesc& desc) {
             samplerDesc.Filter = D3D11_FILTER_ANISOTROPIC;
             samplerDesc.MaxAnisotropy = desc.maxAnisotropy;
         }
+        // A zero-initialised D3D11_SAMPLER_DESC has MaxLOD = 0, which clamps
+        // every sample to mip 0: anisotropic filtering and normal
+        // minification would never use the mip chain at all.
+        samplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
     }
     const D3D11_TEXTURE_ADDRESS_MODE address =
         desc.wrap ? D3D11_TEXTURE_ADDRESS_WRAP

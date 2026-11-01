@@ -35,6 +35,7 @@ struct LinuxUiState {
     float exposure = 0.8f;
     float bloomStrength = 0.10f;
     int raymarchSteps = 128;
+    int anisotropicFiltering = 8;
     bool enableVolume = true;
     bool enableParticles = true;
     bool enableGround = true;
