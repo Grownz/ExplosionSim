@@ -6,6 +6,25 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-01
+
+0.15.0 is a feature release: the application has a real icon on both platforms, a
+fresh install starts with the high-fidelity solver and a 500 kg charge at 5 m, and
+the vehicles respond to the blast wave and the flow with average per-class mass,
+drag and reference areas rather than a fixed proxy mass.
+
+### Highlights
+
+- **Application icon** - the mushroom-cloud artwork is now the executable,
+  taskbar and desktop icon on Windows and Linux, with every size generated from a
+  single source image.
+- **New first-start defaults** - a fresh `settings.ini` selects the high-fidelity
+  Euler solver, 500 kg TNT and a 5 m height of burst.
+- **Vehicle response** - cars now carry the average curb mass, drag coefficient
+  and reference areas of their real class, take the blast loading over the
+  positive phase with an overturning moment, and are part of the 4C flow drag
+  again, so a hatchback is thrown while a loaded truck barely moves.
+
 ### Added
 
 - **Application icon** - the mushroom-cloud artwork is now the icon on every
@@ -15,6 +34,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   load `assets/icon.png` (`SDL_SetWindowIcon`); the Linux package installs the
   256 and 512 px PNGs into `hicolor`. `tools/make_icon.py` regenerates every
   size from `packaging/icon-source.png`.
+
+### Changed
+
+- **New first-start defaults** - a fresh `settings.ini` now starts with the
+  high-fidelity Euler solver (`HFSolver`) instead of the reduced-order model, a
+  500 kg TNT charge instead of 0.2 kg and a 5 m height of burst instead of
+  0.4 m. Explicit CLI options (`--charge`, `--hob`, `--high-fidelity`,
+  `--reduced-order`) and `tools/capture_settings.ini` still override them, so the
+  reference captures and the parity numbers are unchanged. If the device cannot
+  create the GPU solver, the app now logs a warning and falls back to the
+  reduced-order model instead of rendering without a volume.
 
 ### Fixed
 
@@ -27,17 +57,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   high-fidelity 4C coupling includes them again with their real mass and areas -
   so a hatchback is thrown while a loaded truck barely moves. Whole-building and
   tree proxies stay on the analytic blast path.
-
-### Changed
-
-- **New first-start defaults** - a fresh `settings.ini` now starts with the
-  high-fidelity Euler solver (`HFSolver`) instead of the reduced-order model, a
-  500 kg TNT charge instead of 0.2 kg and a 5 m height of burst instead of
-  0.4 m. Explicit CLI options (`--charge`, `--hob`, `--high-fidelity`,
-  `--reduced-order`) and `tools/capture_settings.ini` still override them, so the
-  reference captures and the parity numbers are unchanged. If the device cannot
-  create the GPU solver, the app now logs a warning and falls back to the
-  reduced-order model instead of rendering without a volume.
 
 ## [0.14.6] - 2026-11-01
 
@@ -1311,7 +1330,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.14.6...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.15.0
 [0.14.6]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.6
 [0.14.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.5
 [0.14.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.0
