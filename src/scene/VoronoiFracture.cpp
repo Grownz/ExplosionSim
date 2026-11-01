@@ -1,5 +1,7 @@
 #include "scene/VoronoiFracture.h"
 
+#include "core/DetMath.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -252,7 +254,7 @@ void ClipByPlane(Polyhedron& poly, const XMFLOAT3& normal, float d, int seed) {
         for (int index : uniqueCapScratch) {
             const XMFLOAT3 offset = Sub(out.vertices[index], centroid);
             orderedScratch.emplace_back(
-                std::atan2(Dot(offset, v), Dot(offset, u)), index);
+                core::det::Atan2(Dot(offset, v), Dot(offset, u)), index);
         }
         for (size_t i = 1; i < orderedScratch.size(); ++i) {
             const std::pair<float, int> value = orderedScratch[i];
@@ -326,9 +328,9 @@ void JacobiEigen(double a[3][3], double v[3][3]) {
             break;
         }
         const double theta =
-            0.5 * std::atan2(2.0 * a[p][q], a[q][q] - a[p][p]);
-        const double c = std::cos(theta);
-        const double s = std::sin(theta);
+            0.5 * core::det::Atan2(2.0 * a[p][q], a[q][q] - a[p][p]);
+        const double c = core::det::Cos(theta);
+        const double s = core::det::Sin(theta);
         const double app = a[p][p];
         const double aqq = a[q][q];
         const double apq = a[p][q];
@@ -560,7 +562,7 @@ void FractureBoxVoronoi(const XMFLOAT3& center, const XMFLOAT3& half,
     const float volume = 8.0f * half.x * half.y * half.z;
     const float targetCellVolume = volume / float(cellCount);
     const float minimumDistance =
-        0.55f * std::cbrt(std::max(targetCellVolume, 1e-3f));
+        0.55f * core::det::Cbrt(std::max(targetCellVolume, 1e-3f));
 
     // Best-candidate sampling: each seed takes the candidate farthest from the
     // existing seeds, which avoids slivers without an expensive relaxation.

@@ -23,7 +23,7 @@ changelog; phases 5 and 6 were checked against the source.
 | 5.2 Wind on debris | **Partial** | Global `windSpeedMs` / `windDirectionDeg` settings drive cloud drift and particles. Rigid-body debris only feels the 4C flow drag (`FlowBodies.cpp`, Cd = 1.0); there is no wind profile, no centre of pressure and no torque. |
 | 5.3 Crater heightfield | **Open** | The ground is a Jolt box with its top face at `y = 0`; no crater code in the sources or shaders. |
 | 6.1 People | Out of scope | Unchanged decision. |
-| 6.2 Determinism | **Open** | `/fp:fast` is still set for `explosion_core` and the Windows app; the only hashes in the tests are scene layout hashes, there is no simulation state hash test. |
+| 6.2 Determinism | **Done** | Cross-platform contract implemented: `/fp:precise`, `-ffp-contract=off`, Jolt in `CROSS_PLATFORM_DETERMINISTIC` mode without AVX/FMA, `core/DetMath` instead of libm in the simulation state, and a shared golden state hash (`TestSimulationStateHash`). See `docs/physics.md`. |
 | Cross-cutting | **Open** | `--profile-physics`, the soak test and the "validated against" notes do not exist yet. |
 
 Decisions for the next round (2026-11-01):
@@ -450,9 +450,7 @@ no gore. ~2-3 days.
   golden value is checked on both platforms and the test fails on change.
 - GPU solver and rendering are outside the contract; they keep the capture tolerances.
 
-**Status:** open. `/fp:fast` is still set, Jolt is not built in deterministic mode and the
-only existing hashes cover the scene layout. Expect pinned test values and the reference
-captures to move once this lands.
+**Status:** done (2026-11-01). Implemented as described above; the golden hash is identical on MSVC and GCC for 0, 6 and the automatic number of Jolt workers. The Windows reference captures were not regenerated.
 
 ## Cross-cutting work
 

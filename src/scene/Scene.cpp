@@ -1,5 +1,6 @@
 #include "scene/SceneTypes.h"
 
+#include "core/DetMath.h"
 #include "core/Log.h"
 #include "core/FrameProfile.h"
 #include "core/Random.h"
@@ -905,11 +906,11 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
                     }
 
                     float transmission =
-                        std::clamp(std::exp(-opticalDepth / kScreeningLength), 0.04f,
+                        std::clamp(core::det::Exp(-opticalDepth / kScreeningLength), 0.04f,
                                    1.0f);
                     // Knife-edge diffraction around the nearest occluder.
                     const float diffraction =
-                        0.5f * std::exp(-opticalDepth / kDiffractionLength);
+                        0.5f * core::det::Exp(-opticalDepth / kDiffractionLength);
                     transmission = std::max(transmission, diffraction);
                     if (opticalDepth > 0.05f) {
                         ++blockedRays;
@@ -917,7 +918,7 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
                     transmissionSum += transmission;
                     // Surface reflection only matters close to the ground.
                     reflectionSum +=
-                        1.0f + groundReflection * std::exp(-sample.y / 8.0f);
+                        1.0f + groundReflection * core::det::Exp(-sample.y / 8.0f);
                 }
             }
         }
@@ -1113,12 +1114,12 @@ void Scene::Update(const sim::BlastModel& blast, float dtSim) {
             // Keep the flame on the irradiated surface: the billboard centre
             // sits on the blast-facing face and is spread laterally so the
             // whole side burns, not just a single spot.
-            const float lateral = std::cos(phase) * faceExtent * 0.65f;
+            const float lateral = core::det::Cos(phase) * faceExtent * 0.65f;
             DirectX::XMFLOAT3 offset(
                 facing.x * object.size.x * 0.5f + side.x * lateral,
                 object.size.y * (object.type == SceneObjectType::Tree
                                      ? 0.55f
-                                     : 0.42f + 0.22f * (0.5f + 0.5f * std::sin(phase))),
+                                     : 0.42f + 0.22f * (0.5f + 0.5f * core::det::Sin(phase))),
                 facing.z * object.size.z * 0.5f + side.z * lateral);
             spawn.position = DirectX::XMFLOAT3(center.x + offset.x,
                                                center.y + offset.y,
@@ -1215,8 +1216,8 @@ void Scene::ActivateBody(SceneObject& object) {
     body.invMass = 1.0f / body.mass;
 
     const float halfYaw = object.yaw * 3.14159265f / 360.0f;
-    body.orientation = DirectX::XMFLOAT4(0.0f, std::sin(halfYaw), 0.0f,
-                                         std::cos(halfYaw));
+    body.orientation = DirectX::XMFLOAT4(0.0f, core::det::Sin(halfYaw), 0.0f,
+                                         core::det::Cos(halfYaw));
 
     const float radialLength = std::sqrt(object.position.x * object.position.x +
                                          object.position.z * object.position.z);

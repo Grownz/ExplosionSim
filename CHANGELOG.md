@@ -6,6 +6,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-platform deterministic simulation** - the blast model, the town, the
+  collapse and the Jolt rigid bodies now produce bit-identical state on Windows
+  (MSVC) and Linux (GCC) and for any number of worker threads. `core/DetMath`
+  replaces libm `sin`, `cos`, `atan2`, `exp`, `pow` and `cbrt` in the simulation
+  path, Jolt is built with `CROSS_PLATFORM_DETERMINISTIC` and
+  `PhysicsWorld::SetJobThreads` lets tests vary its worker count. New tests:
+  `TestDeterministicMath` (accuracy against libm and a pinned result hash) and
+  `TestSimulationStateHash` (600 fixed steps, one golden hash shared by both
+  platforms). See `docs/physics.md`, "Determinism".
+
+### Changed
+
+- **Strict floating point** - the simulation sources use `/fp:precise` instead of
+  `/fp:fast` (the renderer, particles, volume bake and camera keep `/fp:fast`), all non-MSVC targets use
+  `-ffp-contract=off`, and Jolt is built without AVX, AVX2, F16C and FMA so
+  DirectXMath stays on its SSE path on both platforms. The simulation may be
+  slightly slower than before; results of the CPU simulation differ from 0.15.0 in
+  the last bits.
+
 ## [0.15.0] - 2026-11-01
 
 0.15.0 is a feature release: the application has a real icon on both platforms, a

@@ -1,6 +1,7 @@
 // Lightweight regression tests for the physics core and the thread pool.
 // No external test framework is required.
 
+#include "core/DetMath.h"
 #include "core/ThreadPool.h"
 #include "app/Changelog.h"
 #ifdef _WIN32
@@ -20,9 +21,11 @@
 
 #include <DirectXPackedVector.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
@@ -1586,6 +1589,149 @@ void TestVehicleProxyLookup() {
     CHECK(chunkBodies > 0);
 }
 
+// FNV-1a over raw bit patterns: the determinism tests compare bits, not values.
+class BitHasher {
+public:
+    void Bytes(const void* data, size_t size) {
+        const unsigned char* bytes = static_cast<const unsigned char*>(data);
+        for (size_t i = 0; i < size; ++i) {
+            hash_ = (hash_ ^ bytes[i]) * 0x100000001B3ull;
+        }
+    }
+    void Float(float value) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        Bytes(&bits, sizeof(bits));
+    }
+    void Double(double value) {
+        uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        Bytes(&bits, sizeof(bits));
+    }
+    void U64(uint64_t value) { Bytes(&value, sizeof(value)); }
+    uint64_t Value() const { return hash_; }
+
+private:
+    uint64_t hash_ = 0xCBF29CE484222325ull;
+};
+
+// Golden values shared by Windows and Linux (docs/physics.md, "Determinism").
+// A change here means the simulation state is no longer reproducible across
+// platforms, or the simulation itself was changed on purpose: regenerate on both
+// platforms and update both constants in the same change.
+constexpr uint64_t kGoldenDetMathHash = 0xE1371C0A679D3F30ull;
+constexpr uint64_t kGoldenSimulationStateHash = 0xD772D7AA0CF5570Cull;
+
+void TestDeterministicMath() {
+    namespace det = ex::core::det;
+    BitHasher hasher;
+    double worstSin = 0.0;
+    double worstCos = 0.0;
+    double worstExp = 0.0;
+    double worstLog = 0.0;
+    double worstPow = 0.0;
+    double worstCbrt = 0.0;
+    double worstAtan = 0.0;
+    for (int i = -2000; i <= 2000; ++i) {
+        const double angle = double(i) * 0.0173;  // about +-35 rad
+        worstSin = std::max(worstSin, std::abs(det::Sin(angle) - std::sin(angle)));
+        worstCos = std::max(worstCos, std::abs(det::Cos(angle) - std::cos(angle)));
+        hasher.Double(det::Sin(angle));
+        hasher.Double(det::Cos(angle));
+
+        const double exponent = double(i) * 0.011;  // about +-22
+        worstExp = std::max(worstExp, std::abs(det::Exp(exponent) / std::exp(exponent) - 1.0));
+        hasher.Double(det::Exp(exponent));
+
+        const double positive = std::abs(double(i)) * 0.37 + 0.001;
+        worstLog = std::max(worstLog, std::abs(det::Log(positive) - std::log(positive)));
+        worstPow = std::max(worstPow, std::abs(det::Pow(positive, 0.4) / std::pow(positive, 0.4) - 1.0));
+        worstCbrt = std::max(worstCbrt, std::abs(det::Cbrt(positive) / std::cbrt(positive) - 1.0));
+        worstCbrt = std::max(worstCbrt, std::abs(det::Cbrt(-positive) / std::cbrt(-positive) - 1.0));
+        hasher.Double(det::Log(positive));
+        hasher.Double(det::Pow(positive, 0.4));
+        hasher.Double(det::Cbrt(-positive));
+
+        const double y = double(i) * 0.013;
+        const double x = double((i * 7) % 311 - 155) * 0.021;
+        worstAtan = std::max(worstAtan, std::abs(det::Atan2(y, x) - std::atan2(y, x)));
+        hasher.Double(det::Atan2(y, x));
+    }
+    CHECK(worstSin < 1e-14);
+    CHECK(worstCos < 1e-14);
+    CHECK(worstExp < 1e-14);
+    CHECK(worstLog < 1e-14);
+    CHECK(worstPow < 1e-14);
+    CHECK(worstCbrt < 1e-14);
+    CHECK(worstAtan < 1e-14);
+    CHECK_NEAR(det::Atan2(0.0, 0.0), 0.0, 0.0);
+    CHECK_NEAR(det::Exp(0.0), 1.0, 0.0);
+    CHECK_NEAR(det::Cbrt(27.0), 3.0, 1e-14);
+
+    std::printf("  DetMath hash %016llx\n", static_cast<unsigned long long>(hasher.Value()));
+    CHECK(hasher.Value() == kGoldenDetMathHash);
+}
+
+// Runs the blast, the town and the rigid bodies for 600 fixed substeps and
+// hashes every body's bit pattern.
+uint64_t SimulationStateHash(unsigned workers, int joltThreads) {
+    ex::scene::PhysicsWorld::SetJobThreads(joltThreads);
+    ex::core::ThreadPool pool(workers);
+    ex::sim::SimulationSettings settings{};
+    settings.chargeMassKg = 1000.0;
+    settings.heightOfBurstM = 0.4;
+    settings.fuseSeconds = 0.0;
+    settings.volumeResolution = 32;
+    settings.particleBudget = 2000;
+    settings.gpuParticles = false;
+    settings.bakeVolume = false;
+    settings.scene.seed = 1234;
+    settings.scene.density = 0.5f;
+
+    ex::sim::Simulation simulation;
+    simulation.SetAsyncSceneGeneration(false);
+    CHECK(simulation.Initialize(settings, pool, true));
+    simulation.DetonateNow();
+    for (int i = 0; i < 600; ++i) {
+        simulation.StepFixed(1.0 / 120.0);
+    }
+
+    BitHasher hasher;
+    hasher.U64(simulation.Scene().GenerationHash());
+    const std::vector<ex::scene::RigidBody>& bodies = simulation.Scene().Physics().Bodies();
+    CHECK(bodies.size() > 100);  // the hash must cover a real collapse
+    hasher.U64(bodies.size());
+    for (const ex::scene::RigidBody& body : bodies) {
+        hasher.Float(body.position.x);
+        hasher.Float(body.position.y);
+        hasher.Float(body.position.z);
+        hasher.Float(body.orientation.x);
+        hasher.Float(body.orientation.y);
+        hasher.Float(body.orientation.z);
+        hasher.Float(body.orientation.w);
+        hasher.Float(body.velocity.x);
+        hasher.Float(body.velocity.y);
+        hasher.Float(body.velocity.z);
+    }
+    return hasher.Value();
+}
+
+void TestSimulationStateHash() {
+    const uint64_t single = SimulationStateHash(1, 0);
+    const uint64_t pooled = SimulationStateHash(4, 6);
+    const uint64_t automatic = SimulationStateHash(2, -1);
+    ex::scene::PhysicsWorld::SetJobThreads(-1);
+    std::printf("  simulation state hash %016llx (0 Jolt workers), %016llx (6), %016llx (auto)\n",
+                static_cast<unsigned long long>(single),
+                static_cast<unsigned long long>(pooled),
+                static_cast<unsigned long long>(automatic));
+    // The result must not depend on the number of worker threads.
+    CHECK(single == pooled);
+    CHECK(single == automatic);
+    // And it must match the value recorded for both platforms.
+    CHECK(single == kGoldenSimulationStateHash);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -1626,6 +1772,8 @@ int main() {
     RUN(TestSceneReuse);
     RUN(TestVehicleBlastResponse);
     RUN(TestVehicleProxyLookup);
+    RUN(TestDeterministicMath);
+    RUN(TestSimulationStateHash);
 #ifdef _WIN32
     RUN(TestSettingsRoundTrip);
 #endif

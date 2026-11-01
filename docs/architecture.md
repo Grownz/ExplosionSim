@@ -516,8 +516,10 @@ dedicated video memory.
 
 `--screenshot` therefore reproduces the same scene and rendering for the same command
 line and GPU/driver combination. The rigid-body solver uses Jolt's multithreaded job
-system, so the exact rubble state can vary slightly between runs; captures that depend on
-the debris layout are not guaranteed to be bit-identical.
+system in its cross-platform deterministic mode, so the rubble state is identical for any
+worker count and, for the CPU simulation state, on Windows and Linux (see
+[physics.md](physics.md#determinism)). Rendering and the GPU solver are still only
+compared within the capture tolerances.
 
 ## Performance notes
 

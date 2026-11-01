@@ -1,5 +1,6 @@
 #include "sim/Obstacles.h"
 
+#include "core/DetMath.h"
 #include "scene/SceneTypes.h"
 
 #include <DirectXPackedVector.h>
@@ -101,9 +102,11 @@ std::vector<ObstacleBox> SceneObstacles(const scene::Scene& scene) {
         box.halfExtents = XMFLOAT3(object.size.x * 0.5f,
                                    object.size.y * 0.5f,
                                    object.size.z * 0.5f);
-        const float yaw = XMConvertToRadians(object.yaw);
-        XMStoreFloat4(&box.orientation,
-                      XMQuaternionRotationRollPitchYaw(0.0f, yaw, 0.0f));
+        // Yaw-only quaternion; DirectXMath's RollPitchYaw routes through SVML on
+        // MSVC, which differs from the Linux result in the last bits.
+        const float halfYaw = 0.5f * XMConvertToRadians(object.yaw);
+        box.orientation = XMFLOAT4(0.0f, core::det::Sin(halfYaw), 0.0f,
+                                   core::det::Cos(halfYaw));
         boxes.push_back(box);
     }
     return boxes;

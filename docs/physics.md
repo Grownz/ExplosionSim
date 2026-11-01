@@ -465,6 +465,44 @@ thickness-based approximation with a heuristic diffraction floor rather than a
 Fresnel-Kirchhoff solution, and the impulse thresholds are calibrated for visual
 plausibility rather than code compliance.
 
+### Determinism
+
+The CPU simulation state - the blast model, the generated town, the collapse and the
+Jolt rigid bodies - is bit-reproducible: the same settings, seed and fixed step sequence
+give the same state on Windows (MSVC) and Linux (GCC), and the same state for any number
+of worker threads. `TestSimulationStateHash` in `tests/physics_tests.cpp` runs 600 fixed
+1/120 s steps of a 1000 kg detonation, hashes position, orientation and velocity of every
+body and compares one golden value on both platforms; it also runs with 0, 6 and the
+automatic number of Jolt worker threads and requires identical hashes.
+
+What this relies on:
+
+- **No fast-math, no FMA.** The simulation sources use `/fp:precise` on
+  MSVC; every non-MSVC target is built with `-ffp-contract=off`. Jolt is built with
+  `CROSS_PLATFORM_DETERMINISTIC` and without AVX, AVX2, F16C and FMA, so DirectXMath
+  also stays on its SSE path. Only IEEE `+ - * /` and `sqrt` decide the result. The
+  renderer, particles, volume bake and camera keep `/fp:fast`; they compute no simulation state.
+- **No libm in the state.** `sin`, `cos`, `atan2`, `exp`, `pow` and `cbrt` differ between
+  the UCRT and glibc in the last bits. `core/DetMath.h` provides replacements
+  (`core::det::Sin`, `Cos`, `Atan2`, `Exp`, `Log`, `Pow`, `Cbrt`) built from IEEE
+  operations and exact scaling only (Cody-Waite range reduction, short series, one Newton
+  step for `Cbrt`). They are accurate to about 1e-14 relative (the test checks this
+  against libm over a grid) but not correctly rounded. The blast model, the scene
+  (shielding, flame placement, building yaw), the Voronoi fracture and the obstacle
+  boxes use them. DirectXMath's own trigonometry is not used in these paths because it
+  goes through SVML on MSVC.
+- **Fixed ordering.** Town placement is serial, fracture uses one RNG per building, and
+  the simulation code uses no unordered containers and no `std::sort` (the cap polygon uses a stable insertion sort), so the
+  evaluation order is the same on every standard library.
+
+Outside the contract: particles, the volume bake, camera and rendering math, and the GPU
+Euler solver. They keep the capture tolerances (see `docs/linux-port.md`). A change to
+the simulation on purpose (new physics, new constants) changes the hashes; regenerate
+both golden values from a Windows and a Linux run and update them in the same change.
+
+Cost: building Jolt without AVX2/FMA is somewhat slower than the previous default
+configuration, and `/fp:precise` replaces `/fp:fast` for the core.
+
 ## 10. Limitations
 
 - The shock is integrated from an empirical fit, not solved from the Euler equations.

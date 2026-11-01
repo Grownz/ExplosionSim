@@ -56,6 +56,11 @@ public:
     PhysicsWorld(PhysicsWorld&&) noexcept;
     PhysicsWorld& operator=(PhysicsWorld&&) noexcept;
 
+    // Number of Jolt worker threads for worlds created afterwards (-1 = one
+    // fewer than the hardware threads). The result must not depend on it; the
+    // determinism test varies it.
+    static void SetJobThreads(int threads);
+
     void Clear();
     int AddBody(const RigidBody& body);
     void Step(float dt);

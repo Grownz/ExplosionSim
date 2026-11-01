@@ -1,5 +1,7 @@
 #include "scene/PhysicsWorld.h"
 
+#include <atomic>
+
 #include <Jolt/Jolt.h>
 
 #include <Jolt/Core/Factory.h>
@@ -209,6 +211,8 @@ void EnsureJoltRuntime() {
 
 } // namespace
 
+static std::atomic<int> g_jobThreads{-1};
+
 struct PhysicsWorld::Impl {
     static constexpr JPH::uint kMaxBodies = 65536;
     static constexpr JPH::uint kMaxBodyPairs = 262144;
@@ -217,7 +221,7 @@ struct PhysicsWorld::Impl {
     JPH::PhysicsSystem system;
     JPH::TempAllocatorImpl tempAllocator{32 * 1024 * 1024};
     JPH::JobSystemThreadPool jobSystem{JPH::uint(JPH::cMaxPhysicsJobs),
-                                       JPH::uint(JPH::cMaxPhysicsBarriers), -1};
+                                       JPH::uint(JPH::cMaxPhysicsBarriers), g_jobThreads.load()};
     BPLayerInterfaceImpl bpLayerInterface;
     ObjectVsBroadPhaseLayerFilterImpl objectVsBpFilter;
     ObjectLayerPairFilterImpl pairFilter;
@@ -252,6 +256,10 @@ struct PhysicsWorld::Impl {
             groundSettings, JPH::EActivation::DontActivate);
     }
 };
+
+void PhysicsWorld::SetJobThreads(int threads) {
+    g_jobThreads.store(threads);
+}
 
 PhysicsWorld::PhysicsWorld() {
     EnsureJoltRuntime();

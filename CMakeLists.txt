@@ -63,6 +63,11 @@ function(ex_target_warnings target)
     endif()
 endfunction()
 
+if(NOT MSVC)
+    # No FMA contraction anywhere: the simulation must round identically to MSVC.
+    add_compile_options(-ffp-contract=off)
+endif()
+
 if(EXPLOSION_SANITIZE AND NOT MSVC)
     # Jolt is built without RTTI; the UBSan vptr check needs typeinfo, so keep
     # the address/undefined checks but disable the vptr instrumentation.
@@ -248,6 +253,19 @@ set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
 # The simulation only uses Jolt's CPU rigid bodies; skip its Vulkan compute
 # shaders so a plain Vulkan loader install does not require glslc.
 set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
+# Windows and Linux must produce the same rigid-body state for the same inputs
+# (docs/physics.md, "Determinism"): Jolt's cross-platform mode fixes its own
+# floating-point behaviour and forbids FMA contraction.
+set(CROSS_PLATFORM_DETERMINISTIC ON CACHE BOOL "" FORCE)
+# Jolt's AVX/AVX2/F16C flags would also switch DirectXMath (included by
+# explosion_core) to its FMA3 path, whose rounding differs from the SSE path the
+# rest of the program uses. Stay on SSE so every translation unit and both
+# platforms perform the same IEEE operations.
+set(USE_AVX OFF CACHE BOOL "" FORCE)
+set(USE_AVX2 OFF CACHE BOOL "" FORCE)
+set(USE_AVX512 OFF CACHE BOOL "" FORCE)
+set(USE_F16C OFF CACHE BOOL "" FORCE)
+set(USE_FMADD OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(jolt
     URL https://github.com/jrouwe/JoltPhysics/archive/refs/tags/v5.6.0.zip
     URL_HASH SHA256=0AF9BEEA51637EF805E624FE838EA2870F7B68CD48CBE1615C853BD9BCF4F1D7
@@ -287,6 +305,7 @@ add_library(explosion_core STATIC
     src/gfx/SceneMeshLibrary.cpp
     src/gfx/Camera.cpp
     src/core/ThreadPool.cpp
+    src/core/DetMath.cpp
     src/core/Random.cpp)
 
 target_include_directories(explosion_core PUBLIC src)
@@ -295,7 +314,21 @@ if(WIN32)
     target_compile_definitions(explosion_core PUBLIC
         NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)
 endif()
-target_compile_options(explosion_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/fp:fast>)
+# The simulation state is bit-reproducible across Windows and Linux, so the
+# core never uses fast-math. DirectXMath's SVML trigonometry is MSVC-only and
+# is disabled here for the same reason.
+# MSVC compiles with /fp:precise by default, which is what the simulation
+# sources need. Only the visual, non-state code (particles, volume bake, camera,
+# mesh library) stays on /fp:fast, where it keeps the old speed and render output.
+if(MSVC)
+    set_source_files_properties(
+        src/sim/ParticleSystem.cpp
+        src/sim/VolumeBaker.cpp
+        src/gfx/Camera.cpp
+        src/gfx/SceneMeshLibrary.cpp
+        PROPERTIES COMPILE_OPTIONS "/fp:fast")
+endif()
+target_compile_definitions(explosion_core PRIVATE _XM_DISABLE_INTEL_SVML_)
 ex_target_warnings(explosion_core)
 
 # ---------------------------------------------------------------------------
@@ -602,6 +635,9 @@ if(EXPLOSION_BUILD_APP)
 
     target_compile_definitions(ExplosionSim PRIVATE
         NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE _USE_MATH_DEFINES)
+    # The renderer keeps /fp:fast so the Windows capture references stay
+    # bit-identical; the deterministic simulation state lives in explosion_core,
+    # which is built with /fp:precise (see the determinism contract).
     target_compile_options(ExplosionSim PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/fp:fast>)
     ex_target_warnings(ExplosionSim)
 

@@ -1,5 +1,7 @@
 #include "sim/BlastModel.h"
 
+#include "core/DetMath.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -38,7 +40,7 @@ double FriedlanderDecay(double scaledDistance) {
 double Environment::SaturationVaporPressurePa() const {
     // Magnus-Tetens over liquid water (valid for -45..60 degC).
     const double celsius = temperatureK - 273.15;
-    return 610.94 * std::exp(17.625 * celsius / (celsius + 243.04));
+    return 610.94 * core::det::Exp(17.625 * celsius / (celsius + 243.04));
 }
 
 double Environment::SpecificHumidity() const {
@@ -63,20 +65,20 @@ double Environment::VirtualTemperatureK() const {
 }
 
 double Environment::WindX() const {
-    return windSpeedMs * std::cos(windDirectionDeg * M_PI / 180.0);
+    return windSpeedMs * core::det::Cos(windDirectionDeg * M_PI / 180.0);
 }
 
 double Environment::WindZ() const {
-    return windSpeedMs * std::sin(windDirectionDeg * M_PI / 180.0);
+    return windSpeedMs * core::det::Sin(windDirectionDeg * M_PI / 180.0);
 }
 
 double Charge::RadiusM() const {
     const double volume = std::max(tntMassKg, 1e-6) / kTntDensityKgM3;
-    return std::cbrt(3.0 * volume / (4.0 * M_PI));
+    return core::det::Cbrt(3.0 * volume / (4.0 * M_PI));
 }
 
 double Charge::CbrtMass() const {
-    return std::cbrt(std::max(tntMassKg, 1e-6));
+    return core::det::Cbrt(std::max(tntMassKg, 1e-6));
 }
 
 void BlastModel::Configure(const Charge& charge, const Environment& environment) {
@@ -89,18 +91,18 @@ void BlastModel::Configure(const Charge& charge, const Environment& environment)
     // R ~ W_kt^0.4; small charges are dominated by their own detonation
     // products and follow R ~ W_kg^0.25. Taking the larger of both branches
     // gives a continuous, plausible curve from grams to kilotons.
-    const double nuclearRadius = 50.0 * std::pow(kilotons, 0.4);
-    const double conventionalRadius = 0.9 * std::pow(charge_.tntMassKg, 0.25);
+    const double nuclearRadius = 50.0 * core::det::Pow(kilotons, 0.4);
+    const double conventionalRadius = 0.9 * core::det::Pow(charge_.tntMassKg, 0.25);
     fireballMaxRadius_ = std::max(nuclearRadius, conventionalRadius);
 
     // Sachs scaling: at lower ambient pressure the same yield produces a
     // larger fireball (and a larger blast wave at a given distance).
-    fireballMaxRadius_ *= std::cbrt(101325.0 / std::max(environment_.pressurePa, 1.0));
+    fireballMaxRadius_ *= core::det::Cbrt(101325.0 / std::max(environment_.pressurePa, 1.0));
 
     // Growth and cooling time scales, fitted to the observed behaviour of
     // nuclear and large conventional fireballs.
-    fireballGrowthTau_ = 0.05 * std::pow(kilotons, 0.25) + 0.004;
-    fireballCoolTau_ = std::max(1.2 * std::pow(kilotons, 0.15), 0.75);
+    fireballGrowthTau_ = 0.05 * core::det::Pow(kilotons, 0.25) + 0.004;
+    fireballCoolTau_ = std::max(1.2 * core::det::Pow(kilotons, 0.15), 0.75);
 
     // Thermal energy that remains in the rising cloud (~12 % of the yield).
     const double cloudEnergy = 0.12 * charge_.EnergyJ();
@@ -171,7 +173,7 @@ void BlastModel::Advance(double dt) {
         const double riseSpeed = state_.cloudRiseSpeed;
         const double cloudRadius = std::max(state_.cloudRadius, fireballMaxRadius_);
         const double excessTemperature =
-            std::min(cloudTemperatureExcess_ * std::pow(fireballMaxRadius_ / cloudRadius, 3.0),
+            std::min(cloudTemperatureExcess_ * core::det::Pow(fireballMaxRadius_ / cloudRadius, 3.0),
                      cloudTemperatureExcess_);
         const double buoyancy = environment_.gravity * excessTemperature / environment_.temperatureK;
         const double drag = 0.6 * riseSpeed * std::abs(riseSpeed) / (2.0 * cloudRadius);
@@ -202,7 +204,7 @@ void BlastModel::Advance(double dt) {
                                                                   height * height))
                                     : 0.0;
         const double dustBuildUp = std::clamp((state_.time - 0.02) / 0.35, 0.0, 1.0);
-        const double dustDecay = std::exp(-state_.time / 9.0);
+        const double dustDecay = core::det::Exp(-state_.time / 9.0);
         state_.dustIntensity = dustBuildUp * dustDecay;
 
         RecordHistory();
@@ -218,15 +220,15 @@ void BlastModel::UpdateFireball() {
 
     // Radius growth follows a Sedov-like t^(2/5) trend that saturates at the
     // empirically observed maximum radius.
-    const double growth = 1.0 - std::exp(-t / fireballGrowthTau_);
-    const double radius = fireballMaxRadius_ * std::pow(std::max(growth, 0.0), 0.4);
+    const double growth = 1.0 - core::det::Exp(-t / fireballGrowthTau_);
+    const double radius = fireballMaxRadius_ * core::det::Pow(std::max(growth, 0.0), 0.4);
     state_.fireballRadius = std::max(radius, charge_.RadiusM() * 0.9);
 
     const double formationTime = 4.0 * fireballGrowthTau_;
     if (t <= formationTime) {
         state_.fireballTemperatureK = kFireballSurfaceTemperatureK;
     } else {
-        const double decay = std::exp(-(t - formationTime) / fireballCoolTau_);
+        const double decay = core::det::Exp(-(t - formationTime) / fireballCoolTau_);
         state_.fireballTemperatureK =
             environment_.temperatureK + (kFireballSurfaceTemperatureK - environment_.temperatureK) * decay;
     }
@@ -274,7 +276,7 @@ double BlastModel::PeakOverpressureAtDistance(double distanceM) const {
     // blast at the same physical range.
     const double pressureRatio = environment_.pressurePa / 101325.0;
     const double z =
-        charge_.ScaledDistance(std::max(distanceM, 0.01)) * std::cbrt(pressureRatio);
+        charge_.ScaledDistance(std::max(distanceM, 0.01)) * core::det::Cbrt(pressureRatio);
     return PeakOverpressurePa(z, environment_.pressurePa);
 }
 
@@ -348,11 +350,11 @@ double BlastModel::EstimateArrivalTimeS(double distanceM) const {
 double BlastModel::OverpressureImpulsePaS(double distanceM) const {
     const double peak = PeakOverpressureAtDistance(distanceM);
     const double duration = PositivePhaseDurationS(distanceM);
-    const double pressureRatio = std::cbrt(environment_.pressurePa / 101325.0);
+    const double pressureRatio = core::det::Cbrt(environment_.pressurePa / 101325.0);
     const double effectiveZ = charge_.ScaledDistance(distanceM) * pressureRatio;
     const double b = FriedlanderDecay(effectiveZ);
     // Integral of (1 - x) * exp(-b x) over x in [0, 1].
-    const double integral = (b - 1.0 + std::exp(-b)) / (b * b);
+    const double integral = (b - 1.0 + core::det::Exp(-b)) / (b * b);
     return peak * duration * integral;
 }
 
@@ -369,11 +371,11 @@ double BlastModel::OverpressureAtTime(double distanceM, double time) const {
     const double peak = PeakOverpressureAtDistance(distanceM);
     // Friedlander waveform: p(t) = p_s (1 - t/t+) exp(-b t/t+), with the decay
     // coefficient depending on the effective scaled distance.
-    const double pressureRatio = std::cbrt(environment_.pressurePa / 101325.0);
+    const double pressureRatio = core::det::Cbrt(environment_.pressurePa / 101325.0);
     const double effectiveZ = charge_.ScaledDistance(distanceM) * pressureRatio;
     const double decay = FriedlanderDecay(effectiveZ);
     const double normalized = local / duration;
-    return peak * (1.0 - normalized) * std::exp(-decay * normalized);
+    return peak * (1.0 - normalized) * core::det::Exp(-decay * normalized);
 }
 
 double BlastModel::ThermalFluenceJm2(double distanceM) const {
