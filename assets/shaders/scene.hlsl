@@ -38,8 +38,8 @@ EX_VK_BINDING(18) SamplerComparisonState ShadowSampler : register(s2);
 EX_VK_BINDING(20) SamplerState VolumeSampler : register(s4);
 
 // Tiling high-frequency grain for the procedural materials. It is sampled with
-// the anisotropic sampler selected in the rendering settings, so the surface
-// detail stays sharp at grazing angles.
+// the fixed 8x anisotropic sampler, so the surface detail stays sharp at
+// grazing angles.
 EX_VK_BINDING(14) Texture2D<float4> SurfaceDetail : register(t6);
 EX_VK_BINDING(19) SamplerState SurfaceSampler : register(s3);
 
@@ -371,7 +371,7 @@ float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
     const float3 p = input.TextureOrigin.xyz + input.LocalPosition * input.TextureScale.xyz;
     const int style = int(input.TextureScale.w + 0.5) % 4;
 
-    // Fine grain sampled with the selected anisotropic filter.
+    // Fine grain sampled with the fixed 8x anisotropic filter.
     baseColor *= 0.88 + 0.24 * SurfaceGrain(p, n);
 
     if (n.y > 0.5)
@@ -392,8 +392,8 @@ float3 FacadeMaterial(VSOutput input, float3 baseColor, float detailFade,
     const float2 uv = float2(u, v);
 
     // Anisotropic supersampling along the major footprint axis. The number of
-    // taps follows the anisotropic-filtering setting, so grazing-angle facades
-    // keep their window and brick detail instead of collapsing into a blur.
+    // taps gives grazing-angle facades their window and brick detail instead
+    // of collapsing into a blur.
     const float2 dx = ddx(uv);
     const float2 dy = ddy(uv);
     const float2 major = length(dx) > length(dy) ? dx : dy;

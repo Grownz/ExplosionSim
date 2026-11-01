@@ -214,21 +214,21 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
     ImGui::SliderInt("Raymarch steps", &state.raymarchSteps, 32, 256);
     {
         // Same values and labels as the Windows panel.
-        const int kValues[4] = {0, 2, 4, 8};
-        const char* kLabels[4] = {"Off", "2x", "4x", "8x"};
+        const int kValues[3] = {0, 1, 2};
+        const char* kLabels[3] = {"Off", "FXAA", "SMAA 1x"};
         int index = 0;
-        for (int i = 0; i < 4; ++i) {
-            if (kValues[i] == state.anisotropicFiltering) {
+        for (int i = 0; i < 3; ++i) {
+            if (kValues[i] == state.antiAliasing) {
                 index = i;
             }
         }
-        if (ImGui::Combo("Anisotropic filtering", &index, kLabels, 4)) {
-            state.anisotropicFiltering = kValues[index];
+        if (ImGui::Combo("Anti-aliasing", &index, kLabels, 3)) {
+            state.antiAliasing = kValues[index];
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Anisotropic sampling for the volumetric raymarch and "
-                              "the procedural surfaces. Higher settings keep facades "
-                              "sharp at grazing angles.");
+            ImGui::SetTooltip("Post-process anti-aliasing for the finished frame. "
+                              "FXAA is the cheapest; SMAA 1x keeps more edge "
+                              "detail.");
         }
     }
     ImGui::Checkbox("Volume", &state.enableVolume);

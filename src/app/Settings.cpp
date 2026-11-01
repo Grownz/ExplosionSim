@@ -220,12 +220,8 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
     render.sunElevationDeg =
         std::clamp(ParseFloat(values, "sunElevationDeg", render.sunElevationDeg), -5.0f, 85.0f);
     render.particleScale = std::clamp(ParseFloat(values, "particleScale", render.particleScale), 0.1f, 4.0f);
-    render.anisotropicFiltering =
-        std::clamp(ParseInt(values, "anisotropicFiltering", render.anisotropicFiltering), 0, 8);
-    if (render.anisotropicFiltering != 0 && render.anisotropicFiltering != 2 &&
-        render.anisotropicFiltering != 4 && render.anisotropicFiltering != 8) {
-        render.anisotropicFiltering = 0;
-    }
+    render.antiAliasing =
+        std::clamp(ParseInt(values, "antiAliasing", render.antiAliasing), 0, 2);
 
     settings.paused = ParseBool(values, "paused", settings.paused);
     settings.showUi = ParseBool(values, "showUi", settings.showUi);
@@ -306,7 +302,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "sunAzimuthDeg=" << render.sunAzimuthDeg << "\n";
     stream << "sunElevationDeg=" << render.sunElevationDeg << "\n";
     stream << "particleScale=" << render.particleScale << "\n";
-    stream << "anisotropicFiltering=" << render.anisotropicFiltering << "\n";
+    stream << "antiAliasing=" << render.antiAliasing << "\n";
 
     stream << "[ui]\n";
     stream << "paused=" << (settings.paused ? "true" : "false") << "\n";

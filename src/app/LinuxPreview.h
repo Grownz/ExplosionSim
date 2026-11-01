@@ -38,7 +38,7 @@ public:
         float sunAzimuthDeg = 302.0f;
         float sunElevationDeg = 13.0f;
         float particleScale = 1.0f;
-        int anisotropicFiltering = 8;
+        int antiAliasing = 0;
     };
 
     bool Initialize(ex::rhi::Device* device, int width, int height);
@@ -88,7 +88,6 @@ private:
     };
 
     bool CreateTargets(ex::rhi::Device* device, int width, int height);
-    ex::rhi::Sampler* SelectedSurfaceSampler() const;
     bool CreateSky(ex::rhi::Device* device);
     bool CreateGround(ex::rhi::Device* device);
     bool CreateScene(ex::rhi::Device* device);
@@ -96,6 +95,7 @@ private:
     bool CreateParticles(ex::rhi::Device* device);
     bool CreateShock(ex::rhi::Device* device);
     bool CreateComposite(ex::rhi::Device* device);
+    bool CreateAntiAliasing(ex::rhi::Device* device);
     bool SetScene(const ex::scene::Scene& scene);
     bool BuildChunks(const ex::scene::Scene& scene);
     bool UploadVolume(const ex::sim::VolumeFrame& frame);
@@ -120,6 +120,11 @@ private:
     bool sceneRendererReady_ = false;
     std::unique_ptr<ex::rhi::Texture> hdrTarget_;
     std::unique_ptr<ex::rhi::Texture> depthTarget_;
+    // LDR composite target and the SMAA edge/weight targets, only used when
+    // anti-aliasing is enabled.
+    std::unique_ptr<ex::rhi::Texture> ldrTarget_;
+    std::unique_ptr<ex::rhi::Texture> smaaEdgeTarget_;
+    std::unique_ptr<ex::rhi::Texture> smaaWeightTarget_;
     // Screen-sized dummy depth used by the full-screen passes after the scene.
     // Those passes sample the real depth, so they must not bind it as an
     // attachment.
@@ -139,9 +144,6 @@ private:
     std::unique_ptr<ex::rhi::Sampler> shadowSampler_;
     std::unique_ptr<ex::rhi::Sampler> volumeSampler_;
     std::unique_ptr<ex::rhi::Sampler> surfaceSampler_;
-    // 2x, 4x and 8x anisotropic samplers; the selected one follows the setting.
-    std::unique_ptr<ex::rhi::Sampler> surfaceSamplerAniso_[3];
-    ex::rhi::Sampler* boundSurfaceSampler_ = nullptr;
     std::unique_ptr<ex::rhi::Shader> groundVS_;
     std::unique_ptr<ex::rhi::Shader> groundPS_;
     std::unique_ptr<ex::rhi::Pipeline> groundPipeline_;
@@ -245,6 +247,26 @@ private:
     std::unique_ptr<ex::rhi::Shader> compositePS_;
     std::unique_ptr<ex::rhi::Pipeline> compositePipeline_;
     std::unique_ptr<ex::rhi::DescriptorSet> compositeSet_;
+
+    // Anti-aliasing post-process (FXAA and SMAA 1x).
+    std::unique_ptr<ex::rhi::Buffer> aaConstants_;
+    std::unique_ptr<ex::rhi::Sampler> aaPointSampler_;
+    std::unique_ptr<ex::rhi::Texture> smaaAreaTexture_;
+    std::unique_ptr<ex::rhi::Texture> smaaSearchTexture_;
+    std::unique_ptr<ex::rhi::Shader> aaVS_;
+    std::unique_ptr<ex::rhi::Shader> fxaaPS_;
+    std::unique_ptr<ex::rhi::Shader> smaaEdgePS_;
+    std::unique_ptr<ex::rhi::Shader> smaaWeightPS_;
+    std::unique_ptr<ex::rhi::Shader> smaaBlendPS_;
+    std::unique_ptr<ex::rhi::Pipeline> fxaaPipeline_;
+    std::unique_ptr<ex::rhi::Pipeline> smaaEdgePipeline_;
+    std::unique_ptr<ex::rhi::Pipeline> smaaWeightPipeline_;
+    std::unique_ptr<ex::rhi::Pipeline> smaaBlendPipeline_;
+    std::unique_ptr<ex::rhi::DescriptorSet> fxaaSet_;
+    std::unique_ptr<ex::rhi::DescriptorSet> smaaEdgeSet_;
+    std::unique_ptr<ex::rhi::DescriptorSet> smaaWeightSet_;
+    std::unique_ptr<ex::rhi::DescriptorSet> smaaBlendSet_;
+    float aaConstantsData_[4]{};
 
     float frameConstantsData_[112]{};
     float bloomConstantsData_[8]{};

@@ -114,6 +114,7 @@ unless the scene layout or the charge changed.
 | Smoke/dust | HDR | instanced billboards, alpha blend, soft depth fade |
 | Bloom | 5 mip chain | 4-tap downsample, tent upsample, additive |
 | Composite | swap chain / offscreen | ACES, exposure, vignette, dithering |
+| Anti-aliasing | LDR BGRA8 -> swap chain | optional FXAA or SMAA 1x, `Off` by default |
 
 Opaque geometry writes depth; particles and the volume test against it but do not write.
 The flame pass runs before the volume: the smoke's premultiplied transmittance then
@@ -124,6 +125,17 @@ heat ramp, and the result is additively blended with a soft depth fade. The CPU 
 advances the emitter positions, so the whole fire pass is one instanced draw call.
 Burning objects spawn their emitters on the visible canopy rim or roof surface and follow
 the current rigid-body pose, so flames are not hidden inside the mesh.
+
+### Anti-aliasing
+
+*Rendering > Anti-aliasing* selects a post-process pass on the finished 8-bit image:
+`Off` (default), `FXAA` (one full-screen pass) or `SMAA 1x` (luma edge detection,
+blending weights with the reference area/search lookup tables, neighborhood blending).
+Both backends compile the same `fxaa.hlsl` / `smaa.hlsl` sources. With `Off` the
+composite writes straight to the swap chain, so the reference captures and their parity
+are unchanged. With either filter the composite is redirected into a BGRA8 intermediate
+and the AA chain runs before the UI overlay. The setting is saved as `antiAliasing`
+(0/1/2) in `settings.ini` on both platforms.
 
 ### Volume texture
 
@@ -154,9 +166,8 @@ the current rigid-body pose, so flames are not hidden inside the mesh.
 - the raymarcher binds the noise volume at `t2` and uses it both to warp the sample
   position (filaments) and to modulate density at sub-voxel scale
 - updated with `UpdateSubresource` when the baker publishes a new version
-- linear clamp sampler by default; *Rendering > Anisotropic filtering* selects a
-  2x/4x/8x anisotropic clamp sampler for the raymarch and a wrap variant for the
-  procedural surface grain
+- linear clamp sampler for the raymarch; the procedural surface grain uses a
+  fixed 8x anisotropic wrap sampler
 - no mipmaps
 - the ground and scene shaders march the same volume towards the sun (8 samples) for
   the smoke shadow
@@ -429,8 +440,8 @@ maps the mesh-local position back into the original building space, so each frag
 keeps the facade it broke off from. Blast damage is a procedural char and crack overlay
 on that facade rather than a flat recolour. The facade pattern is supersampled along the
 major screen-space footprint axis (2 taps for 2x, 4 taps for 8x) and a tiling grain
-texture is sampled with the matching anisotropic sampler, so the filtering setting also
-applies to the procedural objects. With `scene.voronoiChunks` (the default) the
+texture is sampled with a fixed 8x anisotropic sampler, so object facades keep their
+detail at grazing angles. With `scene.voronoiChunks` (the default) the
 rubble is a convex hull instead: all hulls live in one vertex/index buffer, each vertex
 names its chunk, and a per-chunk structured buffer supplies the rigid transform, so a
 whole building is one draw call. The renderer is

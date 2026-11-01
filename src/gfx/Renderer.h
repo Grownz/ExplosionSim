@@ -26,7 +26,8 @@ struct RenderSettings {
     float sunAzimuthDeg = 302.0f;
     float sunElevationDeg = 13.0f;
     float particleScale = 1.0f;
-    int anisotropicFiltering = 0; // 0 = off, 2/4/8 = sample count
+    // Post-process anti-aliasing: 0 = off, 1 = FXAA, 2 = SMAA 1x.
+    int antiAliasing = 0;
 };
 
 struct FrameInfo {
@@ -162,6 +163,11 @@ private:
         DirectX::XMFLOAT4 bloomParams;
     };
 
+    // Must match the cbuffer in aa_common.hlsli.
+    struct AaConstants {
+        DirectX::XMFLOAT4 screenParams; // xy = 1 / size, zw = size
+    };
+
     // Must match the cbuffer in volume_bake.hlsl.
     struct VolumeBakeConstants {
         DirectX::XMFLOAT4 boundsMin;   // w = resolution
@@ -188,7 +194,8 @@ private:
     bool CreateNoiseTexture();
     bool InitializeSceneRenderer();
     bool EnsureTargets(int width, int height);
-    bool CreateTarget(Target& target, int width, int height);
+    bool CreateTarget(Target& target, int width, int height,
+                      rhi::Format format = rhi::Format::R16G16B16A16_FLOAT);
     EulerConfig MakeEulerConfig(const sim::Simulation& simulation) const;
     bool EnsureSolver(sim::Simulation& simulation);
     void MaybeExpandSolver(const sim::Simulation& simulation);
@@ -205,6 +212,9 @@ private:
                               const RenderSettings& settings);
     void UpdateBloomConstants(float sourceWidth, float sourceHeight, float threshold, float intensity);
     void RenderBloom();
+    // Runs the selected post-process anti-aliasing pass chain into the final
+    // target. The composite must already have written into ldr_.
+    void RenderAntiAliasing(int mode);
     void SetViewport(int width, int height);
 
     GfxDevice* device_ = nullptr;
@@ -215,6 +225,11 @@ private:
     // Snapshot of the HDR buffer for the shock-front refraction pass, which
     // samples the scene while writing back into hdr_.
     Target hdrCopy_;
+    // LDR composite target and the SMAA intermediate targets. They are only
+    // bound when anti-aliasing is enabled, so the Off path is unchanged.
+    Target ldr_;
+    Target smaaEdge_;
+    Target smaaWeight_;
     static constexpr int kBloomLevels = 5;
     Target bloom_[kBloomLevels];
 
@@ -261,9 +276,11 @@ private:
 
     ComPtr<ID3D11Buffer> frameConstantBuffer_;
     ComPtr<ID3D11Buffer> bloomConstantBuffer_;
+    ComPtr<ID3D11Buffer> aaConstantBuffer_;
     ComPtr<ID3D11Buffer> shadowConstantBuffer_;
     FrameConstants frameConstants_{};
     BloomConstants bloomConstants_{};
+    AaConstants aaConstants_{};
 
     using ShadowConstants = SceneRenderer::ShadowConstants;
     ShadowConstants shadowConstants_{};
@@ -310,15 +327,22 @@ private:
     ComPtr<ID3D11PixelShader> downsamplePS_;
     ComPtr<ID3D11PixelShader> upsamplePS_;
     ComPtr<ID3D11PixelShader> compositePS_;
+    ComPtr<ID3D11PixelShader> fxaaPS_;
+    ComPtr<ID3D11PixelShader> smaaEdgePS_;
+    ComPtr<ID3D11PixelShader> smaaWeightPS_;
+    ComPtr<ID3D11PixelShader> smaaBlendPS_;
 
     ComPtr<ID3D11SamplerState> linearClamp_;
     ComPtr<ID3D11SamplerState> linearWrap_;
-    ComPtr<ID3D11SamplerState> anisoClamp_[3]; // 2x, 4x, 8x
-    ComPtr<ID3D11SamplerState> anisoWrap_[3];  // 2x, 4x, 8x
-    // RHI samplers for the migrated scene pass.
-    std::unique_ptr<rhi::Sampler> surfaceSamplerLinear_;
-    std::unique_ptr<rhi::Sampler> surfaceSamplerAniso_[3];
+    ComPtr<ID3D11SamplerState> anisoClamp_; // 8x, volumetric smoke
+    ComPtr<ID3D11SamplerState> pointClamp_;
+    // RHI sampler for the migrated scene pass. The surface grain is the only
+    // mip-mapped texture, so it uses a fixed 8x anisotropic filter.
+    std::unique_ptr<rhi::Sampler> surfaceSamplerAniso_;
     ComPtr<ID3D11SamplerState> noiseSampler_;
+    // SMAA 1x lookup tables, shared by both backends.
+    std::unique_ptr<rhi::Texture> smaaAreaTexture_;
+    std::unique_ptr<rhi::Texture> smaaSearchTexture_;
     ComPtr<ID3D11Texture3D> noiseTexture_;
     ComPtr<ID3D11ShaderResourceView> noiseSRV_;
     ComPtr<ID3D11BlendState> blendOpaque_;

@@ -1152,8 +1152,8 @@ void SceneRenderer::BindSceneResources(rhi::CommandList* commandList) {
                                     rhi::ShaderStage::Pixel, 5);
     commandList->BindSampler(shadowSampler_.get(), rhi::ShaderStage::Pixel, 2);
 
-    // Tiling grain for the procedural materials. The sampler is chosen by the
-    // anisotropic-filtering setting, so objects benefit from it as well.
+    // Tiling grain for the procedural materials, sampled with the same fixed
+    // 8x anisotropic filter as the standalone scene pass.
     commandList->BindShaderResource(surfaceDetailTexture_.get(),
                                     rhi::ShaderStage::Pixel, 6);
     commandList->BindSampler(frameSurfaceSampler_, rhi::ShaderStage::Pixel, 3);

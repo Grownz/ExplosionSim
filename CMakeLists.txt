@@ -327,6 +327,12 @@ if(EXPLOSION_BUILD_VULKAN_SMOKE AND TARGET explosion_vulkan)
             bloom.hlsl:FullscreenVS:vs_6_0
             bloom.hlsl:PSDownsample:ps_6_0
             bloom.hlsl:PSUpsample:ps_6_0
+            fxaa.hlsl:FullscreenVS:vs_6_0
+            fxaa.hlsl:PSFXAA:ps_6_0
+            smaa.hlsl:FullscreenVS:vs_6_0
+            smaa.hlsl:PSAASmaaEdge:ps_6_0
+            smaa.hlsl:PSAASmaaWeight:ps_6_0
+            smaa.hlsl:PSAASmaaBlend:ps_6_0
             scene.hlsl:VSScene:vs_6_0
             scene.hlsl:PSScene:ps_6_0
             scene.hlsl:VSShadow:vs_6_0
@@ -422,6 +428,7 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         src/gfx/GpuParticleSystem.cpp
         src/gfx/RhiEulerSolver.cpp
         src/gfx/SceneRenderer.cpp
+        src/gfx/AntiAliasing.cpp
         src/gfx/ImageIO.cpp
         src/platform/PlatformPaths.cpp)
     target_include_directories(explosion_linux PRIVATE
@@ -565,6 +572,7 @@ if(EXPLOSION_BUILD_APP)
         src/gfx/ImageIO.cpp
         src/gfx/GpuEulerSolver.cpp
         src/gfx/SceneRenderer.cpp
+        src/gfx/AntiAliasing.cpp
         src/platform/PlatformPaths.cpp
         src/ui/Ui.cpp
         src/update/Sha256.cpp

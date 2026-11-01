@@ -639,7 +639,7 @@ void TestSettingsRoundTrip() {
     original.render.sunAzimuthDeg = 111.0f;
     original.render.sunElevationDeg = 27.0f;
     original.render.particleScale = 1.75f;
-    original.render.anisotropicFiltering = 4;
+    original.render.antiAliasing = 2;
 
     original.paused = true;
     original.showUi = false;
@@ -695,7 +695,7 @@ void TestSettingsRoundTrip() {
     CHECK_NEAR(loaded.render.sunAzimuthDeg, 111.0f, 1e-4);
     CHECK_NEAR(loaded.render.sunElevationDeg, 27.0f, 1e-4);
     CHECK_NEAR(loaded.render.particleScale, 1.75f, 1e-4);
-    CHECK(loaded.render.anisotropicFiltering == 4);
+    CHECK(loaded.render.antiAliasing == 2);
 
     CHECK(loaded.paused);
     CHECK(!loaded.showUi);

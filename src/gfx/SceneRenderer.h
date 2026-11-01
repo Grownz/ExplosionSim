@@ -245,7 +245,7 @@ private:
     // Resources bound by RenderScene and re-bound after a pipeline switch.
     FrameResources frameResources_{};
     rhi::Sampler* frameSurfaceSampler_ = nullptr;
-    // Tiling high-frequency grain sampled with the selected anisotropic filter.
+    // Tiling high-frequency grain sampled with the fixed 8x anisotropic filter.
     std::unique_ptr<rhi::Texture> surfaceDetailTexture_;
     std::vector<Mesh> meshes_;
 

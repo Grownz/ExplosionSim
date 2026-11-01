@@ -2,6 +2,7 @@
 
 #include "core/Log.h"
 #include "core/FrameProfile.h"
+#include "gfx/AntiAliasing.h"
 #include "gfx/Shader.h"
 
 #include <algorithm>
@@ -208,6 +209,12 @@ void Renderer::Shutdown() {
     particleBufferAlpha_.Reset();
     particleBufferFire_.Reset();
     hdr_.Reset();
+    hdrCopy_.Reset();
+    ldr_.Reset();
+    smaaEdge_.Reset();
+    smaaWeight_.Reset();
+    smaaAreaTexture_.reset();
+    smaaSearchTexture_.reset();
     for (auto& target : bloom_) {
         target.Reset();
     }
@@ -228,14 +235,22 @@ bool Renderer::CreateStates() {
         return false;
     }
 
-    const UINT anisoLevels[3] = {2, 4, 8};
-    for (int i = 0; i < 3; ++i) {
+    // Fixed 8x: the only mip-mapped texture is the isotropic surface grain,
+    // so a per-setting filter has no visible effect.
+    constexpr UINT kAnisoLevel = 8;
+    {
         D3D11_SAMPLER_DESC anisoDesc = samplerDesc;
         anisoDesc.Filter = D3D11_FILTER_ANISOTROPIC;
-        anisoDesc.MaxAnisotropy = anisoLevels[i];
-        if (FAILED(device_->Device()->CreateSamplerState(&anisoDesc, &anisoClamp_[i]))) {
+        anisoDesc.MaxAnisotropy = kAnisoLevel;
+        if (FAILED(device_->Device()->CreateSamplerState(&anisoDesc, &anisoClamp_))) {
             return false;
         }
+    }
+
+    D3D11_SAMPLER_DESC pointDesc = samplerDesc;
+    pointDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+    if (FAILED(device_->Device()->CreateSamplerState(&pointDesc, &pointClamp_))) {
+        return false;
     }
 
     D3D11_SAMPLER_DESC wrapDesc = samplerDesc;
@@ -245,30 +260,16 @@ bool Renderer::CreateStates() {
     if (FAILED(device_->Device()->CreateSamplerState(&wrapDesc, &linearWrap_))) {
         return false;
     }
-    for (int i = 0; i < 3; ++i) {
-        D3D11_SAMPLER_DESC anisoDesc = wrapDesc;
-        anisoDesc.Filter = D3D11_FILTER_ANISOTROPIC;
-        anisoDesc.MaxAnisotropy = anisoLevels[i];
-        if (FAILED(device_->Device()->CreateSamplerState(&anisoDesc, &anisoWrap_[i]))) {
-            return false;
-        }
-    }
 
     {
         rhi::SamplerDesc surfaceDesc{};
         surfaceDesc.linear = true;
         surfaceDesc.clamp = false;
         surfaceDesc.wrap = true;
-        surfaceSamplerLinear_ = device_->Rhi()->CreateSampler(surfaceDesc);
-        if (!surfaceSamplerLinear_) {
+        surfaceDesc.maxAnisotropy = kAnisoLevel;
+        surfaceSamplerAniso_ = device_->Rhi()->CreateSampler(surfaceDesc);
+        if (!surfaceSamplerAniso_) {
             return false;
-        }
-        for (int i = 0; i < 3; ++i) {
-            surfaceDesc.maxAnisotropy = anisoLevels[i];
-            surfaceSamplerAniso_[i] = device_->Rhi()->CreateSampler(surfaceDesc);
-            if (!surfaceSamplerAniso_[i]) {
-                return false;
-            }
         }
     }
 
@@ -344,6 +345,8 @@ bool Renderer::CreatePipeline() {
     const wchar_t* particlesFile = L"assets\\shaders\\particles.hlsl";
     const wchar_t* bloomFile = L"assets\\shaders\\bloom.hlsl";
     const wchar_t* compositeFile = L"assets\\shaders\\composite.hlsl";
+    const wchar_t* fxaaFile = L"assets\\shaders\\fxaa.hlsl";
+    const wchar_t* smaaFile = L"assets\\shaders\\smaa.hlsl";
 
     auto vsBlob = compile(skyFile, "FullscreenVS", "vs_5_0");
     auto skyBlob = compile(skyFile, "PSSky", "ps_5_0");
@@ -357,6 +360,10 @@ bool Renderer::CreatePipeline() {
     auto downsampleBlob = compile(bloomFile, "PSDownsample", "ps_5_0");
     auto upsampleBlob = compile(bloomFile, "PSUpsample", "ps_5_0");
     auto compositeBlob = compile(compositeFile, "PSComposite", "ps_5_0");
+    auto fxaaBlob = compile(fxaaFile, "PSFXAA", "ps_5_0");
+    auto smaaEdgeBlob = compile(smaaFile, "PSAASmaaEdge", "ps_5_0");
+    auto smaaWeightBlob = compile(smaaFile, "PSAASmaaWeight", "ps_5_0");
+    auto smaaBlendBlob = compile(smaaFile, "PSAASmaaBlend", "ps_5_0");
     auto volumeBakeBlob =
         compile(L"assets\\shaders\\volume_bake.hlsl", "CSBake", "cs_5_0");
     auto particleGpuBlob =
@@ -397,6 +404,35 @@ bool Renderer::CreatePipeline() {
         !createPS(compositeBlob.Get(), compositePS_)) {
         LogError("Failed to create shader objects.");
         return false;
+    }
+
+    // Anti-aliasing is optional: a shader or resource failure only disables the
+    // AA options, it does not take the renderer down.
+    if (fxaaBlob && smaaEdgeBlob && smaaWeightBlob && smaaBlendBlob &&
+        createPS(fxaaBlob.Get(), fxaaPS_) &&
+        createPS(smaaEdgeBlob.Get(), smaaEdgePS_) &&
+        createPS(smaaWeightBlob.Get(), smaaWeightPS_) &&
+        createPS(smaaBlendBlob.Get(), smaaBlendPS_)) {
+        D3D11_BUFFER_DESC aaDesc{};
+        aaDesc.ByteWidth = sizeof(AaConstants);
+        aaDesc.Usage = D3D11_USAGE_DYNAMIC;
+        aaDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        aaDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+        if (FAILED(device->CreateBuffer(&aaDesc, nullptr, &aaConstantBuffer_))) {
+            LogWarn("Anti-aliasing: constant buffer creation failed; disabled.");
+            fxaaPS_.Reset();
+            smaaEdgePS_.Reset();
+            smaaWeightPS_.Reset();
+            smaaBlendPS_.Reset();
+        } else {
+            smaaAreaTexture_ = CreateSmaaAreaTexture(device_->Rhi());
+            smaaSearchTexture_ = CreateSmaaSearchTexture(device_->Rhi());
+            if (!smaaAreaTexture_ || !smaaSearchTexture_) {
+                LogWarn("Anti-aliasing: SMAA lookup textures unavailable; SMAA disabled.");
+            }
+        }
+    } else {
+        LogWarn("Anti-aliasing shaders unavailable; AA disabled.");
     }
 
     // Optional: the GPU volume bake. A compile failure leaves the CPU baker in
@@ -531,13 +567,14 @@ bool Renderer::CreateNoiseTexture() {
     return true;
 }
 
-bool Renderer::CreateTarget(Target& target, int width, int height) {
+bool Renderer::CreateTarget(Target& target, int width, int height,
+                            rhi::Format format) {
     target.Reset();
     width = std::max(1, width);
     height = std::max(1, height);
 
     rhi::TextureDesc desc{};
-    desc.format = rhi::Format::R16G16B16A16_FLOAT;
+    desc.format = format;
     desc.width = uint32_t(width);
     desc.height = uint32_t(height);
     desc.usage = rhi::TextureUsage::RenderTarget | rhi::TextureUsage::Sampled;
@@ -565,6 +602,11 @@ bool Renderer::EnsureTargets(int width, int height) {
         return false;
     }
     if (!CreateTarget(hdrCopy_, width, height)) {
+        return false;
+    }
+    // The composite writes 8-bit sRGB-encoded values, so the AA chain works on
+    // an LDR intermediate in the final target format.
+    if (!CreateTarget(ldr_, width, height, rhi::Format::B8G8R8A8_UNORM)) {
         return false;
     }
 
@@ -2045,14 +2087,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
 
     // --- Procedural scene ---------------------------------------------------
     if (simulation.Settings().scene.enabled && !simulation.Scene().Empty()) {
-        rhi::Sampler* surfaceSampler = surfaceSamplerLinear_.get();
-        if (settings.anisotropicFiltering >= 8) {
-            surfaceSampler = surfaceSamplerAniso_[2].get();
-        } else if (settings.anisotropicFiltering >= 4) {
-            surfaceSampler = surfaceSamplerAniso_[1].get();
-        } else if (settings.anisotropicFiltering >= 2) {
-            surfaceSampler = surfaceSamplerAniso_[0].get();
-        }
+        rhi::Sampler* surfaceSampler = surfaceSamplerAniso_.get();
         ID3D11ShaderResourceView* smokeVolume =
             volumeView ? volumeView : volumeDummySRV_.Get();
         context->PSSetShaderResources(7, 1, &smokeVolume);
@@ -2160,14 +2195,7 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
                                                            : volumeDummySRV_.Get(),
                                              lightView};
         context->PSSetShaderResources(0, 5, srvs);
-        ID3D11SamplerState* volumeSampler = linearClamp_.Get();
-        if (settings.anisotropicFiltering >= 8) {
-            volumeSampler = anisoClamp_[2].Get();
-        } else if (settings.anisotropicFiltering >= 4) {
-            volumeSampler = anisoClamp_[1].Get();
-        } else if (settings.anisotropicFiltering >= 2) {
-            volumeSampler = anisoClamp_[0].Get();
-        }
+        ID3D11SamplerState* volumeSampler = anisoClamp_.Get();
         ID3D11SamplerState* samplers[2] = {volumeSampler, noiseSampler_.Get()};
         context->PSSetSamplers(0, 2, samplers);
         context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
@@ -2242,7 +2270,37 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
         RenderBloom();
     }
 
-    device_->BindFinalTarget();
+    // Pick the anti-aliasing mode for this frame. Missing resources fall back
+    // to the direct composite path, which is also the Off path.
+    auto ensureAaTarget = [this](Target& target) {
+        if (target.texture && target.width == hdr_.width &&
+            target.height == hdr_.height) {
+            return true;
+        }
+        return CreateTarget(target, hdr_.width, hdr_.height,
+                            rhi::Format::B8G8R8A8_UNORM);
+    };
+    int aaMode = std::clamp(settings.antiAliasing, 0, 2);
+    if (aaMode == 1 && !fxaaPS_) {
+        aaMode = 0;
+    }
+    if (aaMode == 2 &&
+        (!smaaEdgePS_ || !smaaWeightPS_ || !smaaBlendPS_ ||
+         !smaaAreaTexture_ || !smaaSearchTexture_ ||
+         !ensureAaTarget(smaaEdge_) || !ensureAaTarget(smaaWeight_))) {
+        aaMode = 0;
+    }
+    if (aaMode != 0 && (!ldr_.texture || !aaConstantBuffer_)) {
+        aaMode = 0;
+    }
+
+    if (aaMode != 0) {
+        ID3D11RenderTargetView* aaRtv = ldr_.RTV();
+        context->OMSetRenderTargets(1, &aaRtv, nullptr);
+        SetViewport(ldr_.width, ldr_.height);
+    } else {
+        device_->BindFinalTarget();
+    }
     context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
     context->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xffffffff);
 
@@ -2269,11 +2327,105 @@ void Renderer::Render(sim::Simulation& simulation, const Camera& camera,
     ID3D11ShaderResourceView* nullSRVs[2] = {nullptr, nullptr};
     context->PSSetShaderResources(0, 2, nullSRVs);
 
+    if (aaMode != 0) {
+        RenderAntiAliasing(aaMode);
+    }
 
     ++frameIndex_;
 
     const auto end = std::chrono::high_resolution_clock::now();
     info_.cpuRenderMs = std::chrono::duration<float, std::milli>(end - start).count();
+}
+
+void Renderer::RenderAntiAliasing(int mode) {
+    ID3D11DeviceContext* context = device_->Context();
+    if (!context || !ldr_.texture || !aaConstantBuffer_) {
+        return;
+    }
+
+    // The composite target is still bound; switch to the final target before
+    // sampling the LDR image.
+    device_->BindFinalTarget();
+    context->OMSetDepthStencilState(depthDisabled_.Get(), 0);
+    context->OMSetBlendState(blendOpaque_.Get(), nullptr, 0xffffffff);
+    context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
+
+    aaConstants_.screenParams =
+        XMFLOAT4(1.0f / float(ldr_.width), 1.0f / float(ldr_.height),
+                 float(ldr_.width), float(ldr_.height));
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    if (SUCCEEDED(context->Map(aaConstantBuffer_.Get(), 0,
+                               D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+        memcpy(mapped.pData, &aaConstants_, sizeof(aaConstants_));
+        context->Unmap(aaConstantBuffer_.Get(), 0);
+    }
+    ID3D11Buffer* aaBuffer = aaConstantBuffer_.Get();
+    context->PSSetConstantBuffers(1, 1, &aaBuffer);
+
+    ID3D11ShaderResourceView* nullSrvs[3] = {nullptr, nullptr, nullptr};
+
+    if (mode == 1 && fxaaPS_) {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Composite);
+        ID3D11ShaderResourceView* input = ldr_.SRV();
+        context->PSSetShaderResources(0, 1, &input);
+        context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());
+        context->PSSetShader(fxaaPS_.Get(), nullptr, 0);
+        context->Draw(3, 0);
+        context->PSSetShaderResources(0, 1, nullSrvs);
+        return;
+    }
+
+    if (mode != 2 || !smaaEdgePS_ || !smaaWeightPS_ || !smaaBlendPS_ ||
+        !smaaAreaTexture_ || !smaaSearchTexture_ || !smaaEdge_.texture ||
+        !smaaWeight_.texture) {
+        return;
+    }
+
+    auto* areaSrv = static_cast<ID3D11ShaderResourceView*>(
+        smaaAreaTexture_->NativeShaderResourceView());
+    auto* searchSrv = static_cast<ID3D11ShaderResourceView*>(
+        smaaSearchTexture_->NativeShaderResourceView());
+
+    // 1. Edge detection. The shader discards non-edge pixels, so the target
+    // has to be cleared first.
+    {
+        ex::core::ProfileScope profile(ex::core::ProfilePhase::Composite);
+        ID3D11RenderTargetView* edgeRtv = smaaEdge_.RTV();
+        context->OMSetRenderTargets(1, &edgeRtv, nullptr);
+        SetViewport(smaaEdge_.width, smaaEdge_.height);
+        const FLOAT clearEdge[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+        context->ClearRenderTargetView(edgeRtv, clearEdge);
+        ID3D11ShaderResourceView* input = ldr_.SRV();
+        context->PSSetShaderResources(0, 1, &input);
+        // The SMAA edge shader reads its taps with PointSampler (s1).
+        context->PSSetSamplers(0, 1, pointClamp_.GetAddressOf());
+        context->PSSetSamplers(1, 1, pointClamp_.GetAddressOf());
+        context->PSSetShader(smaaEdgePS_.Get(), nullptr, 0);
+        context->Draw(3, 0);
+        context->PSSetShaderResources(0, 1, nullSrvs);
+
+        // 2. Blending weights.
+        ID3D11RenderTargetView* weightRtv = smaaWeight_.RTV();
+        context->OMSetRenderTargets(1, &weightRtv, nullptr);
+        SetViewport(smaaWeight_.width, smaaWeight_.height);
+        ID3D11ShaderResourceView* weightInputs[3] = {smaaEdge_.SRV(), areaSrv,
+                                                     searchSrv};
+        context->PSSetShaderResources(0, 3, weightInputs);
+        context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());
+        context->PSSetShader(smaaWeightPS_.Get(), nullptr, 0);
+        context->Draw(3, 0);
+        context->PSSetShaderResources(0, 3, nullSrvs);
+
+        // 3. Neighborhood blending into the final target.
+        device_->BindFinalTarget();
+        ID3D11ShaderResourceView* blendInputs[2] = {ldr_.SRV(),
+                                                    smaaWeight_.SRV()};
+        context->PSSetShaderResources(0, 2, blendInputs);
+        context->PSSetSamplers(0, 1, linearClamp_.GetAddressOf());
+        context->PSSetShader(smaaBlendPS_.Get(), nullptr, 0);
+        context->Draw(3, 0);
+        context->PSSetShaderResources(0, 2, nullSrvs);
+    }
 }
 
 } // namespace ex::gfx

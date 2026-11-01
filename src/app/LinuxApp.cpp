@@ -106,7 +106,7 @@ struct Options {
     float exposure = 0.8f;
     float bloomStrength = 0.10f;
     float particleScale = 1.0f;
-    int anisotropicFiltering = 8;
+    int antiAliasing = 0;
     float sunAzimuth = 302.0f;
     float sunElevation = 13.0f;
     bool bloomEnabled = true;
@@ -337,14 +337,8 @@ void LoadSettingsFile(const std::string& path, Options& options) {
     options.particleScale =
         float(std::clamp(number("particleScale", options.particleScale), 0.0,
                          8.0));
-    options.anisotropicFiltering = std::clamp(
-        integer("anisotropicFiltering", options.anisotropicFiltering), 0, 8);
-    if (options.anisotropicFiltering != 0 &&
-        options.anisotropicFiltering != 2 &&
-        options.anisotropicFiltering != 4 &&
-        options.anisotropicFiltering != 8) {
-        options.anisotropicFiltering = 0;
-    }
+    options.antiAliasing =
+        std::clamp(integer("antiAliasing", options.antiAliasing), 0, 2);
     options.gpuParticles = boolean("gpuParticles", options.gpuParticles);
     options.gpuVolumeBake = boolean("gpuVolumeBake", options.gpuVolumeBake);
     options.checkForUpdates =
@@ -417,7 +411,7 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
     file << "sunAzimuthDeg=" << options.sunAzimuth << "\n";
     file << "sunElevationDeg=" << options.sunElevation << "\n";
     file << "particleScale=" << options.particleScale << "\n";
-    file << "anisotropicFiltering=" << options.anisotropicFiltering << "\n\n";
+    file << "antiAliasing=" << options.antiAliasing << "\n\n";
     file << "[update]\n";
     file << "checkForUpdates=" << IniBoolText(options.checkForUpdates) << "\n";
     file << "skippedVersion=" << options.skippedVersion << "\n";
@@ -1291,7 +1285,7 @@ int main(int argc, char** argv) {
     previewSettings.sunAzimuthDeg = options.sunAzimuth;
     previewSettings.sunElevationDeg = options.sunElevation;
     previewSettings.particleScale = options.particleScale;
-    previewSettings.anisotropicFiltering = options.anisotropicFiltering;
+    previewSettings.antiAliasing = options.antiAliasing;
     preview.SetSettings(previewSettings);
     preview.SetHighFidelity(highFidelity);
     if (!preview.Initialize(device.get(), device->Width(), device->Height())) {
@@ -1520,7 +1514,7 @@ int main(int argc, char** argv) {
             uiState.exposure = options.exposure;
             uiState.bloomStrength = options.bloomStrength;
             uiState.raymarchSteps = options.raymarchSteps;
-            uiState.anisotropicFiltering = options.anisotropicFiltering;
+            uiState.antiAliasing = options.antiAliasing;
             uiState.enableVolume = options.volumeEnabled;
             uiState.enableParticles = options.particlesEnabled;
             uiState.enableGround = options.groundEnabled;
@@ -1723,9 +1717,8 @@ int main(int argc, char** argv) {
                 previewSettings.exposure = uiState.exposure;
                 previewSettings.bloomStrength = uiState.bloomStrength;
                 previewSettings.raymarchSteps = uiState.raymarchSteps;
-                previewSettings.anisotropicFiltering =
-                    uiState.anisotropicFiltering;
-                options.anisotropicFiltering = uiState.anisotropicFiltering;
+                previewSettings.antiAliasing = uiState.antiAliasing;
+                options.antiAliasing = uiState.antiAliasing;
                 previewSettings.enableVolume = uiState.enableVolume;
                 previewSettings.enableParticles = uiState.enableParticles;
                 previewSettings.enableGround = uiState.enableGround;

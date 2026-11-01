@@ -1011,21 +1011,20 @@ void DrawRendering(app::AppSettings& settings, UiActions& actions, const gfx::Re
     ImGui::SliderFloat("Bloom strength", &render.bloomStrength, 0.0f, 1.5f, "%.2f");
     ImGui::SliderInt("Ray steps", &render.raymarchSteps, 24, 192);
 
-    static const int kAnisoValues[] = {0, 2, 4, 8};
-    static const char* kAnisoLabels[] = {"Off", "2x", "4x", "8x"};
-    int anisoIndex = 0;
-    for (int i = 0; i < 4; ++i) {
-        if (kAnisoValues[i] == render.anisotropicFiltering) {
-            anisoIndex = i;
+    static const int kAaValues[] = {0, 1, 2};
+    static const char* kAaLabels[] = {"Off", "FXAA", "SMAA 1x"};
+    int aaIndex = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (kAaValues[i] == render.antiAliasing) {
+            aaIndex = i;
         }
     }
-    if (ImGui::Combo("Anisotropic filtering", &anisoIndex, kAnisoLabels, 4)) {
-        render.anisotropicFiltering = kAnisoValues[anisoIndex];
+    if (ImGui::Combo("Anti-aliasing", &aaIndex, kAaLabels, 3)) {
+        render.antiAliasing = kAaValues[aaIndex];
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Anisotropic sampling for the volumetric raymarch and the "
-                          "procedural surfaces. Higher settings keep facades sharp at "
-                          "grazing angles.");
+        ImGui::SetTooltip("Post-process anti-aliasing for the finished frame. "
+                          "FXAA is the cheapest; SMAA 1x keeps more edge detail.");
     }
 
     const int resolutions[] = {64, 96, 128, 160, 192, 256, 512, 1024};

@@ -2,12 +2,14 @@
 
 #include "core/Log.h"
 #include "core/FrameProfile.h"
+#include "gfx/AntiAliasing.h"
 #include "gfx/Camera.h"
 #include "gfx/SceneMeshLibrary.h"
 #include "scene/SceneTypes.h"
 #include "scene/VehicleModels.h"
 #include "sim/Simulation.h"
 
+#include "AaShaders.h"
 #include "BloomShaders.h"
 #include "ChunkShaders.h"
 #include "CompositeShaders.h"
@@ -24,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iterator>
 #include <vector>
 
 namespace ex::app {
@@ -195,6 +198,9 @@ bool LinuxPreview::Initialize(ex::rhi::Device* device, int width, int height) {
         !CreateShock(device) || !CreateComposite(device)) {
         return false;
     }
+    if (!CreateAntiAliasing(device)) {
+        ex::LogWarn("Anti-aliasing unavailable; rendering without AA.");
+    }
     return true;
 }
 
@@ -203,6 +209,26 @@ void LinuxPreview::Shutdown() {
     gpuTimer_.Shutdown();
     sceneRenderer_.Shutdown();
     sceneRendererReady_ = false;
+    smaaBlendSet_.reset();
+    smaaWeightSet_.reset();
+    smaaEdgeSet_.reset();
+    fxaaSet_.reset();
+    smaaBlendPipeline_.reset();
+    smaaWeightPipeline_.reset();
+    smaaEdgePipeline_.reset();
+    fxaaPipeline_.reset();
+    smaaBlendPS_.reset();
+    smaaWeightPS_.reset();
+    smaaEdgePS_.reset();
+    fxaaPS_.reset();
+    aaVS_.reset();
+    smaaSearchTexture_.reset();
+    smaaAreaTexture_.reset();
+    aaPointSampler_.reset();
+    aaConstants_.reset();
+    smaaWeightTarget_.reset();
+    smaaEdgeTarget_.reset();
+    ldrTarget_.reset();
     compositeSet_.reset();
     compositePipeline_.reset();
     compositePS_.reset();
@@ -312,6 +338,19 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
     depthDesc.usage = ex::rhi::TextureUsage::DepthStencil |
                       ex::rhi::TextureUsage::Sampled;
     depthTarget_ = device->CreateTexture(depthDesc);
+
+    // The composite target and the AA intermediates use the swapchain format:
+    // the Vulkan offscreen render pass used for full-screen passes is created
+    // for B8G8R8A8_UNORM.
+    ex::rhi::TextureDesc aaDesc{};
+    aaDesc.format = ex::rhi::Format::B8G8R8A8_UNORM;
+    aaDesc.width = hdrDesc.width;
+    aaDesc.height = hdrDesc.height;
+    aaDesc.usage = ex::rhi::TextureUsage::RenderTarget |
+                   ex::rhi::TextureUsage::Sampled;
+    ldrTarget_ = device->CreateTexture(aaDesc);
+    smaaEdgeTarget_ = device->CreateTexture(aaDesc);
+    smaaWeightTarget_ = device->CreateTexture(aaDesc);
 
     ex::rhi::TextureDesc volumeDepthAttachmentDesc{};
     volumeDepthAttachmentDesc.format = ex::rhi::Format::D32_FLOAT;
@@ -462,12 +501,8 @@ bool LinuxPreview::CreateTargets(ex::rhi::Device* device, int width,
     ex::rhi::SamplerDesc surfaceSamplerDesc{};
     surfaceSamplerDesc.linear = true;
     surfaceSamplerDesc.wrap = true;
+    surfaceSamplerDesc.maxAnisotropy = 8;
     surfaceSampler_ = device->CreateSampler(surfaceSamplerDesc);
-    const int anisoLevels[3] = {2, 4, 8};
-    for (int i = 0; i < 3; ++i) {
-        surfaceSamplerDesc.maxAnisotropy = uint32_t(anisoLevels[i]);
-        surfaceSamplerAniso_[i] = device->CreateSampler(surfaceSamplerDesc);
-    }
 
     surfaceTexture_ = MakeSurfaceDetailTexture(device);
 
@@ -775,20 +810,6 @@ bool LinuxPreview::CreateScene(ex::rhi::Device* device) {
            scenePipeline_;
 }
 
-ex::rhi::Sampler* LinuxPreview::SelectedSurfaceSampler() const {
-    const int level = settings_.anisotropicFiltering;
-    if (level >= 8 && surfaceSamplerAniso_[2]) {
-        return surfaceSamplerAniso_[2].get();
-    }
-    if (level >= 4 && surfaceSamplerAniso_[1]) {
-        return surfaceSamplerAniso_[1].get();
-    }
-    if (level >= 2 && surfaceSamplerAniso_[0]) {
-        return surfaceSamplerAniso_[0].get();
-    }
-    return surfaceSampler_.get();
-}
-
 bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
     if (!device_) {
         return false;
@@ -896,7 +917,7 @@ bool LinuxPreview::SetScene(const ex::scene::Scene& scene) {
         set->SetImage(14, surfaceTexture_.get());
         set->SetImage(15, volumeTexture_.get());
         set->SetSampler(18, shadowSampler_.get());
-        set->SetSampler(19, SelectedSurfaceSampler());
+        set->SetSampler(19, surfaceSampler_.get());
         set->SetSampler(20, volumeSampler_.get());
 
         SceneDraw draw;
@@ -1047,7 +1068,7 @@ bool LinuxPreview::BuildChunks(const ex::scene::Scene& scene) {
         chunkSet_->SetImage(14, surfaceTexture_.get());
         chunkSet_->SetImage(15, volumeTexture_.get());
         chunkSet_->SetSampler(18, shadowSampler_.get());
-        chunkSet_->SetSampler(19, SelectedSurfaceSampler());
+        chunkSet_->SetSampler(19, surfaceSampler_.get());
         chunkSet_->SetSampler(20, volumeSampler_.get());
     }
     chunkInstanceCount_ = uint32_t(instances.size());
@@ -1357,6 +1378,166 @@ bool LinuxPreview::CreateComposite(ex::rhi::Device* device) {
            compositePipeline_ && compositeSet_ && bloomVS_ && bloomDownPS_ &&
            bloomUpPS_ && bloomDownPipeline_ && bloomUpPipeline_ &&
            bloomDownSet_ && bloomUpSet_;
+}
+
+bool LinuxPreview::CreateAntiAliasing(ex::rhi::Device* device) {
+    if (!device || !ldrTarget_ || !smaaEdgeTarget_ || !smaaWeightTarget_) {
+        return false;
+    }
+
+    aaConstantsData_[0] = 1.0f / float(ldrTarget_->Width());
+    aaConstantsData_[1] = 1.0f / float(ldrTarget_->Height());
+    aaConstantsData_[2] = float(ldrTarget_->Width());
+    aaConstantsData_[3] = float(ldrTarget_->Height());
+    ex::rhi::BufferDesc constantDesc{};
+    constantDesc.size = sizeof(aaConstantsData_);
+    constantDesc.usage = ex::rhi::BufferUsage::Uniform |
+                         ex::rhi::BufferUsage::Dynamic;
+    constantDesc.initialData = aaConstantsData_;
+    aaConstants_ = device->CreateBuffer(constantDesc);
+
+    ex::rhi::SamplerDesc pointDesc{};
+    pointDesc.linear = false;
+    pointDesc.clamp = true;
+    aaPointSampler_ = device->CreateSampler(pointDesc);
+
+    smaaAreaTexture_ = ex::gfx::CreateSmaaAreaTexture(device);
+    smaaSearchTexture_ = ex::gfx::CreateSmaaSearchTexture(device);
+
+    ex::rhi::ShaderDesc shaderDesc{};
+    shaderDesc.stage = ex::rhi::ShaderStage::Vertex;
+    shaderDesc.data = kAaVS;
+    shaderDesc.size = kAaVSSize;
+    shaderDesc.name = "FullscreenVS";
+    aaVS_ = device->CreateShader(shaderDesc);
+
+    shaderDesc.stage = ex::rhi::ShaderStage::Pixel;
+    shaderDesc.data = kAaFxaaPS;
+    shaderDesc.size = kAaFxaaPSSize;
+    shaderDesc.name = "PSFXAA";
+    fxaaPS_ = device->CreateShader(shaderDesc);
+    shaderDesc.data = kAaSmaaEdgePS;
+    shaderDesc.size = kAaSmaaEdgePSSize;
+    shaderDesc.name = "PSAASmaaEdge";
+    smaaEdgePS_ = device->CreateShader(shaderDesc);
+    shaderDesc.data = kAaSmaaWeightPS;
+    shaderDesc.size = kAaSmaaWeightPSSize;
+    shaderDesc.name = "PSAASmaaWeight";
+    smaaWeightPS_ = device->CreateShader(shaderDesc);
+    shaderDesc.data = kAaSmaaBlendPS;
+    shaderDesc.size = kAaSmaaBlendPSSize;
+    shaderDesc.name = "PSAASmaaBlend";
+    smaaBlendPS_ = device->CreateShader(shaderDesc);
+
+    const ex::rhi::DescriptorBinding fxaaBindings[] = {
+        {8, ex::rhi::DescriptorType::SampledImage, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {16, ex::rhi::DescriptorType::Sampler, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {1, ex::rhi::DescriptorType::UniformBuffer, 1,
+         ex::rhi::ShaderStage::Pixel},
+    };
+    const ex::rhi::DescriptorBinding smaaEdgeBindings[] = {
+        {8, ex::rhi::DescriptorType::SampledImage, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {17, ex::rhi::DescriptorType::Sampler, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {1, ex::rhi::DescriptorType::UniformBuffer, 1,
+         ex::rhi::ShaderStage::Pixel},
+    };
+    const ex::rhi::DescriptorBinding smaaWeightBindings[] = {
+        {8, ex::rhi::DescriptorType::SampledImage, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {9, ex::rhi::DescriptorType::SampledImage, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {10, ex::rhi::DescriptorType::SampledImage, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {16, ex::rhi::DescriptorType::Sampler, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {1, ex::rhi::DescriptorType::UniformBuffer, 1,
+         ex::rhi::ShaderStage::Pixel},
+    };
+    const ex::rhi::DescriptorBinding smaaBlendBindings[] = {
+        {8, ex::rhi::DescriptorType::SampledImage, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {9, ex::rhi::DescriptorType::SampledImage, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {16, ex::rhi::DescriptorType::Sampler, 1,
+         ex::rhi::ShaderStage::Pixel},
+        {1, ex::rhi::DescriptorType::UniformBuffer, 1,
+         ex::rhi::ShaderStage::Pixel},
+    };
+
+    auto makePipeline = [&](ex::rhi::Shader* pixel,
+                            const ex::rhi::DescriptorBinding* bindings,
+                            uint32_t bindingCount) {
+        ex::rhi::PipelineDesc desc{};
+        desc.vertexShader = aaVS_.get();
+        desc.pixelShader = pixel;
+        desc.descriptorBindings = bindings;
+        desc.descriptorBindingCount = bindingCount;
+        desc.depthTest = false;
+        desc.depthWrite = false;
+        return device->CreatePipeline(desc);
+    };
+
+    fxaaPipeline_ = makePipeline(fxaaPS_.get(), fxaaBindings,
+                                 uint32_t(std::size(fxaaBindings)));
+    smaaEdgePipeline_ =
+        makePipeline(smaaEdgePS_.get(), smaaEdgeBindings,
+                     uint32_t(std::size(smaaEdgeBindings)));
+    smaaWeightPipeline_ =
+        makePipeline(smaaWeightPS_.get(), smaaWeightBindings,
+                     uint32_t(std::size(smaaWeightBindings)));
+    smaaBlendPipeline_ =
+        makePipeline(smaaBlendPS_.get(), smaaBlendBindings,
+                     uint32_t(std::size(smaaBlendBindings)));
+
+    if (fxaaPipeline_) {
+        fxaaSet_ = device->CreateDescriptorSet(fxaaPipeline_.get());
+    }
+    if (smaaEdgePipeline_) {
+        smaaEdgeSet_ = device->CreateDescriptorSet(smaaEdgePipeline_.get());
+    }
+    if (smaaWeightPipeline_) {
+        smaaWeightSet_ = device->CreateDescriptorSet(smaaWeightPipeline_.get());
+    }
+    if (smaaBlendPipeline_) {
+        smaaBlendSet_ = device->CreateDescriptorSet(smaaBlendPipeline_.get());
+    }
+
+    if (fxaaSet_) {
+        fxaaSet_->SetImage(8, ldrTarget_.get());
+        fxaaSet_->SetSampler(16, compositeSampler_.get());
+        fxaaSet_->SetBuffer(1, aaConstants_.get(), 0, aaConstants_->Size());
+    }
+    if (smaaEdgeSet_) {
+        smaaEdgeSet_->SetImage(8, ldrTarget_.get());
+        smaaEdgeSet_->SetSampler(17, aaPointSampler_.get());
+        smaaEdgeSet_->SetBuffer(1, aaConstants_.get(), 0,
+                                aaConstants_->Size());
+    }
+    if (smaaWeightSet_) {
+        smaaWeightSet_->SetImage(8, smaaEdgeTarget_.get());
+        smaaWeightSet_->SetImage(9, smaaAreaTexture_.get());
+        smaaWeightSet_->SetImage(10, smaaSearchTexture_.get());
+        smaaWeightSet_->SetSampler(16, compositeSampler_.get());
+        smaaWeightSet_->SetBuffer(1, aaConstants_.get(), 0,
+                                  aaConstants_->Size());
+    }
+    if (smaaBlendSet_) {
+        smaaBlendSet_->SetImage(8, ldrTarget_.get());
+        smaaBlendSet_->SetImage(9, smaaWeightTarget_.get());
+        smaaBlendSet_->SetSampler(16, compositeSampler_.get());
+        smaaBlendSet_->SetBuffer(1, aaConstants_.get(), 0,
+                                 aaConstants_->Size());
+    }
+
+    return aaVS_ && fxaaPS_ && smaaEdgePS_ && smaaWeightPS_ &&
+           smaaBlendPS_ && aaConstants_ && aaPointSampler_ &&
+           smaaAreaTexture_ && smaaSearchTexture_ && fxaaPipeline_ &&
+           smaaEdgePipeline_ && smaaWeightPipeline_ && smaaBlendPipeline_ &&
+           fxaaSet_ && smaaEdgeSet_ && smaaWeightSet_ && smaaBlendSet_;
 }
 
 void LinuxPreview::SetGpuVolume(ex::rhi::Texture* texture,
@@ -1735,20 +1916,6 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         return;
     }
     gpuTimer_.BeginFrame();
-    // Follow the anisotropic-filtering setting: re-point the fallback sets when
-    // the selection changes (the shared renderer gets the sampler per call).
-    if (ex::rhi::Sampler* surface = SelectedSurfaceSampler();
-        surface != boundSurfaceSampler_) {
-        boundSurfaceSampler_ = surface;
-        for (SceneDraw& draw : sceneDraws_) {
-            if (draw.set) {
-                draw.set->SetSampler(19, surface);
-            }
-        }
-        if (chunkSet_) {
-            chunkSet_->SetSampler(19, surface);
-        }
-    }
     uint64_t sceneKey = simulation.Scene().GenerationHash();
     uint64_t collapsed = 0;
     for (const ex::scene::SceneObject& object : simulation.Scene().Objects()) {
@@ -1784,6 +1951,31 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
                             simulation.Particles().AlphaBatch());
     }
     UpdateFrameConstants(simulation, camera, width, height);
+
+    // Anti-aliasing is optional: fall back to the direct composite path when
+    // the passes are unavailable or the selected mode's resources are missing.
+    int aaMode = std::clamp(settings_.antiAliasing, 0, 2);
+    if (aaMode == 1 && !(fxaaPipeline_ && fxaaSet_)) {
+        aaMode = 0;
+    }
+    if (aaMode == 2 &&
+        !(smaaEdgePipeline_ && smaaEdgeSet_ && smaaWeightPipeline_ &&
+          smaaWeightSet_ && smaaBlendPipeline_ && smaaBlendSet_)) {
+        aaMode = 0;
+    }
+    if (aaMode != 0 && (!ldrTarget_ || !smaaEdgeTarget_ ||
+                        !smaaWeightTarget_ || !aaConstants_)) {
+        aaMode = 0;
+    }
+    if (aaMode != 0) {
+        const float aaData[4] = {1.0f / float(std::max(width, 1)),
+                                1.0f / float(std::max(height, 1)),
+                                float(width), float(height)};
+        if (void* mapped = aaConstants_->Map()) {
+            std::memcpy(mapped, aaData, sizeof(aaData));
+            aaConstants_->Unmap();
+        }
+    }
 
     ex::gfx::SceneRenderer::ViewInfo sceneView{};
     DirectX::XMStoreFloat4x4(&sceneView.viewProj,
@@ -1877,7 +2069,7 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         resources.volumeSampler = volumeSampler_.get();
         sceneRenderer_.RenderScene(commandList_.get(), simulation.Scene(),
                                    hdrTarget_.get(), depthTarget_.get(),
-                                   SelectedSurfaceSampler(), resources, &sceneView);
+                                   surfaceSampler_.get(), resources, &sceneView);
     } else {
         commandList_->BeginRenderPass(hdrTarget_.get(), depthTarget_.get(),
                                       false, false, clear);
@@ -2048,10 +2240,56 @@ void LinuxPreview::Render(ex::rhi::Device* device, ex::sim::Simulation& simulati
         commandList_->EndRenderPass();
     }
 
+    if (aaMode != 0) {
+        // The composite goes into the LDR intermediate; the AA chain reads it
+        // and writes the swapchain image.
+        {
+            ex::core::ProfileScope profile(ex::core::ProfilePhase::Composite);
+            // Clear: the intermediate is brand new on the first frame, and the
+            // load variant of the render pass expects shader-read layout.
+            commandList_->BeginRenderPass(ldrTarget_.get(),
+                                          volumeDepthTarget_.get(), true,
+                                          false, clear);
+            if (compositePipeline_ && compositeSet_) {
+                commandList_->BindPipeline(compositePipeline_.get());
+                commandList_->BindDescriptorSet(compositeSet_.get());
+                commandList_->Draw(3);
+            }
+            commandList_->EndRenderPass();
+        }
+        if (aaMode == 2 && smaaEdgePipeline_ && smaaEdgeSet_) {
+            ex::core::ProfileScope profile(ex::core::ProfilePhase::Composite);
+            const float edgeClear[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            commandList_->BeginRenderPass(smaaEdgeTarget_.get(),
+                                          volumeDepthTarget_.get(), true,
+                                          false, edgeClear);
+            commandList_->BindPipeline(smaaEdgePipeline_.get());
+            commandList_->BindDescriptorSet(smaaEdgeSet_.get());
+            commandList_->Draw(3);
+            commandList_->EndRenderPass();
+
+            commandList_->BeginRenderPass(smaaWeightTarget_.get(),
+                                          volumeDepthTarget_.get(), true,
+                                          false, clear);
+            commandList_->BindPipeline(smaaWeightPipeline_.get());
+            commandList_->BindDescriptorSet(smaaWeightSet_.get());
+            commandList_->Draw(3);
+            commandList_->EndRenderPass();
+        }
+    }
+
     device->BeginFrame(clear[0], clear[1], clear[2], clear[3]);
     {
         ex::core::ProfileScope profile(ex::core::ProfilePhase::Composite);
-        if (compositePipeline_ && compositeSet_) {
+        if (aaMode == 1 && fxaaPipeline_ && fxaaSet_) {
+            device->BindPipeline(fxaaPipeline_.get());
+            device->BindDescriptorSet(fxaaSet_.get());
+            device->Draw(3);
+        } else if (aaMode == 2 && smaaBlendPipeline_ && smaaBlendSet_) {
+            device->BindPipeline(smaaBlendPipeline_.get());
+            device->BindDescriptorSet(smaaBlendSet_.get());
+            device->Draw(3);
+        } else if (aaMode == 0 && compositePipeline_ && compositeSet_) {
             device->BindPipeline(compositePipeline_.get());
             device->BindDescriptorSet(compositeSet_.get());
             device->Draw(3);

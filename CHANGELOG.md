@@ -6,6 +6,31 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Post-process anti-aliasing** - *Rendering > Anti-aliasing* now offers `Off`
+  (default), `FXAA` and `SMAA 1x`, saved as `antiAliasing=0|1|2` in
+  `settings.ini`. FXAA is a single full-screen pass; SMAA 1x runs luma edge
+  detection, blending-weight calculation and neighborhood blending. Both
+  backends compile the same `fxaa.hlsl` / `smaa.hlsl` sources, and the Windows
+  and Linux panels expose the same three choices. With `Off` the composite
+  still writes straight to the swap chain, so the reference captures and the
+  cross-platform parity are unchanged; with a filter the composite goes through
+  a BGRA8 intermediate and the UI overlay is drawn after the AA pass.
+- The SMAA 1x area (160x560 RG8) and search (64x16 R8) lookup tables are the
+  reference textures from [iryoku/smaa](https://github.com/iryoku/smaa) (MIT
+  licence, notice kept in `src/gfx/SmaaAreaTex.h` and `SmaaSearchTex.h`). They
+  are expanded to RGBA8 at startup so D3D11 and Vulkan upload the same data.
+
+### Changed
+
+- **Anisotropic filtering control removed** - the only mip-mapped texture
+  sampled through it is the isotropic surface grain on facades, vehicles and
+  trees, so the setting made no visible difference (0x and 8x were measured at
+  a mean difference of 0.05/255). The sampler is now fixed at 8x on both
+  platforms and `anisotropicFiltering` is no longer parsed, saved or shown in
+  either panel.
+
 ### Fixed
 
 - **Anisotropic filtering on D3D11** - the RHI sampler never set `MaxLOD`, so the
@@ -14,15 +39,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Samplers now allow the full LOD range. The Windows reference captures were
   regenerated from the corrected build (mean difference 0.27/255, no pixel above
   the 32 threshold).
-- **Anisotropic filtering on Linux** - the preview always bound a fixed 8x sampler
-  and the panel had no control, so the setting was ignored. It is parsed, saved,
-  exposed in the Linux panel (`Off`/`2x`/`4x`/`8x`, the same values as Windows)
-  and selects the sampler per frame.
-
-  The setting is still subtle in practice: the only mip-mapped texture sampled
-  through it is the surface grain on facades, vehicles and trees, and that texture
-  is isotropic noise, which looks nearly the same under trilinear and anisotropic
-  filtering. The ground and the smoke sample with an explicit level 0.
 
 ## [0.14.0] - 2026-11-01
 
