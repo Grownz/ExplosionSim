@@ -6,6 +6,29 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.5] - 2026-11-01
+
+0.14.5 is a rendering-quality release: selectable post-process anti-aliasing,
+a D3D11 bloom that no longer freezes once the shock front has decayed, and the
+mip-sampling/anisotropic-filtering corrections behind the old sampler control.
+With anti-aliasing off the reference captures and the cross-platform parity are
+unchanged.
+
+### Highlights
+
+- **Anti-aliasing** - *Rendering > Anti-aliasing* offers `Off` (default),
+  `FXAA` and `SMAA 1x`. FXAA is one full-screen pass; SMAA 1x runs luma edge
+  detection, blending-weight calculation and neighborhood blending with the
+  reference lookup tables. Both backends compile the same shader sources.
+- **Bloom after the shock** - the D3D11 bloom relied on the shock pass to leave
+  the fullscreen vertex shader bound. Once the front decayed that pass was
+  skipped, the bloom draws inherited the particle VS and wrote no pixels, so the
+  glow stuck to the screen while the camera panned. The bloom pass now binds its
+  own vertex shader, topology and rasterizer.
+- **Mip sampling** - the D3D11 RHI never set `MaxLOD`, so every sampler clamped
+  to mip 0. Fixed; anisotropic filtering works again, and the control was
+  removed because the only mip-mapped texture is isotropic surface grain.
+
 ### Added
 
 - **Post-process anti-aliasing** - *Rendering > Anti-aliasing* now offers `Off`
@@ -1217,7 +1240,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.14.5...HEAD
+[0.14.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.5
 [0.14.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.0
 [0.13.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.13.0
 [0.12.2]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.12.2
