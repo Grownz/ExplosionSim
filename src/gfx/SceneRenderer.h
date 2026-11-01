@@ -271,6 +271,9 @@ private:
     std::vector<uint8_t> chunkVisibleMain_;
     std::vector<uint8_t> chunkVisibleShadow_;
     std::vector<Instance> chunkInstances_;
+    // World-space centre of each chunk instance (the instance matrix maps
+    // building space, so its translation is only the displacement).
+    std::vector<DirectX::XMFLOAT3> chunkWorldCenters_;
     uint32_t chunkInstanceCount_ = 0;
     uint32_t chunkInstanceCapacity_ = 0;
     uint64_t chunkGeometryKey_ = 0;

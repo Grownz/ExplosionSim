@@ -938,6 +938,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
     chunkInstanceCount_ = 0;
     chunkInstances_.clear();
     chunkRanges_.clear();
+    chunkWorldCenters_.clear();
     chunkVertexBuffer_.reset();
     chunkIndexBuffer_.reset();
     if (!enabled || scene.Empty()) {
@@ -1016,6 +1017,7 @@ bool SceneRenderer::BuildChunkGeometry(const scene::Scene& scene) {
     }
 
     chunkInstances_.assign(chunkInstanceCount_, Instance{});
+    chunkWorldCenters_.assign(chunkInstanceCount_, DirectX::XMFLOAT3{});
     if (!EnsureChunkInstanceCapacity(std::max(64u, chunkInstanceCount_))) {
         return false;
     }
@@ -1103,6 +1105,11 @@ void SceneRenderer::UpdateChunkInstances(const scene::Scene& scene) {
                                             body.position.z);
             }
             XMStoreFloat4x4(&instance.transform, world);
+            if (size_t(index - 1) < chunkWorldCenters_.size()) {
+                XMStoreFloat3(&chunkWorldCenters_[index - 1],
+                              XMVector3TransformCoord(
+                                  XMLoadFloat3(&chunk.center), world));
+            }
             instance.color = chunk.color;
             instance.params =
                 XMFLOAT4(object.damageAmount * 0.7f, 0.0f, 0.0f, 3.0f);
@@ -1187,8 +1194,13 @@ void SceneRenderer::UpdateChunkVisibility(const ViewInfo& view) {
     for (size_t i = 0; i < chunkRanges_.size(); ++i) {
         const ChunkRange& range = chunkRanges_[i];
         const Instance& instance = chunkInstances_[range.instanceId];
-        const XMFLOAT3 center(instance.transform._41, instance.transform._42,
-                              instance.transform._43);
+        // The instance matrix maps building space, so its translation is the
+        // displacement from the fracture pose, not the world position.
+        const XMFLOAT3 center =
+            range.instanceId < chunkWorldCenters_.size()
+                ? chunkWorldCenters_[range.instanceId]
+                : XMFLOAT3(instance.transform._41, instance.transform._42,
+                           instance.transform._43);
         const float distance = XMVectorGetX(
             XMVector3Length(XMLoadFloat3(&center) - eye));
         const float pixels =
