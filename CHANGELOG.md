@@ -6,6 +6,44 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.6] - 2026-11-01
+
+0.14.6 is a hotfix release: the high-fidelity debris drag no longer acts on the
+whole-object collapse proxies, and the splash window has rounded corners on both
+platforms.
+
+### Highlights
+
+- **Debris drag** - the 4C coupling only covers detached chunks now. The
+  whole-building, vehicle and tree proxies carry a small collapse mass and were
+  accelerated by the sampled flow far beyond the blast loading (a building:
+  600 kg over a 112 m² silhouette, 2.6 g at 15 m/s). They stay on the
+  `ApplyBlastForces()` path instead.
+- **Rounded splash** - a 12 px corner radius at the 640 px reference height
+  (scaled with the splash), matching common window radii (Windows 11: 8 px,
+  GNOME/libadwaita: 12 px). Windows uses a native GDI region; X11 and Wayland
+  present a premultiplied alpha frame.
+
+### Changed
+
+- **Rounded splash corners** - the borderless SDL3 splash window now has a 12 px
+  corner radius at the 640 px reference height (scaled with the splash). Windows
+  cuts the window with a native rounded GDI region (`SetWindowRgn`); X11 and
+  Wayland present a premultiplied alpha frame, and the splash capture applies the
+  same mask. The radius follows the common window radii (Windows 11: 8 px,
+  GNOME/libadwaita: 12 px).
+
+### Fixed
+
+- **Debris drag on whole objects (high fidelity)** - the 4C coupling fed every
+  dynamic body through `0.5 rho Cd A |u-v| (u-v)`, including the whole-building,
+  vehicle and tree collapse proxies. Those proxies carry a small mass for the
+  rigid-body stack (a building: 600 kg over a 112 m² silhouette), so the sampled
+  flow accelerated them by several g at 15 m/s and the debris felt glued to the
+  air. Only detached chunks are coupled now; the proxies stay on the blast-loading
+  path. The drag formula itself was already physical (Cd = 1, OBB silhouette
+  area, local mixture density).
+
 ## [0.14.5] - 2026-11-01
 
 0.14.5 is a rendering-quality release: selectable post-process anti-aliasing,
@@ -47,12 +85,6 @@ unchanged.
 
 ### Changed
 
-- **Rounded splash corners** - the borderless SDL3 splash window now has a 12 px
-  corner radius at the 640 px reference height (scaled with the splash). Windows
-  cuts the window with a native rounded GDI region (`SetWindowRgn`); X11 and
-  Wayland present a premultiplied alpha frame, and the splash capture applies the
-  same mask. The radius follows the common window radii (Windows 11: 8 px,
-  GNOME/libadwaita: 12 px).
 - **Anisotropic filtering control removed** - the only mip-mapped texture
   sampled through it is the isotropic surface grain on facades, vehicles and
   trees, so the setting made no visible difference (0x and 8x were measured at
@@ -62,14 +94,6 @@ unchanged.
 
 ### Fixed
 
-- **Debris drag on whole objects (high fidelity)** - the 4C coupling fed every
-  dynamic body through `0.5 rho Cd A |u-v| (u-v)`, including the whole-building,
-  vehicle and tree collapse proxies. Those proxies carry a small mass for the
-  rigid-body stack (a building: 600 kg over a 112 m² silhouette), so the sampled
-  flow accelerated them by several g at 15 m/s and the debris felt glued to the
-  air. Only detached chunks are coupled now; the proxies stay on the blast-loading
-  path. The drag formula itself was already physical (Cd = 1, OBB silhouette
-  area, local mixture density).
 - **Bloom froze while the camera moved (D3D11)** - `RenderBloom()` never bound its
   own vertex shader. It inherited the particle VS whenever the shock pass was
   skipped (once the front had decayed), so the downsample/upsample draws wrote no
@@ -1254,7 +1278,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.14.5...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.14.6...HEAD
+[0.14.6]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.6
 [0.14.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.5
 [0.14.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.0
 [0.13.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.13.0
