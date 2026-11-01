@@ -1332,6 +1332,16 @@ void Renderer::ResetBloom() {
 void Renderer::RenderBloom() {
     ID3D11DeviceContext* context = device_->Context();
 
+    // The bloom passes must not inherit the vertex shader from the previous
+    // pass. The particle passes leave their own VS bound, and the shock pass
+    // (which normally restores the fullscreen VS) is skipped once the front
+    // has decayed. Without this the downsample/upsample draws run with the
+    // particle VS, write no pixels, and the bloom freezes at the last frame
+    // where the shock was still active.
+    context->VSSetShader(fullscreenVS_.Get(), nullptr, 0);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    context->RSSetState(rasterizer_.Get());
+
     ID3D11ShaderResourceView* source = hdr_.SRV();
     int sourceWidth = hdr_.width;
     int sourceHeight = hdr_.height;

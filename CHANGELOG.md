@@ -33,6 +33,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Bloom froze while the camera moved (D3D11)** - `RenderBloom()` never bound its
+  own vertex shader. It inherited the particle VS whenever the shock pass was
+  skipped (once the front had decayed), so the downsample/upsample draws wrote no
+  pixels and the bloom texture stayed at the last shock-active frame: the glow
+  stuck to the screen while the camera panned. The bloom pass now binds the
+  fullscreen VS, triangle-list topology and rasterizer explicitly. The reference
+  captures are unchanged because their capture times still have an active shock
+  front; the Linux preview already owned its bloom pipeline and was not affected.
 - **Anisotropic filtering on D3D11** - the RHI sampler never set `MaxLOD`, so the
   zero-initialised value clamped every sample to mip 0: the mip chain was unused
   and anisotropic filtering could not do anything (0x and 8x were pixel-identical).
