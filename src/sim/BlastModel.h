@@ -127,6 +127,9 @@ public:
 
     // Radiant exposure in J/m^2 at a given slant range.
     double ThermalFluenceJm2(double distanceM) const;
+    // Duration of the thermal pulse of the fireball (its cooling time constant),
+    // used to turn a fluence into an ignition criterion.
+    double ThermalPulseDurationS() const { return fireballCoolTau_; }
 
     double RadiusForOverpressure(double targetPa) const;
     double RadiusForThermalFluence(double targetJm2) const;

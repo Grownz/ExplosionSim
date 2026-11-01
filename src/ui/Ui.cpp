@@ -853,6 +853,22 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
         actions.applySimulationSettings = true;
     }
 
+    // The fire model is chosen before the detonation: it changes how the scene
+    // ignites, so it can only be edited while the simulation is armed.
+    ImGui::BeginDisabled(!simulation.IsArmed());
+    if (ImGui::Checkbox("Fire propagation", &settings.simulation.firePropagation)) {
+        actions.applySimulationSettings = true;
+    }
+    ImGui::EndDisabled();
+    if (settings.simulation.firePropagation && !simulation.IsArmed()) {
+        Readout("Burning objects", "%d", simulation.Scene().BurningCount());
+        Readout("Burned out", "%d", simulation.Scene().BurnedOutCount());
+    }
+    Hint(simulation.IsArmed()
+             ? "Fuel, burn-out and radiative ignition of neighbouring objects. The "
+               "fire advances in simulated time: use time scale 1x to watch it spread."
+             : "Rearm to change the fire model.");
+
     if (settings.simulation.mode == sim::SimulationMode::HighFidelity) {
         if (ImGui::Checkbox("Flow around objects",
                             &settings.simulation.solverFlowAround)) {

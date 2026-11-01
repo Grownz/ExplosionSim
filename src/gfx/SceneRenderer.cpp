@@ -1551,7 +1551,8 @@ void SceneRenderer::RenderShadow(rhi::CommandList* commandList,
                                           toBlast.z / blastLength);
             }
         }
-        instance.state = XMFLOAT4(object.burning ? 1.0f : 0.0f, blastDirection.x,
+        instance.state = XMFLOAT4(object.burning ? 0.25f + 0.75f * object.fireIntensity : 0.0f,
+                                  blastDirection.x,
                                   blastDirection.y, blastDirection.z);
         // Building space for the facade (buildings are axis-aligned).
         instance.textureOrigin =

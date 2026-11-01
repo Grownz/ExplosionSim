@@ -87,6 +87,7 @@ struct Options {
     bool highFidelity = true;
     bool flowAround = true;
     bool bodyDrag = true;
+    bool firePropagation = false;
     int solverResolution = 0;
     int solverSteps = 0;
     double solverTime = -1.0;
@@ -147,6 +148,7 @@ void PrintUsage() {
     std::printf("  --solver-step-count <n>  Measured solver steps for the benchmark.\n");
     std::printf("  --flow-around / --no-flow-around  Toggle scene obstacles (default on).\n");
     std::printf("  --body-drag / --no-body-drag      Toggle 4C debris drag (default on).\n");
+    std::printf("  --fire-propagation / --no-fire-propagation  Toggle the fire spread model (default off).\n");
     std::printf("  --splash-test        Show the SDL3 splash briefly and exit.\n");
     std::printf("  --benchmark          Render a fixed frame count and report the average.\n");
     std::printf("  --benchmark-sim      Like --benchmark, but steps the simulation each frame.\n");
@@ -293,6 +295,7 @@ void LoadSettingsFile(const std::string& path, Options& options) {
         boolean("solverHemisphere", options.solverHemisphere);
     options.flowAround = boolean("solverFlowAround", options.flowAround);
     options.bodyDrag = boolean("solverBodyDrag", options.bodyDrag);
+    options.firePropagation = boolean("firePropagation", options.firePropagation);
 
     options.sceneEnabled = boolean("sceneEnabled", options.sceneEnabled);
     options.sceneEnabledSet = true;
@@ -383,6 +386,7 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
          << "\n";
     file << "solverFlowAround=" << IniBoolText(options.flowAround) << "\n";
     file << "solverBodyDrag=" << IniBoolText(options.bodyDrag) << "\n";
+    file << "firePropagation=" << IniBoolText(options.firePropagation) << "\n";
     file << "particleBudget=" << options.particleBudget << "\n";
     file << "gpuParticles=" << IniBoolText(options.gpuParticles) << "\n";
     file << "volumeResolution="
@@ -440,6 +444,14 @@ bool ParseOptions(int argc, char** argv, Options& options) {
         }
         if (std::strcmp(arg, "--flow-around") == 0) {
             options.flowAround = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--fire-propagation") == 0) {
+            options.firePropagation = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--no-fire-propagation") == 0) {
+            options.firePropagation = false;
             continue;
         }
         if (std::strcmp(arg, "--no-body-drag") == 0) {
@@ -1248,6 +1260,7 @@ int main(int argc, char** argv) {
     simulationSettings.solverHemisphere = options.solverHemisphere;
     simulationSettings.solverFlowAround = options.flowAround;
     simulationSettings.solverBodyDrag = options.bodyDrag;
+    simulationSettings.firePropagation = options.firePropagation;
     simulationSettings.gpuParticles = gpuParticlesReady;
     simulationSettings.gpuVolumeBake = gpuVolumeReady;
     simulationSettings.timeScale = options.timeScale;
@@ -1539,6 +1552,7 @@ int main(int argc, char** argv) {
             uiState.highFidelity = highFidelity;
             uiState.flowAround = options.flowAround;
             uiState.bodyDrag = options.bodyDrag;
+            uiState.firePropagation = options.firePropagation;
             uiState.solverResolution = simulation.Settings().solverResolution;
             uiState.solverAvailable = solverReady;
             uiState.updateCheckEnabled = options.checkForUpdates;
@@ -1694,6 +1708,13 @@ int main(int argc, char** argv) {
                     if (highFidelityRuntime.solver.HasVolume()) {
                         highFidelityRuntime.UpdateObstacles(simulation);
                     }
+                }
+                if (uiState.firePropagation != options.firePropagation) {
+                    // The checkbox is only enabled while the simulation is armed.
+                    options.firePropagation = uiState.firePropagation;
+                    ex::sim::SimulationSettings settings = simulation.Settings();
+                    settings.firePropagation = options.firePropagation;
+                    simulation.ApplySettings(settings);
                 }
                 if (uiState.bodyDrag != options.bodyDrag) {
                     options.bodyDrag = uiState.bodyDrag;

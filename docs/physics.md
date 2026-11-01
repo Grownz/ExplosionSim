@@ -455,9 +455,63 @@ decays with receiver height. The averaged transmission scales pressure, impulse 
 thermal fluence.
 
 Thermal ignition uses material thresholds; burning is visual (ember tint and particles),
-not a combustion simulation. The heat arrives from the burst, so the ember glow, the
+not a combustion simulation unless *Fire propagation* is enabled (see below). The heat arrives from the burst, so the ember glow, the
 flame billboards and the short edge streaks are limited to the blast-facing surface of
 an object; the leeward side keeps its charred material colour.
+
+### Fire spread
+
+The optional fire model (`Fire propagation` in the Physics & Effects panel, `firePropagation`
+in `settings.ini`, `--fire-propagation` on both command lines) replaces the visual-only
+fire with fuel, burn-out and radiative ignition of neighbouring objects. It is off by
+default and can only be changed while the simulation is armed; the choice is latched at
+the detonation. With the model off nothing changes: thermal ignition keeps the
+thresholds above and a burning object burns for ever.
+
+**Ignition.** Every material has a critical heat flux `q_cr` and an ignition criterion
+from the thermal inertia of the surface (Drysdale, *An Introduction to Fire Dynamics*;
+Babrauskas, *Ignition Handbook*): thermally thick solids ignite when
+`integral (q - q_cr)^2 dt` reaches `Gamma = pi/4 * k rho c * (T_ig - T_0)^2`, thin fuels
+(foliage) when `integral (q - q_cr) dt` reaches `rho c delta (T_ig - T_0)`.
+
+| Object | Material | q_cr | Criterion |
+|---|---|---|---|
+| Building | softwood finishes and contents, k rho c = 2.1e5, T_ig = 623 K | 12.5 kW/m^2 | Gamma = 1.8e10 W^2 s/m^4 |
+| Vehicle | plastics and paint, k rho c = 3.3e5, T_ig = 623 K | 13 kW/m^2 | Gamma = 2.8e10 W^2 s/m^4 |
+| Tree | dry foliage, rho c delta = 500 J/m^2/K, T_ig = 573 K | 10 kW/m^2 | 140 kJ/m^2 |
+
+The flash ignition from the fireball uses the same criterion for a pulse as long as the
+fireball cools (`BlastModel::ThermalPulseDurationS`): the required fluence is
+`q_cr tau + sqrt(Gamma tau)` (thick) or `q_cr tau + Q_thin` (thin). For a 500 kg charge
+this is about 125-155 kJ/m^2, so only objects within about 7 m of the burst ignite from
+the flash; the old visual thresholds (5-15 kJ/m^2) correspond to roughly 20-40 m. TNT emits
+little thermal energy, so most fires start from the radiation of an object that ignites
+first rather than from the fireball.
+
+**Burning.** An ignited object carries `fuel` (building 35 kg of wood equivalent per
+floor and m^2 of floor area, the Eurocode 1 mean of offices and dwellings; vehicle 40 kg;
+tree 15 kg). The burn rate is `m'' * A_envelope * i(t)`, with an effective mass flux
+`m''` (building 0.011, vehicle 0.0045, tree 0.004 kg/m^2/s) and an intensity `i(t)` that
+grows with `t^2` to 1 (300 s, 120 s, 15 s for building, vehicle, tree) and falls
+linearly below 30 % of the fuel. The fire goes out at 2 % of the fuel, which gives about
+45-60 minutes for a building, five to ten minutes for a car and under a minute for a tree.
+
+**Spread.** Every 0.5 s of simulated time each burning object radiates onto every other
+object within 30 m: `q = eps sigma T^4 * coverage * i * F`, with flame temperature 1200 K,
+emissivity 0.9 (E = 106 kW/m^2) and a coverage of 0.4 (building: windows and openings),
+0.6 (vehicle) and 0.7 (tree). `F` is the exact configuration factor from the facing
+rectangle (footprint width x height) to a small element on its normal through the centre
+(Howell catalogue), at the gap between the two footprints, minimum 0.5 m. The flux
+accumulates the ignition dose of the receiver; no dose is lost while the flux stays
+below `q_cr`.
+
+Limitations: no wind tilt or flame leaning (see roadmap 5.2), no shielding of the
+radiation by intervening objects, no ember spotting, no fire suppression, no
+structural damage from the heat, the receiver sits on the emitter's axis at mid height,
+and the burnt object only loses its glow (no extra charring). The fire advances in
+simulated time, so the default playback scale of 0.06 shows it slowly; use 1x to watch
+the spread. The constants are engineering values from the cited references and have not
+been validated against a specific fire test.
 
 Limitations: no soil/structure interaction, the remaining structure is static (it can be
 damaged by debris but does not redistribute load), the shielding model is a

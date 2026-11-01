@@ -55,6 +55,8 @@ struct LaunchOptions {
     bool sceneSeedSet = false;
     bool sceneEnabled = true;
     bool sceneEnabledSet = false;
+    bool firePropagation = false;
+    bool firePropagationSet = false;
     float sceneDensity = 1.0f;
     bool sceneDensitySet = false;
 };

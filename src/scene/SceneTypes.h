@@ -135,6 +135,14 @@ struct SceneObject {
     bool burning = false;
     float damageAmount = 0.0f;
     float burnTimer = 0.0f;
+    // Fire propagation model (Scene::SetFirePropagation). `fireIntensity` is 1
+    // for the visual-only fire; the propagation model ramps it from 0 to 1 and
+    // back while the fuel burns off.
+    bool burnedOut = false;
+    float fuelKg = 0.0f;
+    float fireIntensity = 1.0f;
+    float burnElapsedS = 0.0f;
+    float ignitionDose = 0.0f;
     int bodyIndex = -1;
     bool collapsed = false;
     bool collapsing = false;
@@ -182,6 +190,16 @@ public:
     std::vector<SceneFireSpawn> ConsumeFireSpawns();
     std::vector<SceneEmberSpawn> ConsumeEmberSpawns();
 
+    // Fire propagation (docs/physics.md, "Fire spread"): fuel, burn-out and
+    // radiative ignition of neighbours. Off keeps the visual-only fire. The
+    // option is read when the fire starts; Simulation latches it at detonation.
+    void SetFirePropagation(bool enabled) { firePropagation_ = enabled; }
+    bool FirePropagation() const { return firePropagation_; }
+    // Starts a fire on one object (used by tests and tools).
+    void Ignite(size_t objectIndex);
+    int BurningCount() const;
+    int BurnedOutCount() const;
+
     PhysicsWorld& Physics() { return physics_; }
     const PhysicsWorld& Physics() const { return physics_; }
 
@@ -222,6 +240,8 @@ private:
                                  const std::vector<uint8_t>& supported);
     void ApplyContactDamage(float dtSim);
     void StepPhysics(float dtSim);
+    void StartFire(SceneObject& object);
+    void StepFire(float dt);
 
     SceneSettings settings_{};
     std::vector<SceneObject> objects_;
@@ -237,6 +257,8 @@ private:
     float extent_ = 0.0f;
     double time_ = 0.0;
     double physicsAccumulator_ = 0.0;
+    bool firePropagation_ = false;
+    double fireTimer_ = 0.0;
 };
 
 } // namespace ex::scene

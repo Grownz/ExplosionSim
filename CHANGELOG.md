@@ -8,6 +8,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Fire propagation** - new optional model (`Fire propagation` checkbox in
+  *Physics & Effects*, `firePropagation` in `settings.ini`, `--fire-propagation` /
+  `--no-fire-propagation` on both command lines; off by default). Objects carry
+  fuel (building 35 kg of wood equivalent per floor and m^2, vehicle 40 kg, tree
+  15 kg), burn with a t^2 growth and a fuel-limited decay, go out and ignite
+  neighbours within 30 m by radiation (flame emissive power 106 kW/m^2, exact
+  configuration factor, thermal-inertia ignition dose with a critical flux per
+  material). The flash ignition from the fireball uses the same criterion. The
+  checkbox is greyed out unless the simulation is armed (reset) and the choice is
+  latched at the detonation; the panel shows how many objects burn and burned out.
+  With the option off nothing changes. The fire advances in simulated time, so
+  use time scale 1x to watch it spread. New tests: `TestFireModelPhysics`,
+  `TestFirePropagation` (shared golden hash on both platforms) and the settings
+  round trip. See `docs/physics.md`, "Fire spread".
 - **Cross-platform deterministic simulation** - the blast model, the town, the
   collapse and the Jolt rigid bodies now produce bit-identical state on Windows
   (MSVC) and Linux (GCC) and for any number of worker threads. `core/DetMath`

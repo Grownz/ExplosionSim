@@ -37,6 +37,9 @@ bool SceneChanged(const SimulationSettings& a, const SimulationSettings& b) {
 bool Simulation::Initialize(const SimulationSettings& settings, core::ThreadPool& pool,
                             bool holdFuse) {
     pool_ = &pool;
+    if (!detonated_) {
+        firePropagationLatched_ = settings.firePropagation;
+    }
     settings_ = settings;
     particles_.SetGpuMode(settings.gpuParticles);
     particles_.Initialize(settings.particleBudget);
@@ -229,6 +232,7 @@ void Simulation::ResetInternal(bool holdFuse, bool regenerateScene) {
     }
 
     ++blastSerial_;
+    firePropagationLatched_ = settings_.firePropagation;
 
     Environment environment{};
     environment.pressurePa = settings_.ambientPressurePa;
@@ -328,6 +332,9 @@ void Simulation::ApplySettings(const SimulationSettings& settings) {
                             modeChanged || solverResolutionChanged ||
                             solverDomainChanged || gpuParticlesChanged;
 
+    if (!detonated_) {
+        firePropagationLatched_ = settings.firePropagation;
+    }
     settings_ = settings;
 
     if (autoScaleChanged) {
@@ -512,6 +519,7 @@ void Simulation::UpdateScene(double dtSim) {
     if (sceneGenerating_.load(std::memory_order_acquire)) {
         return;
     }
+    scene_.SetFirePropagation(firePropagationLatched_);
     scene_.Update(blast_, float(dtSim));
 
     // Flames are attached to the body they sit on: translate them by however

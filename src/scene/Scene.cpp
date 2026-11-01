@@ -5,6 +5,7 @@
 #include "core/FrameProfile.h"
 #include "core/Random.h"
 #include "core/ThreadPool.h"
+#include "scene/FireModel.h"
 #include "scene/VehicleModels.h"
 #include "scene/VoronoiFracture.h"
 
@@ -394,6 +395,11 @@ void Scene::ResetState() {
         object.resolved = false;
         object.burning = false;
         object.burnTimer = 0.0f;
+        object.burnedOut = false;
+        object.fuelKg = 0.0f;
+        object.fireIntensity = 1.0f;
+        object.burnElapsedS = 0.0f;
+        object.ignitionDose = 0.0f;
         object.bodyIndex = -1;
         object.collapsed = false;
         object.collapsing = false;
@@ -412,6 +418,7 @@ void Scene::ResetState() {
     physics_.Clear();
     time_ = 0.0;
     physicsAccumulator_ = 0.0;
+    fireTimer_ = 0.0;
 }
 
 bool Scene::GenerateInternal(const SceneSettings& settings,
@@ -1046,12 +1053,24 @@ void Scene::Update(const sim::BlastModel& blast, float dtSim) {
             debrisSpawns_.push_back(spawn);
         }
 
-        const float ignition = object.type == SceneObjectType::Tree
-                                   ? 5000.0f
-                                   : (object.type == SceneObjectType::Vehicle ? 15000.0f
-                                                                             : 10000.0f);
-        if (object.thermalFluenceJm2 >= ignition) {
-            object.burning = true;
+        if (firePropagation_) {
+            // Flash ignition from the fireball: the same material model as the
+            // radiative spread, for a pulse as long as the fireball cools.
+            const float ignition = fire::BlastIgnitionFluenceJm2(
+                object.type, blast.ThermalPulseDurationS());
+            if (object.thermalFluenceJm2 >= ignition && !object.burning &&
+                !object.burnedOut) {
+                StartFire(object);
+            }
+        } else {
+            const float ignition = object.type == SceneObjectType::Tree
+                                       ? 5000.0f
+                                       : (object.type == SceneObjectType::Vehicle
+                                              ? 15000.0f
+                                              : 10000.0f);
+            if (object.thermalFluenceJm2 >= ignition) {
+                object.burning = true;
+            }
         }
 
         if (object.type == SceneObjectType::Building) {
@@ -1071,6 +1090,17 @@ void Scene::Update(const sim::BlastModel& blast, float dtSim) {
             if (activate) {
                 ActivateBody(object);
             }
+        }
+    }
+
+    if (firePropagation_) {
+        // Fuel, burn-out and radiative spread advance in fixed 0.5 s steps; the
+        // cap keeps one huge dt (tests) from looping for ever.
+        constexpr double kFireStepS = 0.5;
+        fireTimer_ = std::min(fireTimer_ + double(dtSim), 600.0);
+        while (fireTimer_ >= kFireStepS) {
+            fireTimer_ -= kFireStepS;
+            StepFire(float(kFireStepS));
         }
     }
 

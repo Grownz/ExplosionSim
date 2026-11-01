@@ -58,6 +58,7 @@ Useful flags:
 | `--no-solver-auto-scale` | Keep the solver domain fixed. |
 | `--flow-around` / `--no-flow-around` | Include the scene buildings and vehicles as solid obstacles in the high-fidelity solver (default on). |
 | `--body-drag` / `--no-body-drag` | Apply the solver's sampled flow as drag impulses to the debris bodies (default on). |
+| `--fire-propagation` / `--no-fire-propagation` | Fire spread model: fuel, burn-out and radiative ignition of neighbouring objects (default off; the panel checkbox is enabled only while the simulation is armed). |
 | `--benchmark --frames <n>` | Render a fixed frame count and report the average. |
 | `--solver-benchmark` | Report solver GPU timings per pass. |
 | `--splash-test` | Render the splash briefly and exit. |

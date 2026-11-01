@@ -57,6 +57,7 @@ void PrintUsage() {
     LogInfo("  --scene-seed <n>      Seed for the procedural environment.");
     LogInfo("  --scene-density <x>   Environment density multiplier.");
     LogInfo("  --no-scene            Disable the procedural environment.");
+    LogInfo("  --fire-propagation / --no-fire-propagation  Toggle the fire spread model.");
     LogInfo("  --no-vsync            Disable vertical synchronisation.");
     LogInfo("  --debug               Enable the D3D11 debug layer.");
     LogInfo("  --help                Show this help.");
@@ -215,6 +216,12 @@ ParsedArguments ParseCommandLine() {
         } else if (argument == L"--no-scene") {
             result.options.sceneEnabled = false;
             result.options.sceneEnabledSet = true;
+        } else if (argument == L"--fire-propagation") {
+            result.options.firePropagation = true;
+            result.options.firePropagationSet = true;
+        } else if (argument == L"--no-fire-propagation") {
+            result.options.firePropagation = false;
+            result.options.firePropagationSet = true;
         } else if (argument == L"--no-vsync") {
             result.options.vsync = false;
         } else if (argument == L"--debug") {

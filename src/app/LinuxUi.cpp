@@ -204,6 +204,14 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
         ImGui::Checkbox("Debris drag", &state.bodyDrag);
         ImGui::SliderInt("Solver grid", &state.solverResolution, 32, 256);
     }
+    // Chosen before the detonation, like on Windows: enabled only while armed.
+    ImGui::BeginDisabled(!simulation.IsArmed());
+    ImGui::Checkbox("Fire propagation", &state.firePropagation);
+    ImGui::EndDisabled();
+    if (state.firePropagation && !simulation.IsArmed()) {
+        ImGui::Text("Burning %d, burned out %d", simulation.Scene().BurningCount(),
+                    simulation.Scene().BurnedOutCount());
+    }
     if (ImGui::Button("Apply blast settings")) {
         state.applySimulation = true;
     }

@@ -8,6 +8,7 @@
 #include "app/Settings.h"
 #endif
 #include "gfx/Frustum.h"
+#include "scene/FireModel.h"
 #include "scene/PhysicsWorld.h"
 #include "scene/SceneTypes.h"
 #include "scene/VoronoiFracture.h"
@@ -647,6 +648,7 @@ void TestSettingsRoundTrip() {
     original.simulation.scene.chunkScale = 0.5f;
     original.simulation.scene.groundReflection = 0.7f;
     original.simulation.scene.voronoiChunks = true;
+    original.simulation.firePropagation = true;
 
     original.render.raymarchSteps = 77;
     original.render.exposure = 1.25f;
@@ -703,6 +705,7 @@ void TestSettingsRoundTrip() {
     CHECK(loaded.simulation.scene.quality == 2);
     CHECK_NEAR(loaded.simulation.scene.chunkScale, 0.5f, 1e-4);
     CHECK(loaded.simulation.scene.voronoiChunks);
+    CHECK(loaded.simulation.firePropagation);
 
     CHECK(loaded.render.raymarchSteps == 77);
     CHECK_NEAR(loaded.render.exposure, 1.25f, 1e-4);
@@ -1732,6 +1735,204 @@ void TestSimulationStateHash() {
     CHECK(single == kGoldenSimulationStateHash);
 }
 
+constexpr uint64_t kGoldenFireStateHash = 0x48919E9A46665D6Bull;
+
+void TestFireModelPhysics() {
+    namespace fire = ex::scene::fire;
+    // A very large plane fills the hemisphere of the receiver.
+    CHECK_NEAR(fire::RectangleViewFactor(4000.0, 4000.0, 1.0), 1.0, 2e-3);
+    // Far field: F = A / (pi d^2).
+    const double farFactor = fire::RectangleViewFactor(2.0, 2.0, 100.0);
+    CHECK_NEAR(farFactor / (4.0 / (3.14159265358979 * 100.0 * 100.0)), 1.0, 0.01);
+    // The factor falls with distance and grows with the emitter.
+    CHECK(fire::RectangleViewFactor(20.0, 15.0, 5.0) > fire::RectangleViewFactor(20.0, 15.0, 10.0));
+    CHECK(fire::RectangleViewFactor(20.0, 15.0, 10.0) > fire::RectangleViewFactor(10.0, 7.5, 10.0));
+
+    // Flame emissive power: 0.9 * sigma * (1200 K)^4, about 106 kW/m^2.
+    CHECK_NEAR(fire::FlameEmissivePowerWm2(), 105800.0, 500.0);
+
+    // Ignition fluence follows the material model: longer pulses need more.
+    using ex::scene::SceneObjectType;
+    for (SceneObjectType type : {SceneObjectType::Building, SceneObjectType::Vehicle,
+                                 SceneObjectType::Tree}) {
+        const float shortPulse = fire::BlastIgnitionFluenceJm2(type, 0.2);
+        const float longPulse = fire::BlastIgnitionFluenceJm2(type, 2.0);
+        CHECK(shortPulse > 5.0e4f);
+        CHECK(longPulse > shortPulse);
+    }
+
+    // Fuel loads: a vehicle carries 40 kg, a tree 15 kg, a building scales with
+    // its floor area and number of floors.
+    ex::scene::SceneObject car;
+    car.type = SceneObjectType::Vehicle;
+    car.size = DirectX::XMFLOAT3(1.8f, 1.5f, 4.5f);
+    CHECK_NEAR(fire::InitialFuelKg(car), 40.0, 1e-3);
+    ex::scene::SceneObject tree;
+    tree.type = SceneObjectType::Tree;
+    tree.size = DirectX::XMFLOAT3(4.0f, 8.0f, 4.0f);
+    CHECK_NEAR(fire::InitialFuelKg(tree), 15.0, 1e-3);
+    ex::scene::SceneObject house;
+    house.type = SceneObjectType::Building;
+    house.size = DirectX::XMFLOAT3(10.0f, 6.4f, 10.0f);  // two floors
+    CHECK_NEAR(fire::InitialFuelKg(house), 35.0 * 100.0 * 2.0, 1.0);
+    ex::scene::SceneObject tower = house;
+    tower.size.y = 12.8f;  // four floors
+    CHECK_NEAR(fire::InitialFuelKg(tower), 2.0 * fire::InitialFuelKg(house), 1.0);
+}
+
+void TestFirePropagation() {
+    using ex::scene::SceneObject;
+    using ex::scene::SceneObjectType;
+
+    Environment environment{};
+    Charge charge{};
+    charge.tntMassKg = 0.05;  // too small to ignite or damage anything
+    charge.heightOfBurstM = 0.4;
+    BlastModel model;
+    model.Configure(charge, environment);
+
+    ex::scene::SceneSettings settings{};
+    settings.seed = 4242;
+    settings.density = 1.0f;
+    settings.quality = 0;
+    ex::scene::Scene scene;
+    scene.Generate(settings, model);
+    CHECK(!scene.Empty());
+    const std::vector<SceneObject>& objects = scene.Objects();
+
+    // Pick the building with the closest neighbour (edge to edge gap).
+    auto gap = [&](size_t a, size_t b) {
+        const SceneObject& x = objects[a];
+        const SceneObject& y = objects[b];
+        const double dx = std::max(0.0, std::abs(double(x.position.x - y.position.x)) -
+                                            0.5 * (x.size.x + y.size.x));
+        const double dz = std::max(0.0, std::abs(double(x.position.z - y.position.z)) -
+                                            0.5 * (x.size.z + y.size.z));
+        return std::sqrt(dx * dx + dz * dz);
+    };
+    size_t source = objects.size();
+    double bestGap = 1.0e9;
+    for (size_t a = 0; a < objects.size(); ++a) {
+        if (objects[a].type != SceneObjectType::Building) {
+            continue;
+        }
+        for (size_t b = 0; b < objects.size(); ++b) {
+            if (b != a && objects[b].type == SceneObjectType::Building &&
+                gap(a, b) < bestGap) {
+                bestGap = gap(a, b);
+                source = a;
+            }
+        }
+    }
+    CHECK(source < objects.size());
+    std::printf("  fire source %zu, nearest building gap %.1f m\n", source, bestGap);
+
+    // Without the model a fire only sets the visual flag and never ends.
+    scene.SetFirePropagation(false);
+    scene.Ignite(source);
+    CHECK(objects[source].burning);
+    for (int i = 0; i < 100; ++i) {
+        scene.Update(model, 10.0f);
+    }
+    CHECK(objects[source].burning);
+    CHECK(!objects[source].burnedOut);
+    CHECK(scene.BurningCount() == 1);
+
+    // With the model the fire grows, spreads, burns out and never exceeds the
+    // radiative cutoff.
+    scene.ResetState();
+    CHECK(scene.BurningCount() == 0);
+    scene.SetFirePropagation(true);
+    scene.Ignite(source);
+    CHECK(objects[source].burning);
+    CHECK_NEAR(objects[source].fuelKg, ex::scene::fire::InitialFuelKg(objects[source]), 1e-3);
+    const float initialFuel = objects[source].fuelKg;
+
+    float previousFuel = initialFuel;
+    bool monotone = true;
+    int peakBurning = 1;
+    double sourceOutTime = -1.0;
+    double firstSpreadTime = -1.0;
+    for (int step = 1; step <= 360; ++step) {  // 3 h at 30 s
+        scene.Update(model, 30.0f);
+        const SceneObject& s = objects[source];
+        monotone = monotone && s.fuelKg <= previousFuel + 1e-3f;
+        previousFuel = s.fuelKg;
+        peakBurning = std::max(peakBurning, scene.BurningCount());
+        const int touched = scene.BurningCount() + scene.BurnedOutCount();
+        if (firstSpreadTime < 0.0 && touched > 1) {
+            firstSpreadTime = step * 30.0;
+        }
+        if (sourceOutTime < 0.0 && s.burnedOut) {
+            sourceOutTime = step * 30.0;
+        }
+    }
+    CHECK(monotone);
+    CHECK(objects[source].burnedOut);
+    CHECK(!objects[source].burning);
+    std::printf("  burn-out of the source after %.0f s, first spread at %.0f s, peak %d burning, "
+                "%d burned out\n",
+                sourceOutTime, firstSpreadTime, peakBurning, scene.BurnedOutCount());
+    CHECK(firstSpreadTime > 0.0);
+    CHECK(firstSpreadTime <= 1800.0);
+    // A developed building fire lasts tens of minutes to a few hours.
+    CHECK(sourceOutTime > 600.0);
+    CHECK(sourceOutTime < 10800.0);
+
+    // Every ignited object has a burning or burned neighbour within the cutoff
+    // radius plus both footprints (no action at a distance, no hidden ignition).
+    for (size_t i = 0; i < objects.size(); ++i) {
+        if (i == source || (!objects[i].burnedOut && !objects[i].burning)) {
+            continue;
+        }
+        bool closeEnough = false;
+        for (size_t j = 0; j < objects.size(); ++j) {
+            if (j != i && (objects[j].burnedOut || objects[j].burning) &&
+                gap(i, j) <= 30.0) {
+                closeEnough = true;
+            }
+        }
+        CHECK(closeEnough);
+    }
+    // Something more than 30 m from everything that burned stays unburnt.
+    int farUnburnt = 0;
+    for (size_t i = 0; i < objects.size(); ++i) {
+        bool isolated = true;
+        for (size_t j = 0; j < objects.size(); ++j) {
+            if (j != i && (objects[j].burnedOut || objects[j].burning) && gap(i, j) <= 30.0) {
+                isolated = false;
+            }
+        }
+        if (isolated && !objects[i].burnedOut && !objects[i].burning && i != source) {
+            ++farUnburnt;
+        }
+    }
+    CHECK(farUnburnt > 0);
+
+    // A reset restores the fresh state.
+    scene.ResetState();
+    CHECK(scene.BurningCount() == 0);
+    CHECK(scene.BurnedOutCount() == 0);
+    CHECK_NEAR(objects[source].fuelKg, 0.0, 0.0);
+
+    // Same bits on both platforms for the whole scenario.
+    BitHasher hasher;
+    scene.SetFirePropagation(true);
+    scene.Ignite(source);
+    for (int step = 0; step < 240; ++step) {
+        scene.Update(model, 10.0f);
+    }
+    for (const SceneObject& object : objects) {
+        hasher.Float(object.fuelKg);
+        hasher.Float(object.fireIntensity);
+        hasher.Float(object.burnElapsedS);
+        hasher.Float(object.ignitionDose);
+        hasher.U64(uint64_t(object.burning) | (uint64_t(object.burnedOut) << 1));
+    }
+    std::printf("  fire state hash %016llx\n", static_cast<unsigned long long>(hasher.Value()));
+    CHECK(hasher.Value() == kGoldenFireStateHash);
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
 #define RUN(test)                    \
@@ -1774,6 +1975,8 @@ int main() {
     RUN(TestVehicleProxyLookup);
     RUN(TestDeterministicMath);
     RUN(TestSimulationStateHash);
+    RUN(TestFireModelPhysics);
+    RUN(TestFirePropagation);
 #ifdef _WIN32
     RUN(TestSettingsRoundTrip);
 #endif

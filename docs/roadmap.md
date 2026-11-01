@@ -19,7 +19,7 @@ changelog; phases 5 and 6 were checked against the source.
 | 2 Collapse and fracture | Done | Progressive collapse, standing structure as static colliders, Voronoi chunks by default. |
 | 3 Blast shielding | Done | `scene.groundReflection` defaults to 0 (free air), not the 0.9 proposed in the plan below. |
 | 4 Shadows and LOD | Done | Three cascades plus a cached static building map. |
-| 5.1 Fire spread | **Open** | `Scene.cpp` ignites objects from the thermal fluence only; `burning` is a visual flag that never ends and never spreads (no fuel, burn rate or neighbour ignition). |
+| 5.1 Fire spread | **Done** (optional) | `Fire propagation` option, off by default: fuel, burn-out and radiative ignition (`FireModel.h`, `SceneFire.cpp`, `docs/physics.md`, "Fire spread"). Wind tilt, shielding and ember spotting are not modelled. |
 | 5.2 Wind on debris | **Partial** | Global `windSpeedMs` / `windDirectionDeg` settings drive cloud drift and particles. Rigid-body debris only feels the 4C flow drag (`FlowBodies.cpp`, Cd = 1.0); there is no wind profile, no centre of pressure and no torque. |
 | 5.3 Crater heightfield | **Open** | The ground is a Jolt box with its top face at `y = 0`; no crater code in the sources or shaders. |
 | 6.1 People | Out of scope | Unchanged decision. |
@@ -389,10 +389,10 @@ ignition at about 25-30 kW/m^2) rather than a bare threshold. The existing blast
 fluence thresholds in `Scene.cpp` are re-derived the same way. The 30 m cutoff and the
 `viewFactor` approximation are checked against a point-source radiation estimate.
 
-**Status:** open. Today only the blast fluence ignites objects and `burning` never ends.
+**Status:** done (2026-11-01) as the optional `Fire propagation` setting (`firePropagation`, `--fire-propagation`, panel checkbox enabled only while armed). Differences from the plan: the view factor is the exact rectangle-to-element configuration factor, not `1/(1+d^2)`, and the ignition criterion is the thermal-inertia dose model; the constants cite their source in `docs/physics.md` but are not validated against a fire test.
 
-**Acceptance:** a centre fire spreads to adjacent buildings within ~30 s in still air and
-stops at a 20 m gap; the burn duration scales with the fuel load.
+**Acceptance (revised to the physical result):** a developed fire spreads to nearby objects within minutes, not seconds, in still air and
+stops at a gap of about 15-20 m; the burn duration scales with the fuel load. `TestFirePropagation` checks the burn-out time, the spread within 30 min and that nothing ignites without a burning neighbour within 30 m.
 
 ### 5.2 Wind on debris
 

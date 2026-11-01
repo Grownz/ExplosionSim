@@ -53,6 +53,11 @@ struct SimulationSettings {
     // aerodynamic drag back to the physics world.
     bool solverBodyDrag = true;
 
+    // Fire propagation: fuel, burn-out and radiative ignition of neighbouring
+    // objects (Scene::SetFirePropagation). Latched when the scene is reset, so it
+    // can only be changed while the simulation is armed.
+    bool firePropagation = false;
+
     // Performance
     int particleBudget = 40000;
     // Integrate particles and build the instance batches on the GPU.
@@ -196,6 +201,7 @@ private:
     double fuseRemaining_ = 0.0;
     bool detonated_ = false;
     bool fuseHeld_ = false;
+    bool firePropagationLatched_ = false;
     bool initialized_ = false;
     uint64_t blastSerial_ = 0;
 };

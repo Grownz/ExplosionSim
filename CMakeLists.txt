@@ -300,6 +300,7 @@ add_library(explosion_core STATIC
     src/sim/FlowBodies.cpp
     src/sim/VolumeBaker.cpp
     src/scene/Scene.cpp
+    src/scene/SceneFire.cpp
     src/scene/VoronoiFracture.cpp
     src/scene/PhysicsWorld.cpp
     src/gfx/SceneMeshLibrary.cpp

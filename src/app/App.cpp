@@ -157,6 +157,9 @@ int App::Run(const LaunchOptions& options) {
     if (options_.sceneSeedSet) {
         settings_.simulation.scene.seed = options_.sceneSeed;
     }
+    if (options_.firePropagationSet) {
+        settings_.simulation.firePropagation = options_.firePropagation;
+    }
     if (options_.sceneEnabledSet) {
         settings_.simulation.scene.enabled = options_.sceneEnabled;
     }

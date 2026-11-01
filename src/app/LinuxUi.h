@@ -48,6 +48,7 @@ struct LinuxUiState {
     bool highFidelity = false;
     bool flowAround = true;
     bool bodyDrag = true;
+    bool firePropagation = false;
     int solverResolution = 128;
 
     // Update panel.

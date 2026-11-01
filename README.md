@@ -182,6 +182,7 @@ the terrain.
 | `--benchmark` / `--frames <n>` | Offscreen render benchmark |
 | `--solver-benchmark` | Solver-only GPU timings |
 | `--scene-seed <n>` / `--scene-density <x>` / `--no-scene` | Procedural environment |
+| `--fire-propagation` / `--no-fire-propagation` | Fire spread model: fuel, burn-out, radiative ignition (default off) |
 | `--no-update-check` / `--check-updates` / `--version` | Update handling and version |
 | `--help` | Show every option |
 
