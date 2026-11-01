@@ -173,6 +173,9 @@ private:
     ParticleSystem particles_{};
     VolumeBaker volume_{};
     scene::Scene scene_{};
+    // Body positions from the previous scene step, used to move anchored fire
+    // particles with the object or chunk they sit on.
+    std::vector<DirectX::XMFLOAT3> previousBodyPositions_;
     core::ThreadPool* pool_ = nullptr;
 
     std::unique_ptr<scene::Scene> pendingScene_;

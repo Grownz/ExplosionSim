@@ -88,6 +88,8 @@ struct SceneFireSpawn {
     DirectX::XMFLOAT3 position{};
     int count = 0;
     float scale = 0.5f;
+    // Rigid body the flames sit on; the particles follow its translation.
+    int anchor = -1;
 };
 
 // Short line burst that leaves the outer edge of a burning object. `direction`

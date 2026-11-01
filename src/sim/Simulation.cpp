@@ -262,6 +262,7 @@ void Simulation::ResetInternal(bool holdFuse, bool regenerateScene) {
     }
 
     particles_.Reset();
+    previousBodyPositions_.clear();
     volume_.SetAutoScale(settings_.autoScaleVolume);
     volume_.SetResolution(settings_.volumeResolution);
     volume_.SetGpuBake(settings_.gpuVolumeBake);
@@ -498,6 +499,21 @@ void Simulation::UpdateScene(double dtSim) {
     }
     scene_.Update(blast_, float(dtSim));
 
+    // Flames are attached to the body they sit on: translate them by however
+    // far that body moved since the previous step. The particles keep their
+    // world-space offsets, so the flames stay upright instead of inheriting a
+    // tumbling chunk's rotation.
+    {
+        const std::vector<scene::RigidBody>& bodies = scene_.Physics().Bodies();
+        std::vector<DirectX::XMFLOAT3> current;
+        current.reserve(bodies.size());
+        for (const scene::RigidBody& body : bodies) {
+            current.push_back(body.position);
+        }
+        particles_.FollowAnchors(previousBodyPositions_, current);
+        previousBodyPositions_ = std::move(current);
+    }
+
     const std::vector<scene::SceneDebrisSpawn> spawns = scene_.ConsumeDebrisSpawns();
     const std::vector<scene::SceneFireSpawn> fires = scene_.ConsumeFireSpawns();
     const std::vector<scene::SceneEmberSpawn> embers = scene_.ConsumeEmberSpawns();
@@ -510,7 +526,8 @@ void Simulation::UpdateScene(double dtSim) {
     // Scene fires are a cosmetic overlay on burning objects and are shown in
     // both modes; the high-fidelity solver only replaces the blast particles.
     for (const scene::SceneFireSpawn& fire : fires) {
-        particles_.SpawnSceneFire(fire.position, fire.count, fire.scale);
+        particles_.SpawnSceneFire(fire.position, fire.count, fire.scale,
+                                  fire.anchor);
     }
     for (const scene::SceneEmberSpawn& ember : embers) {
         particles_.SpawnSceneEmbers(ember.position, ember.direction, ember.count,

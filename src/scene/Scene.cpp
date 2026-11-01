@@ -1057,6 +1057,32 @@ void Scene::Update(const sim::BlastModel& blast, float dtSim) {
                                                center.y + offset.y,
                                                center.z + offset.z);
             spawn.count = object.type == SceneObjectType::Tree ? 3 : 2;
+            // Bind the flames to the body under them: the object itself, or the
+            // nearest chunk when the building already broke apart.
+            if (object.bodyIndex >= 0 &&
+                object.bodyIndex < int(physics_.Bodies().size())) {
+                spawn.anchor = object.bodyIndex;
+            } else {
+                int best = -1;
+                float bestDistance = std::numeric_limits<float>::max();
+                const std::vector<RigidBody>& bodies = physics_.Bodies();
+                for (const SceneChunk& chunk : object.chunks) {
+                    if (chunk.bodyIndex < 0 ||
+                        chunk.bodyIndex >= int(bodies.size())) {
+                        continue;
+                    }
+                    const RigidBody& body = bodies[chunk.bodyIndex];
+                    const float dx = body.position.x - spawn.position.x;
+                    const float dy = body.position.y - spawn.position.y;
+                    const float dz = body.position.z - spawn.position.z;
+                    const float distance = dx * dx + dy * dy + dz * dz;
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = chunk.bodyIndex;
+                    }
+                }
+                spawn.anchor = best;
+            }
             fireSpawns_.push_back(spawn);
 
             // Short line bursts leave the two outer vertical edges of the

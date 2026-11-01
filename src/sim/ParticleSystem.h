@@ -108,7 +108,14 @@ public:
     void SpawnSceneDebris(const DirectX::XMFLOAT3& center, int count, float sizeScale,
                           float speed);
     // Spawns a small fire burst for a burning scene object (main thread).
-    void SpawnSceneFire(const DirectX::XMFLOAT3& center, int count, float scale);
+    // `anchor` is the rigid body the flames sit on; those particles follow its
+    // translation every step while keeping their world-space (upright) offset.
+    void SpawnSceneFire(const DirectX::XMFLOAT3& center, int count,
+                        float scale, int anchor = -1);
+    // Moves every anchored particle by the translation its body made since the
+    // previous step.
+    void FollowAnchors(const std::vector<DirectX::XMFLOAT3>& previous,
+                       const std::vector<DirectX::XMFLOAT3>& current);
     // Spawns short glowing streaks that leave the blast-facing edge of a
     // burning object. `direction` points away from the burst.
     void SpawnSceneEmbers(const DirectX::XMFLOAT3& position,
@@ -137,6 +144,9 @@ private:
         float seed = 0.0f;
         ParticleKind kind = ParticleKind::Debris;
         bool alive = false;
+        // Body index the particle is attached to (-1 = free). Anchored
+        // particles are translated with their body so flames stay on it.
+        int anchor = -1;
     };
 
     struct Forces {

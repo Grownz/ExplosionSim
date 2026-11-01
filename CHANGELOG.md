@@ -33,6 +33,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   drops chunks outside the camera frustum, both passes drop chunks under half a
   pixel (one pixel for shadows), and consecutive visible chunks are merged into
   one draw so the index buffer stays contiguous.
+- **Attached scene fire** - flames spawned on a burning object are bound to the
+  rigid body they sit on (the object itself, or the nearest chunk once a
+  building has broken apart). Every physics step the anchored particles are
+  translated by that body's movement while keeping their world-space offsets, so
+  the fire stays on the object, does not stay behind and does not tumble with a
+  rotating chunk.
 - **Obstacle mask refresh** - the high-fidelity solid mask is only rebuilt when a
   body moved by more than half a mask voxel; otherwise the previous mask is kept
   instead of re-voxelising and re-uploading it. Frozen debris no longer appears

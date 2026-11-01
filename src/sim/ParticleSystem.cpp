@@ -335,7 +335,7 @@ void ParticleSystem::SpawnSceneDebris(const DirectX::XMFLOAT3& center, int count
 }
 
 void ParticleSystem::SpawnSceneFire(const DirectX::XMFLOAT3& center, int count,
-                                    float scale) {
+                                    float scale, int anchor) {
     for (int i = 0; i < count; ++i) {
         const int slot = AcquireSlot(ParticleKind::Fire);
         if (slot < 0) {
@@ -355,7 +355,31 @@ void ParticleSystem::SpawnSceneFire(const DirectX::XMFLOAT3& center, int count,
         p.drag = 1.2f;
         p.seed = rng_.Float01() * 1000.0f;
         p.kind = ParticleKind::Fire;
+        p.anchor = anchor;
         p.alive = true;
+    }
+}
+
+void ParticleSystem::FollowAnchors(
+    const std::vector<DirectX::XMFLOAT3>& previous,
+    const std::vector<DirectX::XMFLOAT3>& current) {
+    if (previous.size() != current.size()) {
+        return;
+    }
+    for (Particle& p : particles_) {
+        if (!p.alive || p.anchor < 0) {
+            continue;
+        }
+        const size_t index = size_t(p.anchor);
+        if (index >= current.size()) {
+            p.anchor = -1;
+            continue;
+        }
+        const XMFLOAT3& before = previous[index];
+        const XMFLOAT3& now = current[index];
+        p.position.x += now.x - before.x;
+        p.position.y += now.y - before.y;
+        p.position.z += now.z - before.z;
     }
 }
 
