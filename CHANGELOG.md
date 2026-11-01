@@ -6,6 +6,27 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-02
+
+0.16.0 is a feature and parity release: the CPU simulation is bit-reproducible
+between Windows and Linux, an optional fire spread model replaces the visual-only
+fire, and the Linux window gets the full Windows panel, mouse camera, HiDPI
+scaling and a set of fixes that bring it in line with the Windows application
+(the headless capture difference drops from 13.79 % / 17.57 % to 0.05 % / 0.00 %).
+
+### Highlights
+
+- **Deterministic simulation** - the blast model, the town, the collapse and the
+  Jolt bodies give identical bits on Windows and Linux for any thread count,
+  checked by golden hashes in both test suites.
+- **Fire propagation** - optional fuel, burn-out and radiative ignition of
+  neighbours with calibrated constants (off by default; can only be changed
+  while the simulation is armed).
+- **Linux parity** - the full Windows panel, mouse camera, shortcuts, asynchronous
+  town generation, HiDPI scaling, live blast settings and a high-fidelity loop
+  that finally advances the blast (so the shock refraction, the collapse and the
+  debris work in a window).
+
 ### Added
 
 - **Linux: the full Windows panel** - the Linux window now has the Detonation,
@@ -57,11 +78,14 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   through a temporary file and a rename. The solver grid is chosen from the same
   list as on Windows (64 to 512).
 - **Strict floating point** - the simulation sources use `/fp:precise` instead of
-  `/fp:fast` (the renderer, particles, volume bake and camera keep `/fp:fast`), all non-MSVC targets use
-  `-ffp-contract=off`, and Jolt is built without AVX, AVX2, F16C and FMA so
-  DirectXMath stays on its SSE path on both platforms. The simulation may be
-  slightly slower than before; results of the CPU simulation differ from 0.15.0 in
-  the last bits.
+  `/fp:fast` (the renderer, particles, volume bake and camera keep `/fp:fast`),
+  all non-MSVC targets use `-ffp-contract=off`, and Jolt is built without AVX,
+  AVX2, F16C and FMA so DirectXMath stays on its SSE path on both platforms. The
+  simulation may be slightly slower than before (about 8 % per frame in the
+  benchmark); results of the CPU simulation differ from 0.15.0 in the last bits.
+- **Reference capture** - `tools/reference/win_capture.png` was regenerated
+  because the blast model now uses the deterministic math (33 pixels differ by at
+  most 8 levels); the high-fidelity reference is unchanged.
 
 ### Fixed
 
@@ -1428,7 +1452,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.16.0
 [0.15.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.15.0
 [0.14.6]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.6
 [0.14.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.5
