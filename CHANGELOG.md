@@ -34,6 +34,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Linux field of view and settings parity** - the Linux camera uses the
+  48 degree field of view of the Windows application, which brings the headless
+  capture parity from 13.79 % / 17.57 % to 0.05 % / 0.00 % of pixels above the
+  threshold. The Linux loader uses the Windows value ranges (for example
+  `timeScale`, `particleBudget`, `raymarchSteps`, `exposure`), reads and writes
+  `ambientPressurePa`, `relativeHumidity` and `windDirectionDeg`, keeps the keys
+  it does not know (Windows-only ones of a shared profile) and writes the file
+  through a temporary file and a rename. The solver grid is chosen from the same
+  list as on Windows (64 to 512).
 - **Strict floating point** - the simulation sources use `/fp:precise` instead of
   `/fp:fast` (the renderer, particles, volume bake and camera keep `/fp:fast`), all non-MSVC targets use
   `-ffp-contract=off`, and Jolt is built without AVX, AVX2, F16C and FMA so
@@ -43,6 +52,20 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Linux: blast settings apply when you leave the field** - charge, height of
+  burst, time scale, the high-fidelity toggle and the solver grid take effect
+  like the Windows sliders (the *Apply blast settings* button is gone), the
+  values are clamped to the Windows ranges, the camera frames the new blast and
+  every panel value is kept in the settings file written at exit. A window also
+  creates its per-user `settings.ini` on the first start, so the update
+  bookkeeping is remembered.
+- **Linux: the town is generated on a worker thread** with the same progress
+  strip as Windows, so the window stays responsive at start-up and after a
+  charge change; the blast waits until the town is ready.
+- **Linux: Vulkan robustness** - a failed queue submission now re-signals the
+  shared fence instead of leaving the next wait hanging, and a suboptimal
+  swapchain is no longer rebuilt every frame on compositors that always report
+  it (XWayland, WSLg).
 - **Linux: high-fidelity runs now advance the blast** - the interactive loop of
   the Linux shell stepped the Euler solver but never advanced the simulation, so
   after the detonation the blast model, the town (damage, collapse, debris), the

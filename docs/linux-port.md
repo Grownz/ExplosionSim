@@ -268,9 +268,12 @@ the ground pass and draws buildings, vehicles, trees and rubble through
 `RenderScene`. The preview's own scene/chunk pipelines remain only as a fallback.
 On Vulkan the immediate binding API snapshots descriptors per draw (D3D11
 semantics) and depth-only passes are supported, so both platforms record the
-same passes. Capture parity for the reduced-order frame is 13.79 % of pixels
-above the 32 threshold (tolerance 20 %) and 17.57 % for the high-fidelity frame
-(tolerance 30 %); the Windows captures stay bit-identical.
+same passes. Capture parity for the reduced-order frame is 0.05 % of pixels
+above the 32 threshold (tolerance 20 %) and 0.00 % for the high-fidelity frame
+(tolerance 30 %); the Windows captures stay bit-identical. The Linux camera now
+uses the 48 degree field of view of the Windows application; before that the
+wider 50 degree default was the main source of the difference (13.79 % and
+17.57 %).
 
 - Port sky, ground, procedural scene, volume raymarch, bloom, composite, shock pass,
   particles and the shadow maps.

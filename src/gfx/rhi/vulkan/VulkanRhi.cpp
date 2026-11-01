@@ -1117,9 +1117,7 @@ public:
         submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         submit.commandBufferCount = 1;
         submit.pCommandBuffers = &device_->commandBuffer_;
-        vkResetFences(device_->device_, 1, &device_->fence_);
-        if (vkQueueSubmit(device_->queue_, 1, &submit, device_->fence_) !=
-            VK_SUCCESS) {
+        if (!device_->SubmitToFence(submit)) {
             computeActive_ = false;
             return;
         }
@@ -2124,6 +2122,19 @@ bool Device::WaitForFence() {
     return vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
 }
 
+bool Device::SubmitToFence(const VkSubmitInfo& submit) {
+    if (vkResetFences(device_, 1, &fence_) != VK_SUCCESS) {
+        return false;
+    }
+    if (vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS) {
+        // An empty submission signals the fence again so that the next wait
+        // on it returns instead of hanging.
+        vkQueueSubmit(queue_, 0, nullptr, fence_);
+        return false;
+    }
+    return true;
+}
+
 bool Device::BeginCommandBuffer() {
     vkResetCommandBuffer(commandBuffer_, 0);
 
@@ -2429,8 +2440,7 @@ void Device::EndFrame(bool vsync) {
         submit.pSignalSemaphores = &renderFinished_;
     }
 
-    if (vkResetFences(device_, 1, &fence_) != VK_SUCCESS ||
-        vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS) {
+    if (!SubmitToFence(submit)) {
         return;
     }
 
@@ -2451,7 +2461,11 @@ void Device::EndFrame(bool vsync) {
     present.pSwapchains = &swapchain_;
     present.pImageIndices = &imageIndex_;
     const VkResult result = vkQueuePresentKHR(queue_, &present);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+    // A suboptimal swapchain still presents correctly; the window-size check of
+    // the application recreates it when the size really changed. Rebuilding on
+    // every SUBOPTIMAL would do so each frame on compositors that always report
+    // it (XWayland, WSLg).
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
         RecreateSwapchain();
     }
 }
@@ -2512,8 +2526,7 @@ bool Device::ReadBack(std::vector<uint8_t>& bgra, int& outWidth, int& outHeight)
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &commandBuffer_;
-    if (vkResetFences(device_, 1, &fence_) != VK_SUCCESS ||
-        vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS ||
+    if (!SubmitToFence(submit) ||
         vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
         vkDestroyBuffer(device_, buffer, nullptr);
         vkFreeMemory(device_, memory, nullptr);
@@ -2604,8 +2617,7 @@ bool Device::ExecuteImmediate(
     submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &commandBuffer_;
-    if (vkResetFences(device_, 1, &fence_) != VK_SUCCESS ||
-        vkQueueSubmit(queue_, 1, &submit, fence_) != VK_SUCCESS ||
+    if (!SubmitToFence(submit) ||
         vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
         return false;
     }

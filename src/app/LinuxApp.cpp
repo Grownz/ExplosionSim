@@ -43,6 +43,8 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
+#include <sstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -64,6 +66,9 @@ struct Options {
     double timeScale = 0.06;
     double fuseSeconds = 2.0;
     double windSpeed = 1.0;
+    double windDirectionDeg = 40.0;
+    double ambientPressurePa = 101325.0;
+    double relativeHumidity = 0.45;
     double ambientTemperature = 288.15;
     int particleBudget = 40000;
     float azimuth = 128.0f;
@@ -119,6 +124,9 @@ struct Options {
     bool checkForUpdates = true;
     std::string skippedVersion;
     long long lastCheckUnix = 0;
+    // Keys of the loaded profile that this shell does not know (written back
+    // unchanged on save).
+    std::vector<std::pair<std::string, std::string>> extraSettings;
 };
 
 void PrintUsage() {
@@ -252,35 +260,59 @@ void LoadSettingsFile(const std::string& path, Options& options) {
         values[Trim(line.substr(0, separator))] =
             Trim(line.substr(separator + 1));
     }
+    // Keys the Linux shell reads; everything else (for example the Windows-only
+    // ones) is kept and written back so a shared profile is not stripped.
+    std::set<std::string> known;
     auto number = [&](const char* key, double fallback) {
+        known.insert(key);
         const auto it = values.find(key);
         return it == values.end() ? fallback : std::atof(it->second.c_str());
     };
     auto integer = [&](const char* key, int fallback) {
+        known.insert(key);
         const auto it = values.find(key);
         return it == values.end() ? fallback : std::atoi(it->second.c_str());
     };
     auto boolean = [&](const char* key, bool fallback) {
+        known.insert(key);
         const auto it = values.find(key);
         return it == values.end() ? fallback : IniBool(it->second, fallback);
     };
     auto longLong = [&](const char* key, long long fallback) {
+        known.insert(key);
         const auto it = values.find(key);
         return it == values.end() ? fallback : std::atoll(it->second.c_str());
     };
 
+    // The ranges are the ones of the Windows loader (Settings.cpp).
+    // A negative value is the "not set" default; it falls back to 500 kg / 5 m.
     options.chargeMassKg = number("chargeMassKg", options.chargeMassKg);
-    options.heightOfBurstM =
-        number("heightOfBurstM", options.heightOfBurstM);
-    options.timeScale = number("timeScale", options.timeScale);
-    options.fuseSeconds = number("fuseSeconds", options.fuseSeconds);
-    options.windSpeed = number("windSpeedMs", options.windSpeed);
-    options.ambientTemperature =
-        number("ambientTemperatureK", options.ambientTemperature);
-    options.particleBudget =
-        integer("particleBudget", options.particleBudget);
-    options.volumeResolution =
-        integer("volumeResolution", options.volumeResolution);
+    if (options.chargeMassKg >= 0.0) {
+        options.chargeMassKg = std::clamp(options.chargeMassKg, 0.01, 1.0e9);
+    }
+    options.heightOfBurstM = number("heightOfBurstM", options.heightOfBurstM);
+    if (options.heightOfBurstM >= 0.0) {
+        options.heightOfBurstM = std::clamp(options.heightOfBurstM, 0.0, 5000.0);
+    }
+    options.timeScale =
+        std::clamp(number("timeScale", options.timeScale), 0.005, 2.0);
+    options.fuseSeconds =
+        std::clamp(number("fuseSeconds", options.fuseSeconds), 0.0, 30.0);
+    options.windSpeed =
+        std::clamp(number("windSpeedMs", options.windSpeed), 0.0, 60.0);
+    options.windDirectionDeg = std::clamp(
+        number("windDirectionDeg", options.windDirectionDeg), 0.0, 360.0);
+    options.ambientTemperature = std::clamp(
+        number("ambientTemperatureK", options.ambientTemperature), 200.0, 340.0);
+    options.ambientPressurePa = std::clamp(
+        number("ambientPressurePa", options.ambientPressurePa), 50000.0,
+        110000.0);
+    options.relativeHumidity = std::clamp(
+        number("relativeHumidity", options.relativeHumidity), 0.0, 1.0);
+    options.particleBudget = std::clamp(
+        integer("particleBudget", options.particleBudget), 4000, 400000);
+    options.volumeResolution = std::clamp(
+        integer("volumeResolution", options.volumeResolution), 32, 1024);
     options.highFidelity =
         integer("simulationMode", options.highFidelity ? 1 : 0) == 1;
     options.solverResolution =
@@ -320,12 +352,12 @@ void LoadSettingsFile(const std::string& path, Options& options) {
                          0.25, 2.0));
 
     options.raymarchSteps =
-        std::clamp(integer("raymarchSteps", options.raymarchSteps), 16, 512);
+        std::clamp(integer("raymarchSteps", options.raymarchSteps), 16, 256);
     options.exposure =
-        float(std::clamp(number("exposure", options.exposure), 0.01, 8.0));
+        float(std::clamp(number("exposure", options.exposure), 0.05, 8.0));
     options.bloomStrength =
         float(std::clamp(number("bloomStrength", options.bloomStrength), 0.0,
-                         4.0));
+                         3.0));
     options.volumeEnabled =
         boolean("enableVolume", options.volumeEnabled);
     options.particlesEnabled =
@@ -336,22 +368,31 @@ void LoadSettingsFile(const std::string& path, Options& options) {
     options.sunAzimuth =
         float(number("sunAzimuthDeg", options.sunAzimuth));
     options.sunElevation =
-        float(number("sunElevationDeg", options.sunElevation));
+        float(std::clamp(number("sunElevationDeg", options.sunElevation), -5.0,
+                         85.0));
     options.particleScale =
-        float(std::clamp(number("particleScale", options.particleScale), 0.0,
-                         8.0));
+        float(std::clamp(number("particleScale", options.particleScale), 0.1,
+                         4.0));
     options.antiAliasing =
         std::clamp(integer("antiAliasing", options.antiAliasing), 0, 2);
     options.gpuParticles = boolean("gpuParticles", options.gpuParticles);
     options.gpuVolumeBake = boolean("gpuVolumeBake", options.gpuVolumeBake);
     options.checkForUpdates =
         boolean("checkForUpdates", options.checkForUpdates);
+    known.insert("skippedVersion");
     const auto skipped = values.find("skippedVersion");
     if (skipped != values.end()) {
         options.skippedVersion = skipped->second;
     }
     options.lastCheckUnix =
         longLong("lastCheckUnix", options.lastCheckUnix);
+
+    options.extraSettings.clear();
+    for (const auto& entry : values) {
+        if (known.find(entry.first) == known.end()) {
+            options.extraSettings.emplace_back(entry.first, entry.second);
+        }
+    }
 }
 
 const char* IniBoolText(bool value) {
@@ -359,10 +400,7 @@ const char* IniBoolText(bool value) {
 }
 
 bool SaveSettingsFile(const std::string& path, const Options& options) {
-    std::ofstream file(path);
-    if (!file) {
-        return false;
-    }
+    std::ostringstream file;
     const double chargeMassKg =
         options.chargeMassKg > 0.0 ? options.chargeMassKg : 500.0;
     const double heightOfBurstM =
@@ -373,6 +411,9 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
     file << "heightOfBurstM=" << heightOfBurstM << "\n";
     file << "ambientTemperatureK=" << options.ambientTemperature << "\n";
     file << "windSpeedMs=" << options.windSpeed << "\n";
+    file << "windDirectionDeg=" << options.windDirectionDeg << "\n";
+    file << "ambientPressurePa=" << options.ambientPressurePa << "\n";
+    file << "relativeHumidity=" << options.relativeHumidity << "\n";
     file << "timeScale=" << options.timeScale << "\n";
     file << "fuseSeconds=" << options.fuseSeconds << "\n";
     file << "simulationMode=" << (options.highFidelity ? 1 : 0) << "\n";
@@ -420,7 +461,43 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
     file << "checkForUpdates=" << IniBoolText(options.checkForUpdates) << "\n";
     file << "skippedVersion=" << options.skippedVersion << "\n";
     file << "lastCheckUnix=" << options.lastCheckUnix << "\n";
-    return file.good();
+
+    // Keys this shell does not know (for example the Windows-only ones of a
+    // shared profile) are kept as they were.
+    const std::string written = file.str();
+    bool extrasStarted = false;
+    for (const auto& entry : options.extraSettings) {
+        if (written.find("\n" + entry.first + "=") != std::string::npos) {
+            continue;
+        }
+        if (!extrasStarted) {
+            file << "\n[other]\n";
+            extrasStarted = true;
+        }
+        file << entry.first << "=" << entry.second << "\n";
+    }
+
+    // Write a temporary file and rename it so a crash cannot leave a
+    // half-written profile behind.
+    const std::string temporary = path + ".tmp";
+    {
+        std::ofstream output(temporary, std::ios::trunc);
+        if (!output) {
+            return false;
+        }
+        output << file.str();
+        output.flush();
+        if (!output.good()) {
+            return false;
+        }
+    }
+    std::error_code error;
+    std::filesystem::rename(temporary, path, error);
+    if (error) {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+    return true;
 }
 
 bool ParseOptions(int argc, char** argv, Options& options) {
@@ -1074,6 +1151,17 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (settingsPath.empty() && !options.headless && !options.splashTest &&
+        options.writeSettings.empty()) {
+        // First start of a window: remember the settings and the update
+        // bookkeeping (skipped version, last check) in the per-user file.
+        const std::filesystem::path userPath =
+            ex::app::UserSettingsPath(true);
+        if (!userPath.empty()) {
+            settingsPath = userPath.string();
+        }
+    }
+
     if (options.benchmark && options.frames <= 0) {
         options.frames = 60;
     }
@@ -1223,7 +1311,7 @@ int main(int argc, char** argv) {
 
     ex::gfx::GpuParticleSystem gpuParticles;
     const int particleCapacity =
-        std::clamp(options.particleBudget, 1024, 200000);
+        std::clamp(options.particleBudget, 4000, 400000);
     ex::gfx::GpuParticleSystem::ShaderSource particleApply{
         kParticlesCSApply, kParticlesCSApplySize};
     ex::gfx::GpuParticleSystem::ShaderSource particleReset{
@@ -1268,12 +1356,15 @@ int main(int argc, char** argv) {
     simulationSettings.fuseSeconds =
         options.headless ? 0.0 : options.fuseSeconds;
     simulationSettings.windSpeedMs = options.windSpeed;
+    simulationSettings.windDirectionDeg = options.windDirectionDeg;
+    simulationSettings.ambientPressurePa = options.ambientPressurePa;
+    simulationSettings.relativeHumidity = options.relativeHumidity;
     simulationSettings.ambientTemperatureK = options.ambientTemperature;
     simulationSettings.particleBudget =
-        std::clamp(options.particleBudget, 1024, 200000);
+        std::clamp(options.particleBudget, 4000, 400000);
     simulationSettings.volumeResolution =
         options.volumeResolution > 0
-            ? std::clamp(options.volumeResolution, 32, 512)
+            ? std::clamp(options.volumeResolution, 32, 1024)
             : 128;
     simulationSettings.scene.seed = options.sceneSeed;
     simulationSettings.scene.density =
@@ -1291,6 +1382,9 @@ int main(int argc, char** argv) {
     ex::sim::Simulation simulation;
     // A window waits for the DETONATE click like the Windows application;
     // captures and benchmarks detonate right away.
+    // A window generates the town on a worker thread so the panel stays
+    // responsive; captures and benchmarks keep the synchronous path.
+    simulation.SetAsyncSceneGeneration(!options.headless);
     if (!simulation.Initialize(simulationSettings, pool, !options.headless)) {
         ex::LogError("Could not initialize the simulation.");
         return 1;
@@ -1298,6 +1392,8 @@ int main(int argc, char** argv) {
     pumpSplash(0.70f, "Generating the scene...", 0.30f);
 
     ex::gfx::Camera camera;
+    // Same field of view as the Windows application (App.cpp).
+    camera.SetFovY(DirectX::XMConvertToRadians(48.0f));
     camera.SetViewport(options.width, options.height);
     camera.SetClipPlanes(0.5f, 20000.0f);
 
@@ -1602,6 +1698,10 @@ int main(int argc, char** argv) {
     const double benchmarkStart = NowSeconds();
     float frameMs = 0.0f;
     bool running = true;
+    // The town is generated on a worker thread in a window; the camera frames
+    // it once when its layout appears and again after a new charge or height.
+    bool sceneFramed = options.headless;
+    bool reframeAfterScene = false;
     while (running) {
         if (window) {
             if (!window->Poll()) {
@@ -1738,21 +1838,46 @@ int main(int argc, char** argv) {
                 }
                 if (uiState.applySimulation) {
                     ex::sim::SimulationSettings settings = simulation.Settings();
+                    const double previousCharge = settings.chargeMassKg;
+                    const double previousHeight = settings.heightOfBurstM;
+                    // Same ranges as the Windows panel.
                     settings.chargeMassKg =
-                        std::max(uiState.chargeMassKg, 0.01);
+                        std::clamp(uiState.chargeMassKg, 0.01, 1.0e8);
                     settings.heightOfBurstM =
-                        std::max(uiState.heightOfBurstM, 0.0);
-                    settings.timeScale = std::max(uiState.timeScale, 0.01);
+                        std::clamp(uiState.heightOfBurstM, 0.0, 5000.0);
+                    settings.timeScale =
+                        std::clamp(uiState.timeScale, 0.005, 2.0);
                     settings.mode =
                         (uiState.highFidelity && solverReady)
                             ? ex::sim::SimulationMode::HighFidelity
                             : ex::sim::SimulationMode::ReducedOrder;
                     settings.solverResolution =
-                        std::clamp(uiState.solverResolution, 32, 256);
+                        std::clamp(uiState.solverResolution, 32, 512);
                     simulation.ApplySettings(settings);
                     highFidelity = settings.mode ==
                                    ex::sim::SimulationMode::HighFidelity;
                     preview.SetHighFidelity(highFidelity);
+                    // Show the clamped values and keep them for the settings
+                    // file written at exit.
+                    uiState.chargeMassKg = settings.chargeMassKg;
+                    uiState.heightOfBurstM = settings.heightOfBurstM;
+                    uiState.timeScale = settings.timeScale;
+                    uiState.solverResolution = settings.solverResolution;
+                    options.chargeMassKg = settings.chargeMassKg;
+                    options.heightOfBurstM = settings.heightOfBurstM;
+                    options.timeScale = settings.timeScale;
+                    options.highFidelity = highFidelity;
+                    options.solverResolution = settings.solverResolution;
+                    // A different charge or height changes the size of the
+                    // fireball, so frame the new blast instead of leaving the
+                    // old view (the town extent keeps small charges framed).
+                    if (settings.chargeMassKg != previousCharge ||
+                        settings.heightOfBurstM != previousHeight) {
+                        FrameCamera(simulation, camera, options, nullptr);
+                        // The new town (its extent depends on the charge) is
+                        // generated in the background; frame it once it shows.
+                        reframeAfterScene = simulation.SceneGenerating();
+                    }
                     uiState.applySimulation = false;
                 }
                 if (uiState.reframeRequested) {
@@ -1762,6 +1887,15 @@ int main(int argc, char** argv) {
                                      : nullptr);
                     uiState.reframeRequested = false;
                 }
+                // Keep the panel values for the settings file written at exit.
+                options.exposure = uiState.exposure;
+                options.bloomStrength = uiState.bloomStrength;
+                options.raymarchSteps = uiState.raymarchSteps;
+                options.volumeEnabled = uiState.enableVolume;
+                options.particlesEnabled = uiState.enableParticles;
+                options.groundEnabled = uiState.enableGround;
+                options.bloomEnabled = uiState.enableBloom;
+                options.showGrid = uiState.showGrid;
                 previewSettings.exposure = uiState.exposure;
                 previewSettings.bloomStrength = uiState.bloomStrength;
                 previewSettings.raymarchSteps = uiState.raymarchSteps;
@@ -1777,7 +1911,21 @@ int main(int argc, char** argv) {
             // Smooth the interactive camera towards its goal (the Windows
             // application does the same every frame).
             camera.Update(dt);
-            if (!uiState.paused) {
+            simulation.PollSceneGeneration();
+            const bool sceneLayoutShown = simulation.ConsumeScenePreview();
+            const bool sceneAdopted = simulation.ConsumeSceneCompletion();
+            if ((sceneLayoutShown || sceneAdopted) &&
+                (!sceneFramed || reframeAfterScene)) {
+                FrameCamera(simulation, camera, options,
+                            highFidelity ? &highFidelityRuntime.solver.Stats()
+                                         : nullptr);
+                sceneFramed = true;
+                reframeAfterScene = false;
+            }
+            // The blast waits for the town: a half-built scene must not be
+            // hit by the first pressure wave.
+            const bool loadingScene = simulation.SceneGenerating();
+            if (!uiState.paused && !loadingScene) {
             if (highFidelity) {
                 if (simulation.IsArmed()) {
                     // Tick the fuse through the analytic model; the solver

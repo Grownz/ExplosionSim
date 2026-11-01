@@ -119,6 +119,9 @@ private:
 
     bool BeginCommandBuffer();
     bool WaitForFence();
+    // Resets the shared fence and submits to it. A failed submission re-signals
+    // the fence, otherwise the next wait on it would never return.
+    bool SubmitToFence(const VkSubmitInfo& submit);
     bool ExecuteImmediate(const std::function<void(VkCommandBuffer)>& record);
 
     VkFormat ChooseSurfaceFormat() const;

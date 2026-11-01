@@ -77,9 +77,11 @@ Windowed runs show an ImGui panel (F1 toggles it). It provides:
 Camera: left drag orbits, right or middle drag pans and the wheel zooms
 (outside the panel).
 
-"Apply blast settings" restarts the blast with the edited values; the render
-controls apply immediately. The panel needs a desktop session; headless
-captures, benchmarks and the splash test do not initialize it.
+Charge, height of burst and time scale apply when you leave the field (the
++/- buttons, the high-fidelity toggle and the solver grid apply at once); the
+blast restarts and the camera frames it. The render controls apply immediately.
+The panel needs a desktop session; headless captures, benchmarks and the splash
+test do not initialize it.
 
 ## Settings
 
@@ -90,9 +92,11 @@ The app looks for `settings.ini` in this order:
 3. `$XDG_CONFIG_HOME/explosionsim/settings.ini` (falling back to
    `~/.config/explosionsim/settings.ini`).
 
-The file uses the same keys as the Windows application
-(`[simulation]`/`[render]`). `--write-settings` writes an exact round-trip of
-the active profile. The shared deterministic capture profile is
+The file uses the same keys and value ranges as the Windows application
+(`[simulation]`/`[render]`). Keys the Linux shell does not know are kept when
+it saves the file, so a profile can be shared. A window without any
+`settings.ini` creates `~/.config/explosionsim/settings.ini` on its first start.
+`--write-settings` writes an exact round-trip of the active profile. The shared deterministic capture profile is
 `tools/capture_settings.ini`.
 
 ## Benchmarks

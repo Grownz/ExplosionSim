@@ -12,6 +12,7 @@
 #include "imgui_impl_vulkan.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <iterator>
 #include <string>
 
@@ -179,6 +180,30 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
         state.visible = !state.visible;
         toggleVisible_ = false;
     }
+    // The town is generated on a worker thread: show the same progress strip
+    // as the Windows application along the bottom edge, panel visible or not.
+    if (simulation.SceneGenerating()) {
+        ImDrawList* foreground = ImGui::GetForegroundDrawList();
+        const ImVec2 display = ImGui::GetIO().DisplaySize;
+        const float height = display.y * 0.05f;
+        const float top = display.y - height;
+        foreground->AddRectFilled(ImVec2(0.0f, top), display,
+                                  IM_COL32(14, 16, 19, 235));
+        const float progress = std::clamp(simulation.SceneProgress(), 0.0f, 1.0f);
+        if (progress > 0.0f) {
+            foreground->AddRectFilled(ImVec2(0.0f, top),
+                                      ImVec2(display.x * progress, display.y),
+                                      IM_COL32(52, 199, 89, 255));
+        }
+        char label[64];
+        std::snprintf(label, sizeof(label), "Generating scene  %d%%",
+                      int(progress * 100.0f + 0.5f));
+        const ImVec2 textSize = ImGui::CalcTextSize(label);
+        foreground->AddText(ImVec2((display.x - textSize.x) * 0.5f,
+                                   top + (height - textSize.y) * 0.5f),
+                            IM_COL32(245, 248, 250, 255), label);
+    }
+
     if (!state.visible) {
         return;
     }
@@ -214,17 +239,42 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
     }
 
     ImGui::SeparatorText("Blast");
-    ImGui::InputDouble("Charge (kg)", &state.chargeMassKg, 0.1, 1.0, "%.3f");
-    ImGui::InputDouble("Height of burst (m)", &state.heightOfBurstM, 0.1, 1.0,
-                       "%.2f");
-    ImGui::InputDouble("Time scale", &state.timeScale, 0.01, 0.1, "%.3f");
+    // Like the Windows sliders, a typed value is applied when the field is
+    // left (or confirmed); the +/- buttons apply at once.
+    const auto applyOnCommit = [&](bool changed) {
+        if (ImGui::IsItemDeactivatedAfterEdit() ||
+            (changed && !ImGui::IsItemActive())) {
+            state.applySimulation = true;
+        }
+    };
+    applyOnCommit(ImGui::InputDouble("Charge (kg)", &state.chargeMassKg, 0.1,
+                                     1.0, "%.3f"));
+    applyOnCommit(ImGui::InputDouble("Height of burst (m)",
+                                     &state.heightOfBurstM, 0.1, 1.0, "%.2f"));
+    applyOnCommit(ImGui::InputDouble("Time scale", &state.timeScale, 0.01, 0.1,
+                                     "%.3f"));
     ImGui::BeginDisabled(!state.solverAvailable);
-    ImGui::Checkbox("High fidelity", &state.highFidelity);
+    if (ImGui::Checkbox("High fidelity", &state.highFidelity)) {
+        state.applySimulation = true;
+    }
     ImGui::EndDisabled();
     if (state.highFidelity) {
         ImGui::Checkbox("Flow around objects", &state.flowAround);
         ImGui::Checkbox("Debris drag", &state.bodyDrag);
-        ImGui::SliderInt("Solver grid", &state.solverResolution, 32, 256);
+        // Same grids and labels as the Windows panel.
+        const int kGrids[6] = {64, 96, 128, 192, 256, 512};
+        const char* kGridLabels[6] = {"64³", "96³", "128³",
+                                      "192³", "256³", "512³"};
+        int gridIndex = 2;
+        for (int i = 0; i < 6; ++i) {
+            if (kGrids[i] == state.solverResolution) {
+                gridIndex = i;
+            }
+        }
+        if (ImGui::Combo("Solver grid", &gridIndex, kGridLabels, 6)) {
+            state.solverResolution = kGrids[gridIndex];
+            state.applySimulation = true;
+        }
     }
     // Chosen before the detonation, like on Windows: enabled only while armed.
     ImGui::BeginDisabled(!simulation.IsArmed());
@@ -233,9 +283,6 @@ void LinuxUi::Draw(LinuxUiState& state, const ex::sim::Simulation& simulation,
     if (state.firePropagation && !simulation.IsArmed()) {
         ImGui::Text("Burning %d, burned out %d", simulation.Scene().BurningCount(),
                     simulation.Scene().BurnedOutCount());
-    }
-    if (ImGui::Button("Apply blast settings")) {
-        state.applySimulation = true;
     }
 
     ImGui::SeparatorText("Render");
