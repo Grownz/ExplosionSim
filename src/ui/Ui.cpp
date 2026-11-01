@@ -601,7 +601,7 @@ void DrawDetonation(app::AppSettings& settings, const sim::Simulation& simulatio
 
     // Same range as Settings.cpp accepts, so a value loaded from settings.ini
     // is not silently clamped by the slider.
-    PhysSlider("Height of burst", &settings.simulation.heightOfBurstM, 0.01, 5000.0,
+    PhysSlider("Height of burst", &settings.simulation.heightOfBurstM, 0.01f, 5000.0f,
                "%.2f m", ImGuiSliderFlags_Logarithmic, actions);
 
     float fuse = float(settings.simulation.fuseSeconds);

@@ -66,13 +66,36 @@ Useful flags:
 
 ## User interface
 
-Windowed runs show an ImGui panel (F1 toggles it). It provides:
+Windowed runs show an ImGui panel with the same sections, labels and ranges as
+the Windows application (F1 or H toggles it):
 
-- pause, detonate, reset and frame-camera buttons (a new window waits for
+- **Detonation** - charge (with the presets), height of burst, fuse, the
+  DETONATE/REARM button, pause and frame-camera buttons (a new window waits for
   Detonate; Escape closes the window unless a text field is being edited);
-- charge mass, height of burst and time scale, plus a high-fidelity toggle and
-  solver grid;
-- exposure, bloom, raymarch steps and volume/particle/ground/bloom/grid toggles.
+- **Atmosphere** - temperature, pressure, wind speed and direction, humidity and
+  the derived air properties;
+- **Environment** - the procedural town (seed, density, buildings, vehicles,
+  vegetation, quality, Voronoi chunks, chunk size, regenerate);
+- **Playback** - pause, step, rearm, restart, time scale, real time, loop;
+- **Physics & Effects** - model (reduced-order, high-fidelity cube or
+  hemisphere), fire propagation, flow-around, debris drag, solver grid, steps
+  per frame, auto-scale and the solver readouts, blast physics, predicted
+  effects and the observer with its pressure waveform;
+- **Rendering** - exposure, bloom, ray steps, anti-aliasing, volume resolution,
+  layer toggles, sun, particle scale (the GPU volume bake and GPU particles are
+  chosen at start-up and only shown);
+- **Performance** - frame-rate cap, frame time, particles, worker threads and
+  the adapter;
+- **Updates** - the update flow and the release notes of the running version.
+
+Shortcuts: Space pauses, D detonates, R rearms, F frames the camera, H and F1
+hide the panel. There is no F12 screenshot in a window; use `--screenshot` with
+`--headless`.
+
+The interface follows the desktop scale: the font size and the spacing use the
+display content scale and the glyphs are rasterised at the pixel density of the
+window (Wayland and X11 scaling), and the panel is rebuilt when the window moves
+to a display with another scale.
 
 Camera: left drag orbits, right or middle drag pans and the wheel zooms
 (outside the panel).

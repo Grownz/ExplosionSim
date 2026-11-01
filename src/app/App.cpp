@@ -429,17 +429,28 @@ void App::Shutdown() {
 
 void App::HandleCameraInput(float dt) {
     ImGuiIO& io = ImGui::GetIO();
-    if (!io.WantCaptureMouse) {
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
-            camera_.Orbit(io.MouseDelta.x, io.MouseDelta.y);
+    // A drag belongs to the scene when it started there, so the pointer may
+    // cross the panel while a button is held without ending the orbit (and a
+    // drag that starts on the panel never moves the camera).
+    const ImGuiMouseButton buttons[3] = {ImGuiMouseButton_Left, ImGuiMouseButton_Right,
+                                         ImGuiMouseButton_Middle};
+    for (int i = 0; i < 3; ++i) {
+        if (ImGui::IsMouseClicked(buttons[i]) && !io.WantCaptureMouse) {
+            cameraDrag_[i] = true;
         }
-        if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f) ||
-            ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f)) {
-            camera_.Pan(io.MouseDelta.x, io.MouseDelta.y);
+        if (!ImGui::IsMouseDown(buttons[i])) {
+            cameraDrag_[i] = false;
         }
-        if (io.MouseWheel != 0.0f) {
-            camera_.Zoom(io.MouseWheel);
-        }
+    }
+    if (cameraDrag_[0] && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+        camera_.Orbit(io.MouseDelta.x, io.MouseDelta.y);
+    }
+    if ((cameraDrag_[1] && ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f)) ||
+        (cameraDrag_[2] && ImGui::IsMouseDragging(ImGuiMouseButton_Middle, 0.0f))) {
+        camera_.Pan(io.MouseDelta.x, io.MouseDelta.y);
+    }
+    if (!io.WantCaptureMouse && io.MouseWheel != 0.0f) {
+        camera_.Zoom(io.MouseWheel);
     }
 
     camera_.Update(dt);

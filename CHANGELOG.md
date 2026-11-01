@@ -8,6 +8,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Linux: the full Windows panel** - the Linux window now has the Detonation,
+  Atmosphere, Environment, Playback, Physics & Effects (model, solver readouts,
+  blast physics, predicted effects, observer waveform), Rendering, Performance
+  and Updates sections of the Windows application, the armed/countdown overlay,
+  the keyboard shortcuts (Space, D, R, F, H) and a frame-rate cap
+  (`maxFps`). The panel edits one copy of the simulation settings that is
+  clamped to the Windows ranges and applied through `Simulation::ApplySettings`;
+  `loop`, `autoScaleVolume`, `observerDistanceM` and `maxFps` are read and saved
+  like on Windows. The GPU volume bake and GPU particles stay a start-up choice.
+- **Linux: HiDPI scaling** - the panel uses the content scale of the display for
+  the font size and the spacing and rasterises the glyphs at the pixel density of
+  the window, so it is sharp and correctly sized on scaled Wayland and X11
+  desktops. It is rebuilt when the window moves to another display.
 - **Fire propagation** - new optional model (`Fire propagation` checkbox in
   *Physics & Effects*, `firePropagation` in `settings.ini`, `--fire-propagation` /
   `--no-fire-propagation` on both command lines; off by default). Objects carry
@@ -52,6 +65,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **Windows: small robustness fixes** - `settings.ini` is written through a
+  temporary file and a rename, NaN and infinity in the file fall back to the
+  default instead of passing the clamps, an orbit or pan that starts on the scene
+  keeps working when the pointer crosses the panel (and a drag that starts on the
+  panel never moves the camera), and the height-of-burst slider no longer relies
+  on a double literal that `/fp:precise` turns into a warning.
+- **`core::det::Sin/Cos` beyond 1e5 rad** - long runs no longer lose accuracy:
+  the argument is folded by full turns (about 5e-9 rad at 1e8 rad). Results below
+  1e5 are unchanged, so the golden hashes are the same.
 - **Linux: blast settings apply when you leave the field** - charge, height of
   burst, time scale, the high-fidelity toggle and the solver grid take effect
   like the Windows sliders (the *Apply blast settings* button is gone), the

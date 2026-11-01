@@ -8,7 +8,9 @@ namespace ex::core::det {
 // +, -, *, / and sqrt plus exact scaling (frexp/ldexp/floor), so Windows and
 // Linux produce bit-identical values when the code is compiled without fast-math
 // or FMA contraction. They are accurate to about 1e-15 relative, not correctly
-// rounded. Domain: finite arguments; sin/cos expect |x| < 1e5.
+// rounded. Domain: finite arguments. sin/cos are accurate to about 1e-15 for
+// |x| < 1e5; beyond that the argument is folded by full turns (error about
+// 2.4e-16 rad per turn, 5e-9 rad at 1e8).
 
 double Sin(double x);
 double Cos(double x);

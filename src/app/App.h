@@ -82,6 +82,8 @@ private:
     bool StartUpdater(const std::wstring& zipPath, const std::string& sha256);
 
     void HandleCameraInput(float dt);
+    // Which mouse drags (left, right, middle) started over the scene.
+    bool cameraDrag_[3] = {false, false, false};
     void FrameCamera();
     void ApplySimulationSettings();
     void RestartSimulation();

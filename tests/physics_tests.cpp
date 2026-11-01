@@ -1667,6 +1667,12 @@ void TestDeterministicMath() {
     CHECK(worstPow < 1e-14);
     CHECK(worstCbrt < 1e-14);
     CHECK(worstAtan < 1e-14);
+    // Large arguments (long runs) are folded by full turns: still deterministic
+    // and within a few nanoradians of libm up to 1e8 rad.
+    for (double angle : {1.0e5, 3.3e5, 7.7e6, 1.0e8, -4.2e7}) {
+        CHECK_NEAR(det::Sin(angle), std::sin(angle), 1e-7);
+        CHECK_NEAR(det::Cos(angle), std::cos(angle), 1e-7);
+    }
     CHECK_NEAR(det::Atan2(0.0, 0.0), 0.0, 0.0);
     CHECK_NEAR(det::Exp(0.0), 1.0, 0.0);
     CHECK_NEAR(det::Cbrt(27.0), 3.0, 1e-14);

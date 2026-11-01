@@ -3,6 +3,7 @@
 
 #include "Version.h"
 #include "app/LinuxPreview.h"
+#include "app/Changelog.h"
 #include "app/LinuxUi.h"
 #include "app/LinuxUpdate.h"
 #include "app/SettingsPath.h"
@@ -93,6 +94,10 @@ struct Options {
     bool flowAround = true;
     bool bodyDrag = true;
     bool firePropagation = false;
+    bool loop = false;
+    bool autoScaleVolume = true;
+    double observerDistanceM = 100.0;
+    int maxFps = 144;
     int solverResolution = 0;
     int solverSteps = 0;
     double solverTime = -1.0;
@@ -328,6 +333,17 @@ void LoadSettingsFile(const std::string& path, Options& options) {
     options.flowAround = boolean("solverFlowAround", options.flowAround);
     options.bodyDrag = boolean("solverBodyDrag", options.bodyDrag);
     options.firePropagation = boolean("firePropagation", options.firePropagation);
+    options.loop = boolean("loop", options.loop);
+    options.autoScaleVolume = boolean("autoScaleVolume", options.autoScaleVolume);
+    options.observerDistanceM = std::clamp(
+        number("observerDistanceM", options.observerDistanceM), 5.0, 5000.0);
+    {
+        const int maxFps = integer("maxFps", options.maxFps);
+        options.maxFps = (maxFps == 30 || maxFps == 60 || maxFps == 90 ||
+                          maxFps == 120 || maxFps == 144)
+                             ? maxFps
+                             : 144;
+    }
 
     options.sceneEnabled = boolean("sceneEnabled", options.sceneEnabled);
     options.sceneEnabledSet = true;
@@ -428,6 +444,8 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
     file << "solverFlowAround=" << IniBoolText(options.flowAround) << "\n";
     file << "solverBodyDrag=" << IniBoolText(options.bodyDrag) << "\n";
     file << "firePropagation=" << IniBoolText(options.firePropagation) << "\n";
+    file << "loop=" << IniBoolText(options.loop) << "\n";
+    file << "autoScaleVolume=" << IniBoolText(options.autoScaleVolume) << "\n";
     file << "particleBudget=" << options.particleBudget << "\n";
     file << "gpuParticles=" << IniBoolText(options.gpuParticles) << "\n";
     file << "volumeResolution="
@@ -456,7 +474,9 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
     file << "sunAzimuthDeg=" << options.sunAzimuth << "\n";
     file << "sunElevationDeg=" << options.sunElevation << "\n";
     file << "particleScale=" << options.particleScale << "\n";
-    file << "antiAliasing=" << options.antiAliasing << "\n\n";
+    file << "antiAliasing=" << options.antiAliasing << "\n";
+    file << "observerDistanceM=" << options.observerDistanceM << "\n";
+    file << "maxFps=" << options.maxFps << "\n\n";
     file << "[update]\n";
     file << "checkForUpdates=" << IniBoolText(options.checkForUpdates) << "\n";
     file << "skippedVersion=" << options.skippedVersion << "\n";
@@ -864,6 +884,114 @@ void FrameCamera(const ex::sim::Simulation& simulation, ex::gfx::Camera& camera,
                      radius * 1.9f * std::max(0.1f, options.distanceScale));
     camera.SetOrientation(options.azimuth, options.elevation);
     camera.Snap();
+}
+
+// The ranges of the Windows loader and sliders (Settings.cpp, Ui.cpp), so a
+// value typed or loaded on either platform means the same.
+void ClampSimulationSettings(ex::sim::SimulationSettings& s) {
+    s.chargeMassKg = std::clamp(s.chargeMassKg, 0.01, 1.0e8);
+    s.heightOfBurstM = std::clamp(s.heightOfBurstM, 0.0, 5000.0);
+    s.ambientTemperatureK = std::clamp(s.ambientTemperatureK, 200.0, 340.0);
+    s.ambientPressurePa = std::clamp(s.ambientPressurePa, 50000.0, 110000.0);
+    s.relativeHumidity = std::clamp(s.relativeHumidity, 0.0, 1.0);
+    s.windSpeedMs = std::clamp(s.windSpeedMs, 0.0, 60.0);
+    s.windDirectionDeg = std::clamp(s.windDirectionDeg, 0.0, 360.0);
+    s.timeScale = std::clamp(s.timeScale, 0.005, 2.0);
+    s.fuseSeconds = std::clamp(s.fuseSeconds, 0.0, 30.0);
+    s.solverResolution = std::clamp(s.solverResolution, 32, 512);
+    s.solverStepsPerFrame = std::clamp(s.solverStepsPerFrame, 8, 256);
+    s.volumeResolution = std::clamp(s.volumeResolution, 32, 1024);
+    s.scene.seed = std::min<uint32_t>(s.scene.seed, 1000000u);
+    s.scene.density = std::clamp(s.scene.density, 0.0f, 4.0f);
+    s.scene.quality = std::clamp(s.scene.quality, 0, 2);
+    s.scene.chunkScale = std::clamp(s.scene.chunkScale, 0.25f, 2.0f);
+}
+
+// Copies the applied settings into the options that are written at exit.
+void MirrorSettings(const ex::sim::SimulationSettings& s, Options& options) {
+    options.chargeMassKg = s.chargeMassKg;
+    options.heightOfBurstM = s.heightOfBurstM;
+    options.ambientTemperature = s.ambientTemperatureK;
+    options.ambientPressurePa = s.ambientPressurePa;
+    options.relativeHumidity = s.relativeHumidity;
+    options.windSpeed = s.windSpeedMs;
+    options.windDirectionDeg = s.windDirectionDeg;
+    options.timeScale = s.timeScale;
+    options.fuseSeconds = s.fuseSeconds;
+    options.loop = s.loop;
+    options.highFidelity = s.mode == ex::sim::SimulationMode::HighFidelity;
+    options.solverResolution = s.solverResolution;
+    options.solverSteps = s.solverStepsPerFrame;
+    options.solverAutoScale = s.solverAutoScale;
+    options.solverHemisphere = s.solverHemisphere;
+    options.flowAround = s.solverFlowAround;
+    options.bodyDrag = s.solverBodyDrag;
+    options.firePropagation = s.firePropagation;
+    options.volumeResolution = s.volumeResolution;
+    options.autoScaleVolume = s.autoScaleVolume;
+    options.sceneEnabled = s.scene.enabled;
+    options.sceneSeed = s.scene.seed;
+    options.sceneDensity = s.scene.density;
+    options.sceneBuildings = s.scene.buildings;
+    options.sceneVehicles = s.scene.vehicles;
+    options.sceneVegetation = s.scene.vegetation;
+    options.sceneVoronoiChunks = s.scene.voronoiChunks;
+    options.sceneQuality = s.scene.quality;
+    options.sceneChunkScale = s.scene.chunkScale;
+}
+
+// Release notes are Markdown; the panel shows them as plain wrapped text.
+std::string PlainText(const std::string& markdown) {
+    std::string result;
+    std::istringstream stream(markdown);
+    std::string line;
+    while (std::getline(stream, line)) {
+        size_t start = 0;
+        while (start < line.size() && line[start] == '#') {
+            ++start;
+        }
+        if (start > 0 && start < line.size() && line[start] == ' ') {
+            ++start;
+        }
+        std::string text = line.substr(start);
+        for (const char* mark : {"**", "`"}) {
+            const std::string token(mark);
+            for (size_t position = text.find(token); position != std::string::npos;
+                 position = text.find(token, position)) {
+                text.erase(position, token.size());
+            }
+        }
+        result += text;
+        result += '\n';
+    }
+    return result;
+}
+
+// The notes of the running version from the CHANGELOG.md next to the
+// executable (the package and the installed copy both ship it).
+std::string CurrentReleaseNotesText(const char* argv0) {
+    std::error_code error;
+    const std::filesystem::path executable =
+        std::filesystem::weakly_canonical(std::filesystem::path(argv0), error);
+    std::vector<std::filesystem::path> candidates;
+    if (!error) {
+        candidates.push_back(executable.parent_path() / "CHANGELOG.md");
+    }
+    candidates.push_back(std::filesystem::current_path(error) / "CHANGELOG.md");
+    for (const auto& candidate : candidates) {
+        std::ifstream file(candidate);
+        if (!file) {
+            continue;
+        }
+        std::ostringstream text;
+        text << file.rdbuf();
+        const std::string notes = ex::app::CurrentReleaseNotes(
+            ex::app::ParseChangelog(text.str()), EXPLOSION_VERSION_STRING);
+        if (!notes.empty()) {
+            return PlainText(notes);
+        }
+    }
+    return {};
 }
 
 DirectX::XMFLOAT3 SunDirectionFor(const Options& options) {
@@ -1350,6 +1478,8 @@ int main(int argc, char** argv) {
     simulationSettings.solverFlowAround = options.flowAround;
     simulationSettings.solverBodyDrag = options.bodyDrag;
     simulationSettings.firePropagation = options.firePropagation;
+    simulationSettings.loop = options.loop;
+    simulationSettings.autoScaleVolume = options.autoScaleVolume;
     simulationSettings.gpuParticles = gpuParticlesReady;
     simulationSettings.gpuVolumeBake = gpuVolumeReady;
     simulationSettings.timeScale = options.timeScale;
@@ -1645,16 +1775,20 @@ int main(int argc, char** argv) {
             uiState.enableGround = options.groundEnabled;
             uiState.enableBloom = options.bloomEnabled;
             uiState.showGrid = options.showGrid;
-            uiState.chargeMassKg = simulation.Settings().chargeMassKg;
-            uiState.heightOfBurstM = simulation.Settings().heightOfBurstM;
-            uiState.timeScale = simulation.Settings().timeScale;
-            uiState.highFidelity = highFidelity;
-            uiState.flowAround = options.flowAround;
-            uiState.bodyDrag = options.bodyDrag;
-            uiState.firePropagation = options.firePropagation;
-            uiState.solverResolution = simulation.Settings().solverResolution;
+            uiState.sunAzimuthDeg = options.sunAzimuth;
+            uiState.sunElevationDeg = options.sunElevation;
+            uiState.particleScale = options.particleScale;
+            uiState.sim = simulation.Settings();
+            uiState.observerDistanceM = options.observerDistanceM;
+            uiState.maxFps = options.maxFps;
+            simulation.SetObserverDistanceM(options.observerDistanceM);
             uiState.solverAvailable = solverReady;
             uiState.updateCheckEnabled = options.checkForUpdates;
+            uiState.workerThreads = int(pool.WorkerCount());
+            uiState.adapterName = vkDevice->AdapterName();
+            uiState.gpuVolumeActive = gpuVolumeReady;
+            uiState.gpuParticlesActive = gpuParticlesReady;
+            uiState.currentReleaseNotes = CurrentReleaseNotesText(argv[0]);
         }
     }
 
@@ -1738,6 +1872,15 @@ int main(int argc, char** argv) {
             lastTime = now;
             frameMs = dt * 1000.0f;
             if (uiReady) {
+                if (linuxUi.NeedsRescale()) {
+                    // The font texture is replaced: wait until the GPU is done
+                    // with the previous frame.
+                    device->WaitIdle();
+                    linuxUi.ApplyScale();
+                }
+                uiState.solver = highFidelity
+                                     ? highFidelityRuntime.solver.Stats()
+                                     : ex::gfx::SolverStats{};
                 linuxUi.NewFrame();
                 linuxUi.Draw(uiState, simulation, frameMs);
                 const ex::app::LinuxCameraInput cameraInput =
@@ -1806,79 +1949,85 @@ int main(int argc, char** argv) {
                 if (uiState.quitRequested) {
                     running = false;
                 }
-                if (uiState.resetRequested) {
+                if (uiState.restartRequested && !uiState.applySimulation) {
                     simulation.Reset();
-                    uiState.resetRequested = false;
+                    simulation.FinishPendingVolumeWork();
+                    uiState.restartRequested = false;
+                }
+                if (uiState.rearmRequested) {
+                    simulation.Rearm();
+                    simulation.FinishPendingVolumeWork();
+                    uiState.rearmRequested = false;
                 }
                 if (uiState.detonateRequested) {
-                    simulation.DetonateNow();
+                    if (simulation.IsArmed()) {
+                        simulation.DetonateNow();
+                        simulation.FinishPendingVolumeWork();
+                    }
                     uiState.detonateRequested = false;
                 }
-                if (uiState.flowAround != options.flowAround) {
-                    options.flowAround = uiState.flowAround;
-                    ex::sim::SimulationSettings settings = simulation.Settings();
-                    settings.solverFlowAround = options.flowAround;
-                    simulation.ApplySettings(settings);
-                    if (highFidelityRuntime.solver.HasVolume()) {
-                        highFidelityRuntime.UpdateObstacles(simulation);
-                    }
-                }
-                if (uiState.firePropagation != options.firePropagation) {
-                    // The checkbox is only enabled while the simulation is armed.
-                    options.firePropagation = uiState.firePropagation;
-                    ex::sim::SimulationSettings settings = simulation.Settings();
-                    settings.firePropagation = options.firePropagation;
-                    simulation.ApplySettings(settings);
-                }
-                if (uiState.bodyDrag != options.bodyDrag) {
-                    options.bodyDrag = uiState.bodyDrag;
-                    ex::sim::SimulationSettings settings = simulation.Settings();
-                    settings.solverBodyDrag = options.bodyDrag;
-                    simulation.ApplySettings(settings);
-                }
                 if (uiState.applySimulation) {
-                    ex::sim::SimulationSettings settings = simulation.Settings();
-                    const double previousCharge = settings.chargeMassKg;
-                    const double previousHeight = settings.heightOfBurstM;
-                    // Same ranges as the Windows panel.
-                    settings.chargeMassKg =
-                        std::clamp(uiState.chargeMassKg, 0.01, 1.0e8);
-                    settings.heightOfBurstM =
-                        std::clamp(uiState.heightOfBurstM, 0.0, 5000.0);
-                    settings.timeScale =
-                        std::clamp(uiState.timeScale, 0.005, 2.0);
-                    settings.mode =
-                        (uiState.highFidelity && solverReady)
-                            ? ex::sim::SimulationMode::HighFidelity
-                            : ex::sim::SimulationMode::ReducedOrder;
-                    settings.solverResolution =
-                        std::clamp(uiState.solverResolution, 32, 512);
+                    const ex::sim::SimulationSettings previous =
+                        simulation.Settings();
+                    ex::sim::SimulationSettings settings = uiState.sim;
+                    ClampSimulationSettings(settings);
+                    // The compute paths for particles and the volume bake are
+                    // chosen at start-up (they bind GPU resources of the
+                    // renderer); the panel shows them but cannot switch them.
+                    settings.gpuParticles = previous.gpuParticles;
+                    settings.gpuVolumeBake = previous.gpuVolumeBake;
+                    if (settings.mode == ex::sim::SimulationMode::HighFidelity &&
+                        !solverReady) {
+                        settings.mode = ex::sim::SimulationMode::ReducedOrder;
+                    }
                     simulation.ApplySettings(settings);
-                    highFidelity = settings.mode ==
+                    uiState.sim = simulation.Settings();
+                    highFidelity = uiState.sim.mode ==
                                    ex::sim::SimulationMode::HighFidelity;
                     preview.SetHighFidelity(highFidelity);
-                    // Show the clamped values and keep them for the settings
-                    // file written at exit.
-                    uiState.chargeMassKg = settings.chargeMassKg;
-                    uiState.heightOfBurstM = settings.heightOfBurstM;
-                    uiState.timeScale = settings.timeScale;
-                    uiState.solverResolution = settings.solverResolution;
-                    options.chargeMassKg = settings.chargeMassKg;
-                    options.heightOfBurstM = settings.heightOfBurstM;
-                    options.timeScale = settings.timeScale;
-                    options.highFidelity = highFidelity;
-                    options.solverResolution = settings.solverResolution;
+                    MirrorSettings(uiState.sim, options);
+                    if (uiState.sim.solverFlowAround !=
+                            previous.solverFlowAround &&
+                        highFidelityRuntime.solver.HasVolume()) {
+                        highFidelityRuntime.UpdateObstacles(simulation);
+                    }
                     // A different charge or height changes the size of the
                     // fireball, so frame the new blast instead of leaving the
                     // old view (the town extent keeps small charges framed).
-                    if (settings.chargeMassKg != previousCharge ||
-                        settings.heightOfBurstM != previousHeight) {
+                    if (uiState.sim.chargeMassKg != previous.chargeMassKg ||
+                        uiState.sim.heightOfBurstM != previous.heightOfBurstM) {
                         FrameCamera(simulation, camera, options, nullptr);
                         // The new town (its extent depends on the charge) is
                         // generated in the background; frame it once it shows.
                         reframeAfterScene = simulation.SceneGenerating();
                     }
+                    if (uiState.restartRequested) {
+                        simulation.Reset();
+                        simulation.FinishPendingVolumeWork();
+                        uiState.restartRequested = false;
+                    }
                     uiState.applySimulation = false;
+                }
+                if (uiState.stepRequested) {
+                    uiState.stepRequested = false;
+                    if (highFidelity) {
+                        if (!simulation.IsArmed() &&
+                            highFidelityRuntime.Ensure(simulation)) {
+                            highFidelityRuntime.BeginFrame(simulation);
+                            UpdatePlumeModel(highFidelityRuntime.solver,
+                                             simulation);
+                            highFidelityRuntime.solver.Step(8);
+                            const double advance =
+                                highFidelityRuntime.solver.ConsumeAdvance();
+                            if (advance > 0.0) {
+                                simulation.AdvanceExternal(advance, double(dt));
+                            }
+                            highFidelityRuntime.EndFrame(simulation, advance);
+                            highFidelityRuntime.Publish(preview, options);
+                        }
+                    } else {
+                        simulation.StepFixed(1.0 / 60.0);
+                    }
                 }
                 if (uiState.reframeRequested) {
                     FrameCamera(
@@ -1896,6 +2045,12 @@ int main(int argc, char** argv) {
                 options.groundEnabled = uiState.enableGround;
                 options.bloomEnabled = uiState.enableBloom;
                 options.showGrid = uiState.showGrid;
+                options.sunAzimuth = uiState.sunAzimuthDeg;
+                options.sunElevation = uiState.sunElevationDeg;
+                options.particleScale = uiState.particleScale;
+                options.observerDistanceM = uiState.observerDistanceM;
+                options.maxFps = uiState.maxFps;
+                simulation.SetObserverDistanceM(uiState.observerDistanceM);
                 previewSettings.exposure = uiState.exposure;
                 previewSettings.bloomStrength = uiState.bloomStrength;
                 previewSettings.raymarchSteps = uiState.raymarchSteps;
@@ -1906,6 +2061,9 @@ int main(int argc, char** argv) {
                 previewSettings.enableGround = uiState.enableGround;
                 previewSettings.enableBloom = uiState.enableBloom;
                 previewSettings.showGrid = uiState.showGrid;
+                previewSettings.sunAzimuthDeg = uiState.sunAzimuthDeg;
+                previewSettings.sunElevationDeg = uiState.sunElevationDeg;
+                previewSettings.particleScale = uiState.particleScale;
                 preview.SetSettings(previewSettings);
             }
             // Smooth the interactive camera towards its goal (the Windows
@@ -2011,6 +2169,18 @@ int main(int argc, char** argv) {
         preview.Render(device.get(), simulation, camera, device->Width(),
                        device->Height(), options.vsync);
         ex::core::FrameProfiler::Get().Frame();
+        if (!options.headless) {
+            // Frame-rate cap of the performance panel (like the Windows one).
+            const int cap = uiReady ? uiState.maxFps : options.maxFps;
+            if (cap > 0) {
+                const double remaining =
+                    1.0 / double(cap) - (NowSeconds() - lastTime);
+                if (remaining > 0.0) {
+                    std::this_thread::sleep_for(
+                        std::chrono::duration<double>(remaining));
+                }
+            }
+        }
         ++rendered;
         if (frameLimit > 0 && rendered >= frameLimit) {
             running = false;

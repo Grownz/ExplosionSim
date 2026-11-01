@@ -53,6 +53,13 @@ double CosKernel(double r) {
 
 // Reduces x to r in [-pi/4, pi/4] and returns the quadrant k mod 4.
 int ReduceQuadrant(double x, double& r) {
+    // Beyond 1e5 rad the multiples of pi/2 of the three-part reduction are no
+    // longer exact, so the argument is folded by full turns first. fmod is exact;
+    // the only error is the representation of 2 pi (about 2.4e-16 rad per turn,
+    // 5e-9 rad at |x| = 1e8).
+    if (std::fabs(x) >= 1.0e5) {
+        x = std::fmod(x, 2.0 * kPi);
+    }
     const double k = std::floor(x * kTwoOverPi + 0.5);
     r = ((x - k * kPio2Hi) - k * kPio2Mid) - k * kPio2Lo - k * kPio2LoTail;
     long long q = static_cast<long long>(k);
@@ -83,6 +90,9 @@ double AtanUnit(double t) {
 } // namespace
 
 double Sin(double x) {
+    if (!std::isfinite(x)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     double r = 0.0;
     switch (ReduceQuadrant(x, r)) {
     case 0: return SinKernel(r);
@@ -93,6 +103,9 @@ double Sin(double x) {
 }
 
 double Cos(double x) {
+    if (!std::isfinite(x)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
     double r = 0.0;
     switch (ReduceQuadrant(x, r)) {
     case 0: return CosKernel(r);

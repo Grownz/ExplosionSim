@@ -452,6 +452,7 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
         src/app/LinuxApp.cpp
         src/app/LinuxPreview.cpp
         src/app/LinuxUi.cpp
+        src/app/Changelog.cpp
         src/app/LinuxUpdate.cpp
         src/app/SplashFont.cpp
         src/app/SplashSdl.cpp

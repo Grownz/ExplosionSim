@@ -4,10 +4,13 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <sstream>
+#include <system_error>
 
 namespace ex::app {
 
@@ -45,7 +48,9 @@ float ParseFloat(const std::map<std::string, std::string>& values, const char* k
         return fallback;
     }
     try {
-        return std::stof(it->second);
+        // NaN and infinity would pass std::clamp unchanged; keep the default.
+        const float value = std::stof(it->second);
+        return std::isfinite(value) ? value : fallback;
     } catch (...) {
         return fallback;
     }
@@ -57,7 +62,8 @@ double ParseDouble(const std::map<std::string, std::string>& values, const char*
         return fallback;
     }
     try {
-        return std::stod(it->second);
+        const double value = std::stod(it->second);
+        return std::isfinite(value) ? value : fallback;
     } catch (...) {
         return fallback;
     }
@@ -248,7 +254,10 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
 }
 
 void SaveSettings(const AppSettings& settings, const std::wstring& path) {
-    std::ofstream stream(path);
+    // Write a temporary file and rename it over the profile, so a crash or a
+    // full disk cannot leave a half-written settings.ini behind.
+    const std::wstring temporaryPath = path + L".tmp";
+    std::ofstream stream(temporaryPath, std::ios::trunc);
     if (!stream.is_open()) {
         return;
     }
@@ -321,6 +330,17 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "skippedVersion=" << settings.update.skippedVersion << "\n";
     stream << "proxy=" << settings.update.proxy << "\n";
     stream << "lastCheckUnix=" << settings.update.lastCheckUnix << "\n";
+
+    stream.flush();
+    const bool written = stream.good();
+    stream.close();
+    std::error_code error;
+    if (written) {
+        std::filesystem::rename(temporaryPath, path, error);
+    }
+    if (!written || error) {
+        std::filesystem::remove(temporaryPath, error);
+    }
 }
 
 } // namespace ex::app
