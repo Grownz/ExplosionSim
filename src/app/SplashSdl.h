@@ -61,6 +61,8 @@ private:
     // window shape and presents the masked frame.
     void UpdateRoundedMask(int width, int height);
     void PresentRounded(int width, int height);
+    // Applies assets/icon.png (next to the splash stills) as the window icon.
+    void ApplyWindowIcon();
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;

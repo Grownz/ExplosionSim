@@ -1,5 +1,10 @@
 #include <windows.h>
 
+// The application icon. Resource id 1 is what Windows uses for the shell icon
+// of the executable; Explorer then picks the closest size from the .ico.
+#include "@CMAKE_SOURCE_DIR@/src/app/AppIcon.h"
+EXPLOSION_APP_ICON_ID ICON "@CMAKE_SOURCE_DIR@/packaging/explosionsim.ico"
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
  PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0

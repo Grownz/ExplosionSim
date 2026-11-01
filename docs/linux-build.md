@@ -282,7 +282,8 @@ cmake --build build --target package_linux
 This writes `build/ExplosionSim-linux-x86_64.tar.gz`. Extracting it and running
 `./ExplosionSim` from the extracted directory is a supported clean-directory
 install; the assets, `ExplosionSimUpdater` and
-`explosionsim.desktop`/`explosionsim.png` are included. The application updates
+`explosionsim.desktop` and the 256/512 px `explosionsim.png` icons are included.
+The application updates
 a per-user install in place through `ExplosionSimUpdater`; see
 [`linux-usage.md`](linux-usage.md#updating).
 

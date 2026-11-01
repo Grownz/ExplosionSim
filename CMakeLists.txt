@@ -519,6 +519,9 @@ if(NOT WIN32 AND TARGET explosion_vulkan_rhi)
                 ${CMAKE_SOURCE_DIR}/packaging/explosionsim.png
                 ${EXPLOSION_LINUX_PACKAGE_DIR}/explosionsim.png
         COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_SOURCE_DIR}/packaging/explosionsim-512.png
+                ${EXPLOSION_LINUX_PACKAGE_DIR}/explosionsim-512.png
+        COMMAND ${CMAKE_COMMAND} -E copy
                 ${CMAKE_SOURCE_DIR}/packaging/README-linux.txt
                 ${EXPLOSION_LINUX_PACKAGE_DIR}/README-linux.txt
         COMMAND ${CMAKE_COMMAND} -E copy

@@ -82,6 +82,13 @@ stage shares follow measured startup times (shader compilation dominates with
 about 96 % on the reference machine), and the bar interpolates over each stage's
 measured duration, so it moves evenly from 0 to 100 %.
 
+The application icon is the same artwork on every surface: `ExplosionSim.rc`
+compiles `packaging/explosionsim.ico` (16-256 px) into the executable and the
+window class loads that resource for the taskbar and Alt+Tab; the SDL splash and
+the Linux main window load `assets/icon.png`; the Linux package installs the 256
+and 512 px PNGs into `hicolor`. `tools/make_icon.py` regenerates all of them from
+`packaging/icon-source.png`.
+
 ## Frame loop
 
 ```

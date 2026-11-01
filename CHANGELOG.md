@@ -6,6 +6,16 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Application icon** - the mushroom-cloud artwork is now the icon on every
+  surface. `cmake/ExplosionSim.rc.in` compiles `packaging/explosionsim.ico`
+  (16-256 px) into the Windows executable and the window class loads that
+  resource for the taskbar and Alt+Tab; the SDL splash and the Linux main window
+  load `assets/icon.png` (`SDL_SetWindowIcon`); the Linux package installs the
+  256 and 512 px PNGs into `hicolor`. `tools/make_icon.py` regenerates every
+  size from `packaging/icon-source.png`.
+
 ### Changed
 
 - **New first-start defaults** - a fresh `settings.ini` now starts with the

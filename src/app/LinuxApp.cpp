@@ -1140,6 +1140,19 @@ int main(int argc, char** argv) {
             ex::LogError("Could not create the SDL3 window.");
             return 1;
         }
+        // Window/taskbar icon: the same artwork the desktop entry installs.
+        {
+            const std::filesystem::path assetDir = FindAssetDirectory(argv[0]);
+            if (!assetDir.empty()) {
+                std::vector<uint8_t> iconBgra;
+                int iconWidth = 0;
+                int iconHeight = 0;
+                if (ex::gfx::LoadImageBgra((assetDir / "icon.png").string(),
+                                           iconBgra, iconWidth, iconHeight)) {
+                    window->SetIconRgba(iconBgra.data(), iconWidth, iconHeight);
+                }
+            }
+        }
         uint32_t extensionCount = 0;
         const char* const* extensions =
             window->VulkanInstanceExtensions(extensionCount);

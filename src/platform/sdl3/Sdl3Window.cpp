@@ -85,6 +85,24 @@ public:
         }
     }
 
+    void SetIconRgba(const uint8_t* bgra, int width, int height) override {
+        if (!window_ || !bgra || width <= 0 || height <= 0) {
+            return;
+        }
+        // SDL converts the surface to the window's format, so the caller keeps
+        // ownership of the pixel buffer.
+        SDL_Surface* icon =
+            SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32,
+                                  const_cast<uint8_t*>(bgra), width * 4);
+        if (!icon) {
+            LogWarn("Could not create the window icon surface: %s",
+                    SDL_GetError());
+            return;
+        }
+        SDL_SetWindowIcon(window_, icon);
+        SDL_DestroySurface(icon);
+    }
+
     bool Minimized() const override { return minimized_; }
 
     void Raise() override {

@@ -27,6 +27,8 @@ public:
 
     virtual void GetSize(int& width, int& height) const = 0;
     virtual void SetTitle(const char* title) = 0;
+    // Sets the window/taskbar icon from top-down 32-bit BGRA pixels.
+    virtual void SetIconRgba(const uint8_t* bgra, int width, int height) = 0;
     // True while the window is minimized; the application can skip rendering.
     virtual bool Minimized() const = 0;
     // Brings the window to the front and gives it focus.

@@ -40,7 +40,8 @@ $XDG_CONFIG_HOME/explosionsim/settings.ini (or ~/.config/explosionsim).
 Use --settings <path> to load a specific profile and --write-settings <path>
 to dump the active profile.
 
-The desktop entry (explosionsim.desktop) and icon (explosionsim.png) are
+The desktop entry (explosionsim.desktop) and icons (explosionsim.png for
+hicolor/256x256, explosionsim-512.png for hicolor/512x512) are
 provided for system integration. Copy them to the appropriate XDG directories
 and adjust Exec if the binary is installed elsewhere.
 

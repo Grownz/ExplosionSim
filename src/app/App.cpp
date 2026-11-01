@@ -1,6 +1,7 @@
 #include "app/App.h"
 
 #include "Version.h"
+#include "app/AppIcon.h"
 #include "app/SplashSdl.h"
 #include "core/Log.h"
 #include "core/FrameProfile.h"
@@ -93,8 +94,22 @@ bool RegisterWindowClass(HINSTANCE instance) {
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     windowClass.hbrBackground = nullptr;
     windowClass.lpszClassName = kWindowClass;
-    windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-    windowClass.hIconSm = windowClass.hIcon;
+    // The executable embeds the icon through cmake/ExplosionSim.rc.in; load the
+    // multi-resolution resource so the taskbar, Alt+Tab and the shell all get
+    // the right size instead of the generic application icon.
+    windowClass.hIcon = static_cast<HICON>(LoadImageW(
+        instance, MAKEINTRESOURCEW(EXPLOSION_APP_ICON_ID), IMAGE_ICON, 0, 0,
+        LR_DEFAULTSIZE | LR_SHARED));
+    windowClass.hIconSm = static_cast<HICON>(LoadImageW(
+        instance, MAKEINTRESOURCEW(EXPLOSION_APP_ICON_ID), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
+        LR_SHARED));
+    if (!windowClass.hIcon) {
+        windowClass.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    }
+    if (!windowClass.hIconSm) {
+        windowClass.hIconSm = windowClass.hIcon;
+    }
     return RegisterClassExW(&windowClass) != 0;
 }
 

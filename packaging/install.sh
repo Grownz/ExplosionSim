@@ -7,9 +7,10 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
 prefix="$data_home/ExplosionSim"
 apps="$data_home/applications"
-icons="$data_home/icons/hicolor/256x256/apps"
+icons256="$data_home/icons/hicolor/256x256/apps"
+icons512="$data_home/icons/hicolor/512x512/apps"
 
-mkdir -p "$prefix" "$apps" "$icons"
+mkdir -p "$prefix" "$apps" "$icons256" "$icons512"
 cp "$here/ExplosionSim" "$prefix/"
 cp "$here/ExplosionSimUpdater" "$prefix/"
 chmod +x "$prefix/ExplosionSim" "$prefix/ExplosionSimUpdater"
@@ -20,7 +21,8 @@ for file in README.md LICENSE CHANGELOG.md README-linux.txt; do
     fi
 done
 cp "$here/explosionsim.desktop" "$apps/"
-cp "$here/explosionsim.png" "$icons/"
+cp "$here/explosionsim.png" "$icons256/"
+cp "$here/explosionsim-512.png" "$icons512/"
 
 # Point the desktop entry at the installed binary.
 sed -i "s|^Exec=.*|Exec=$prefix/ExplosionSim|" \

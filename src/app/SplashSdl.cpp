@@ -169,6 +169,7 @@ bool SplashSdl::CreateWindowAndRenderer() {
         LogWarn("Splash: window creation failed (%s).", SDL_GetError());
         return false;
     }
+    ApplyWindowIcon();
     SDL_SetWindowPosition(window_, bounds.x + (bounds.w - width_) / 2,
                           bounds.y + (bounds.h - height_) / 2);
 
@@ -215,6 +216,29 @@ bool SplashSdl::CreateWindowAndRenderer() {
     }
     UpdateRoundedMask(width_, height_);
     return true;
+}
+
+void SplashSdl::ApplyWindowIcon() {
+    if (!window_ || framePaths_.empty() || framePaths_.front().empty()) {
+        return;
+    }
+    // The stills live in <assets>/splash/; the window icon sits next to them.
+    const std::filesystem::path assets =
+        std::filesystem::path(framePaths_.front()).parent_path().parent_path();
+    std::vector<uint8_t> bgra;
+    int width = 0;
+    int height = 0;
+    if (!gfx::LoadImageBgra((assets / "icon.png").string(), bgra, width,
+                            height)) {
+        return;
+    }
+    SDL_Surface* icon = SDL_CreateSurfaceFrom(
+        width, height, SDL_PIXELFORMAT_BGRA32, bgra.data(), width * 4);
+    if (!icon) {
+        return;
+    }
+    SDL_SetWindowIcon(window_, icon);
+    SDL_DestroySurface(icon);
 }
 
 void SplashSdl::ThreadMain() {
