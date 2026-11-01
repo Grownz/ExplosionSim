@@ -8,12 +8,36 @@ physically correct as the budget allows, and fast enough to stay above 60 fps at
 
 Target releases: `0.15.0` (current), `1.0.0` (future).
 
-## Status (2026-10-25)
+## Current status (2026-11-01, release 0.15.0)
 
-**Update:** the in-house rigid-body solver has been replaced by Jolt Physics 5.6.0
-(MIT). Items 1.1-1.5 are now covered by the engine (BVH broadphase, clipped manifolds,
-warm starting, box inertia, island sleeping, multithreaded solving). The measurements and
-findings below describe the previous solver and are kept for history.
+Reconciled against the code. Phases 1-4 are taken from the status notes below and the
+changelog; phases 5 and 6 were checked against the source.
+
+| Phase | State | Notes |
+| ----- | ----- | ----- |
+| 1 Physics core | Done, superseded | Replaced by Jolt Physics 5.6.0 (MIT): BVH broadphase, clipped manifolds, warm starting, box inertia, island sleeping, multithreaded solving. The in-house solver sections below are kept for history only. |
+| 2 Collapse and fracture | Done | Progressive collapse, standing structure as static colliders, Voronoi chunks by default. |
+| 3 Blast shielding | Done | `scene.groundReflection` defaults to 0 (free air), not the 0.9 proposed in the plan below. |
+| 4 Shadows and LOD | Done | Three cascades plus a cached static building map. |
+| 5.1 Fire spread | **Open** | `Scene.cpp` ignites objects from the thermal fluence only; `burning` is a visual flag that never ends and never spreads (no fuel, burn rate or neighbour ignition). |
+| 5.2 Wind on debris | **Partial** | Global `windSpeedMs` / `windDirectionDeg` settings drive cloud drift and particles. Rigid-body debris only feels the 4C flow drag (`FlowBodies.cpp`, Cd = 1.0); there is no wind profile, no centre of pressure and no torque. |
+| 5.3 Crater heightfield | **Open** | The ground is a Jolt box with its top face at `y = 0`; no crater code in the sources or shaders. |
+| 6.1 People | Out of scope | Unchanged decision. |
+| 6.2 Determinism | **Open** | `/fp:fast` is still set for `explosion_core` and the Windows app; the only hashes in the tests are scene layout hashes, there is no simulation state hash test. |
+| Cross-cutting | **Open** | `--profile-physics`, the soak test and the "validated against" notes do not exist yet. |
+
+Decisions for the next round (2026-11-01):
+
+- **Phase 5 is calibrated physically.** Ignition thresholds, fuel loads, burn rates and
+  heat transfer use published values with a source noted per constant (see 5.1); visual
+  plausibility alone is not enough.
+- **Determinism (6.2) is cross-platform.** Windows and Linux must produce the same
+  simulation state for the same inputs (see 6.2).
+
+## History: status (2026-10-25)
+
+The sections below describe the previous in-house rigid-body solver and are kept for
+history.
 
 - **1.1 Broadphase - done.** Uniform grid with 4 m cells, AABB insertion and a
   sorted, de-duplicated pair list. At `scene.density = 3` the simulation cost per
@@ -60,7 +84,7 @@ findings below describe the previous solver and are kept for history.
   accumulates in tall stacks. A future solver should combine shock propagation
   with a clipped manifold and graph-coloured batching, or switch to XPBD.
 
-## Status: phases 2-4 (2026-10-25)
+## History: status of phases 2-4 (2026-10-25)
 
 - **2.1 Progressive collapse - done.** Per-edge joints with staggered failure times and a
   pending-failure list. Each failure re-runs the support flood fill, so chunks detach in
@@ -356,6 +380,17 @@ by a burning neighbour uses a radiative term `q = sigma * eps * T^4 * viewFactor
 smoke scales with the burn rate; charring grows with the burned fraction. No chemistry,
 no flame simulation.
 
+**Calibration (decided 2026-11-01):** the constants are physical, not tuned by eye. Fuel
+loads, emissivity, ignition flux and burn rates come from fire-engineering references
+(for example SFPE Handbook, Drysdale), and every constant gets a "validated against" line
+in `docs/physics.md`. The ignition criterion is a heat-flux and exposure-time model
+(piloted ignition at a critical flux of the order of 12-15 kW/m^2 for wood, spontaneous
+ignition at about 25-30 kW/m^2) rather than a bare threshold. The existing blast-thermal
+fluence thresholds in `Scene.cpp` are re-derived the same way. The 30 m cutoff and the
+`viewFactor` approximation are checked against a point-source radiation estimate.
+
+**Status:** open. Today only the blast fluence ignites objects and `burning` never ends.
+
 **Acceptance:** a centre fire spreads to adjacent buildings within ~30 s in still air and
 stops at a 20 m gap; the burn duration scales with the fuel load.
 
@@ -366,6 +401,10 @@ cross-section `A` from the OBB, `Cd = 1.0`, the log-law wind profile at the body
 applied at the centre of pressure (offset from the centre of mass, so it also produces a
 torque). `rho` comes from the atmosphere model.
 
+**Status:** partial. The global wind setting exists and moves the cloud and the particles;
+rigid-body debris is only coupled through the 4C flow drag. This item adds the wind term
+for debris and must not double count the 4C drag (same body, same relative velocity).
+
 **Acceptance:** a 0.2 kg splinter drifts visibly downwind, a 10 kg chunk barely deviates.
 
 ### 5.3 Crater heightfield
@@ -375,6 +414,11 @@ torque). `rho` comes from the atmosphere model.
 `R` from the charge energy and height of burst. The physics ground contact samples this
 heightfield (bilinear) instead of `y = 0`, and the ground shader uses the same analytic
 profile. Debris rolls into the crater.
+
+**Status:** open. The physics ground is a static box with its top face at `y = 0`; the
+crater needs a Jolt height-field shape, the ground raycasts in `PhysicsWorld.cpp` and the
+ground shader (both DXC and SPIR-V) to agree on the profile. It changes the rendering, so
+the capture references and parity numbers are regenerated in the same change.
 
 **Acceptance:** the crater volume scales with the charge energy; debris comes to rest
 inside the crater rather than on a flat plane.
@@ -389,16 +433,30 @@ no gore. ~2-3 days.
 
 ### 6.2 Determinism
 
-- Contract: bit-exact for the same binary on the same platform; not across compilers or
-  architectures.
-- Remove `/fp:fast` from the physics translation units (or use `/fp:precise`) to avoid
-  FMA contraction differences.
-- If cross-platform replay is required, replace libm `sin/cos` in the hot simulation path
-  with deterministic polynomial approximations.
-- Add a state-hash test: run 600 fixed substeps and hash positions/orientations. Store the
-  golden value per platform and fail on change.
+- Contract (decided 2026-11-01): **cross-platform**. The same inputs and the same seed
+  give the same simulation state on Windows (MSVC) and Linux (GCC/Clang), compared by one
+  shared golden hash. This replaces the earlier "same binary, same platform" contract.
+- Remove `/fp:fast` from `explosion_core` and the physics translation units (use
+  `/fp:precise`) and forbid FMA contraction on both compilers (`-ffp-contract=off` on
+  GCC/Clang), so the instruction selection cannot differ.
+- Replace libm `sin/cos/exp/pow` in the hot simulation path with deterministic
+  implementations; libm results differ between MSVC and glibc.
+- Jolt must run in its cross-platform deterministic mode (`CROSS_PLATFORM_DETERMINISTIC`),
+  which also fixes its floating-point behaviour and constraint order. Jolt is multithreaded,
+  so the result must not depend on the worker count; this is verified, not assumed.
+- Keep DirectXMath out of the deterministic path where its results are not guaranteed to
+  match between the SSE and fallback paths.
+- Add a state-hash test: run 600 fixed substeps and hash positions/orientations. A single
+  golden value is checked on both platforms and the test fails on change.
+- GPU solver and rendering are outside the contract; they keep the capture tolerances.
+
+**Status:** open. `/fp:fast` is still set, Jolt is not built in deterministic mode and the
+only existing hashes cover the scene layout. Expect pinned test values and the reference
+captures to move once this lands.
 
 ## Cross-cutting work
+
+Status 2026-11-01: none of the three items below exists yet.
 
 - **Profiling harness:** `--profile-physics` runs N substeps and reports broadphase,
   narrowphase, solver, island and sleep timings via QPC. Extend `Scene::Stats()` with
@@ -434,5 +492,6 @@ phase 1.
 - No compressible CFD combustion; fire remains a radiative spread model.
 - No soil plasticity, only an analytic crater heightfield.
 - No HZB occlusion culling (open town, low payoff).
-- Cross-platform bit-exact replay is not guaranteed.
+- Cross-platform replay is limited to the CPU simulation state (6.2); the GPU solver and
+  the renderer are only compared within the capture tolerances.
 - People remain out of scope.
