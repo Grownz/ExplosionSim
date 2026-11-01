@@ -4,7 +4,30 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.14.0] - 2026-11-01
+
+0.14.0 makes the debris performant without changing how it looks or behaves.
+Voronoi chunks collide as their real convex hull, settled pieces freeze into
+static colliders and wake on impact, and the rubble pass culls per chunk. A
+shared frame profiler reports the CPU and GPU cost of every pass, which is how
+the debris work was measured.
+
+### Highlights
+
+- **Debris physics** - chunks collide as their convex hull instead of a box that
+  overlapped its neighbours, a wider sleep window lets quiet piles settle, and
+  debris resting on static geometry freezes into a static collider until
+  something hits it. At t = 10 s with a 5 t charge (7457 bodies, identical
+  scene) physics drops from 12.46 ms to 3.88 ms per frame and the frame from
+  14.09 ms to 5.63 ms.
+- **Frame profile** - `EXPLOSION_FRAME_PROFILE=1` reports per-phase CPU
+  milliseconds on both platforms, `EXPLOSION_GPU_PROFILE=1` adds per-pass GPU
+  timestamps, and `--benchmark-sim` runs the simulation inside the benchmark so
+  the numbers cover moving debris instead of a frozen frame.
+- **Chunk culling** - the rubble pass drops chunks outside the camera frustum
+  and sub-pixel chunks, and merges the remaining ones into contiguous draws.
+- **Attached fire** - flames stay on the object or chunk that burns instead of
+  being left behind in world space.
 
 ### Added
 
@@ -25,6 +48,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Settled debris is frozen** - Jolt sleeps whole islands, and a debris pile is
+  one island, so one moving chunk kept thousands of resting ones simulated. A
+  body that stays below 0.08 m/s and 0.5 rad/s for 2 s *while resting on static
+  geometry* (checked with a downward ray) is converted into a static collider; a
+  moving chunk that hits a frozen piece wakes it again. The support check keeps
+  pieces from freezing in mid-air. With 6319 dynamic bodies at t = 10 s, 5227 are
+  frozen and physics stays at 4.49 ms per frame.
 - **Static shadow refresh** - a collapsing building no longer rebuilds the whole
   4096² static shadow map. Collapse-driven refreshes are limited to one every
   eight frames (frame based, so captures stay deterministic); scene and sun
@@ -32,7 +62,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Chunk draw culling** - the rubble pass now culls per chunk: the main pass
   drops chunks outside the camera frustum, both passes drop chunks under half a
   pixel (one pixel for shadows), and consecutive visible chunks are merged into
-  one draw so the index buffer stays contiguous.
+  one draw so the index buffer stays contiguous. Visibility is computed once per
+  frame and shared by the three cascades and the scene pass.
 - **Attached scene fire** - flames spawned on a burning object are bound to the
   rigid body they sit on (the object itself, or the nearest chunk once a
   building has broken apart). Every physics step the anchored particles are
@@ -50,8 +81,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bodies that are awake (or just fell asleep); static structure and sleeping
   debris are skipped instead of costing four Jolt queries per body per substep.
   Benchmarks also report how many bodies are awake, how many are actually below
-  the sleep threshold and the fastest body, which shows whether a pile is asleep
-  or kept awake by an island.
+  the sleep threshold, the fastest body and the number of collapsed objects,
+  which shows whether a pile is asleep or kept awake by an island.
 
 ### Fixed
 
@@ -62,22 +93,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (the rendered hull keeps its full size) so the pieces can still separate.
 - **Debris sleep window** - `mPointVelocitySleepThreshold` is 0.05 m/s and
   `mTimeBeforeSleep` 0.3 s, so a quiet pile settles sooner.
-
-  At t = 10 s with a 5 t charge (7457 bodies, identical scene): physics
-  12.46 ms -> 7.84 ms per frame (-37 %), frame 14.09 ms -> 10.02 ms. Most bodies
-  are still awake (~6270), so a per-body settle remains the next lever.
-- **Settled debris is frozen** - Jolt sleeps whole islands, and a debris pile is
-  one island, so one moving chunk kept thousands of resting ones simulated.
-  A body that stays below 0.08 m/s and 0.5 rad/s for 2 s *while resting on
-  static geometry* (checked with a downward ray) is converted into a static
-  collider; a moving chunk that hits a frozen piece wakes it again. The support
-  check keeps pieces from freezing in mid-air.
-
-  Same scene as above: physics 7.84 ms -> 3.88 ms and the frame 10.02 ms ->
-  5.63 ms, with 5528 of 6319 dynamic bodies frozen at t = 10 s.
-
-### Fixed
-
 - **Collapsed buildings disappearing on D3D11** - the per-object instance upload
   used `D3D11_MAP_WRITE`, which dynamic buffers do not allow, so the write
   failed and a building vanished the moment its chunks took over. The upload
@@ -86,6 +101,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   shader-resource view, which the Vulkan backend does not provide, so the rubble
   was never drawn there. The instance buffer is bound through the RHI on both
   backends now.
+- **Chunk culling used the instance translation** - the chunk instance matrix
+  maps building space, so its translation column is only the displacement from
+  the fracture pose, not the world position. The visibility test culled chunks
+  with the wrong centres and facade pieces popped out of view. The renderer now
+  stores the world centre of every chunk instance and culls with it; with
+  culling enabled the frame is pixel-identical to the unculled path.
 
 ## [0.13.0] - 2026-10-31
 
@@ -1152,7 +1173,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.0
 [0.13.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.13.0
 [0.12.2]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.12.2
 [0.12.1]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.12.1
