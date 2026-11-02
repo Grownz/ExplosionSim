@@ -899,6 +899,16 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
         Hint("Caps the high-fidelity solver work per frame. Lower values keep the frame "
              "rate up but play the explosion slower; the playback time scale is the target.");
 
+        if (ImGui::SliderInt("Solver time/frame", &settings.simulation.solverFrameBudgetMs, 0, 500,
+                             "%d ms")) {
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            actions.applySimulationSettings = true;
+        }
+        Hint("Wall-clock limit for the solver steps of one frame (0 = off). Keeps the first "
+             "frames after the detonation short while the GPU clocks up; when it is reached "
+             "the explosion plays slower.");
+
         if (ImGui::Checkbox("Solver auto-scale", &settings.simulation.solverAutoScale)) {
             actions.applySimulationSettings = true;
         }
@@ -936,8 +946,9 @@ void DrawPhysics(app::AppSettings& settings, const sim::Simulation& simulation,
         }
 
         if (renderer.SolverBudgetHit()) {
-            Hint("Solver step budget reached: playback is slower than the requested "
-                 "time scale. Raise Max steps/frame or lower the solver grid.");
+            Hint("Solver budget reached: playback is slower than the requested time "
+                 "scale. Raise Max steps/frame or Solver time/frame, or lower the "
+                 "solver grid.");
         }
 
         Hint("Compressible Euler solver (HLLC + MUSCL) running on the GPU. It uses the "

@@ -33,6 +33,9 @@ public:
     void SetFlowBodies(const std::vector<sim::FlowBody>& bodies);
     void ConsumeBodyFlow(std::vector<sim::BodyFlowSample>& samples);
     void Step(int steps);
+    // Blocks until the GPU has finished all submitted work, so the caller can
+    // time a batch of steps against its wall-clock budget (SolverStepBudget).
+    void WaitForSteps();
     void UpdateRenderVolume();
     // Precomputes the sun transmittance volume for the volume raymarcher.
     // Call once per frame after UpdateRenderVolume with the renderer's sun.
@@ -191,6 +194,7 @@ private:
     int bodyCapacity_ = 0;
     int bodyCount_ = 0;
     ComPtr<ID3D11Query> reduceQuery_;
+    ComPtr<ID3D11Query> stepQuery_;
     bool reducePending_ = false;
     bool deterministic_ = false;
 

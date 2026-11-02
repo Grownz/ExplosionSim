@@ -6,6 +6,19 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Solver time per frame (high fidelity)** - a wall-clock budget for the
+  solver steps of one frame, `solverFrameBudgetMs` (default 100 ms, 0 = off),
+  as **Solver time/frame** in both panels. Right after the detonation the GPU
+  is usually still at its idle clock, and the fixed step budget stalled the
+  first frame: 130 steps took 250-400 ms instead of ~75 ms on the reference
+  machine (RTX 3090, 128³). The solver now submits its steps in batches, times
+  them and stops when the budget is spent, so the first frames stay at
+  ~110 ms while the GPU clocks up; the explosion plays a little slower during
+  those ~0.3 s. Warm frames are unaffected (35 ms per frame with and without
+  the budget). The step cap still applies.
+
 ### Changed
 
 - **Collapse frame cost** - the convex collision hulls of the Voronoi chunks are

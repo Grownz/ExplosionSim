@@ -203,6 +203,10 @@ bool GpuEulerSolver::CreateAuxiliaryResources() {
         LogError("High-fidelity solver: reduction query creation failed.");
         return false;
     }
+    if (FAILED(device_->CreateQuery(&queryDesc, &stepQuery_))) {
+        LogError("High-fidelity solver: step query creation failed.");
+        return false;
+    }
 
     // The body-flow pass shares the solver constant buffer layout but writes
     // into a small dedicated buffer so the ring of sweep constants is not
@@ -509,6 +513,7 @@ void GpuEulerSolver::Shutdown() {
     timingDisjoint_.Reset();
     maxSpeedStaging_.Reset();
     reduceQuery_.Reset();
+    stepQuery_.Reset();
     maxSpeedUAV_.Reset();
     maxSpeedBuffer_.Reset();
     bodyFlowStaging_.Reset();
@@ -973,6 +978,25 @@ void GpuEulerSolver::Step(int steps) {
     stats_.dt = lastDt_;
     stats_.maxSpeed = lastSpeed;
     stats_.steps = totalSteps_;
+}
+
+void GpuEulerSolver::WaitForSteps() {
+    if (!initialized_ || !stepQuery_) {
+        return;
+    }
+    context_->End(stepQuery_.Get());
+    // GetData without DONOTFLUSH submits the queued batch. Yield instead of
+    // sleeping: a 1 ms sleep can oversleep by several milliseconds, which the
+    // GPU would spend idle. The bound only guards against a lost device.
+    const auto start = std::chrono::steady_clock::now();
+    BOOL done = FALSE;
+    while (context_->GetData(stepQuery_.Get(), &done, sizeof(done), 0) == S_FALSE) {
+        if (std::chrono::steady_clock::now() - start > std::chrono::seconds(5)) {
+            LogWarn("High-fidelity solver: step batch did not finish within 5 s.");
+            return;
+        }
+        std::this_thread::yield();
+    }
 }
 
 void GpuEulerSolver::UpdateRenderVolume() {

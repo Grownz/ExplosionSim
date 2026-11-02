@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace ex::gfx {
@@ -55,6 +56,66 @@ struct SolverStats {
     float plumeCapRadius = 0.0f;
     float plumeDomeFraction = 0.0f;
     bool fieldBoundsValid = false;
+};
+
+// Wall-clock budget for the high-fidelity solver steps of one interactive
+// frame, on top of the step cap (solverStepsPerFrame). The step cap assumes a
+// fixed cost per step, but right after the detonation the GPU is usually still
+// at its idle clock and the same steps take several times longer, which
+// stalled the first frame for a few hundred milliseconds. The frame loop
+// submits the steps in batches, waits for each batch that another batch
+// follows and asks the budget how many more steps fit. The cost per step is
+// re-measured after every batch, so the frame follows the GPU clock while it
+// ramps up. A budget of 0 disables the limit.
+class SolverStepBudget {
+public:
+    // Steps of the first batch of a frame, before the cost per step is known.
+    // A single step: at the idle GPU and memory clock one step can take more
+    // than 15 ms instead of ~0.6 ms (RTX 3090, 128³).
+    static constexpr int kFirstBatch = 1;
+
+    explicit SolverStepBudget(double budgetMs) : budgetMs_(std::max(budgetMs, 0.0)) {}
+
+    bool Enabled() const { return budgetMs_ > 0.0; }
+
+    // Steps allowed for the next batch, at most `wanted`; 0 when the budget is
+    // spent. The first batch always runs, so every frame makes progress.
+    int Limit(int wanted) const {
+        if (wanted <= 0 || !Enabled()) {
+            return std::max(wanted, 0);
+        }
+        if (batches_ == 0) {
+            return std::min(wanted, kFirstBatch);
+        }
+        const double remaining = budgetMs_ - elapsedMs_;
+        if (remaining <= 0.0) {
+            return 0;
+        }
+        if (msPerStep_ <= 0.0) {
+            return wanted;
+        }
+        const double fit = std::floor(remaining / msPerStep_);
+        return fit >= double(wanted) ? wanted : int(fit);
+    }
+
+    // Records a finished batch and its wall time, including the wait for the
+    // GPU.
+    void Record(int steps, double milliseconds) {
+        milliseconds = std::max(milliseconds, 0.0);
+        elapsedMs_ += milliseconds;
+        if (steps > 0) {
+            msPerStep_ = milliseconds / double(steps);
+        }
+        ++batches_;
+    }
+
+    double ElapsedMs() const { return elapsedMs_; }
+
+private:
+    double budgetMs_ = 0.0;
+    double elapsedMs_ = 0.0;
+    double msPerStep_ = 0.0;
+    int batches_ = 0;
 };
 
 // GPU passes the solver can time with timestamp queries.

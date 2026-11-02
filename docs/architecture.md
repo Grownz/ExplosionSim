@@ -486,7 +486,17 @@ generation hash exposed for tests.
   `solverStepsPerFrame` (8..256). When the budget is reached the solver advances less
   than the target and playback runs slower; the UI warns. This keeps the frame time
   balanced across charge sizes: small charges have a small domain, a small CFL step and
-  would otherwise demand thousands of steps per frame. The explicit time step follows the
+  would otherwise demand thousands of steps per frame. On top of the step cap,
+  `solverFrameBudgetMs` (default 100 ms, 0 = off) limits the wall-clock time of the
+  steps (`gfx::SolverStepBudget`, shared by Windows and Linux): the steps go out in
+  batches, the first of one step; every batch that another batch follows is waited
+  for (`WaitForSteps`, an event query on D3D11; the RHI solver already waits for its
+  submission fence) and timed, and the next batch only gets the steps that still fit
+  at the measured cost per step. The last batch is not waited for, so it keeps
+  overlapping with the CPU work of the frame. This matters right after the
+  detonation, when the GPU is still at its idle clock: one step can take 15-20 ms
+  instead of ~0.6 ms, and the full step budget used to stall the first frame for
+  250-400 ms. The explicit time step follows the
   CFL condition with a 1 ms upper bound, so coarse auto-scaled grids can keep up with
   real-time playback. The "Real time" readout is wall-clock time. The Performance panel
   can cap the interactive frame rate at 30/60/90/120/144 fps; the wait is part of the

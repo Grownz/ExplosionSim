@@ -1566,6 +1566,11 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
     const int maxSteps =
         std::clamp(simulation.Settings().solverStepsPerFrame, 8, 256);
     const int batchMax = std::min(maxSteps, 64);
+    // The wall-clock budget limits the steps further: a batch that another
+    // batch follows is waited for and timed, so a GPU that is still clocking up
+    // after the detonation gets fewer steps instead of stalling the frame. The
+    // last batch is not waited for and keeps overlapping with the CPU work.
+    SolverStepBudget budget(double(simulation.Settings().solverFrameBudgetMs));
     double advancedTotal = 0.0;
     int submitted = 0;
     while (advancedTotal + 1e-9 < target && submitted < maxSteps) {
@@ -1575,6 +1580,11 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
             steps = int(std::ceil((target - advancedTotal) / double(dt)));
             steps = std::clamp(steps, 1, std::min(batchMax, maxSteps - submitted));
         }
+        steps = budget.Limit(steps);
+        if (steps <= 0) {
+            break;
+        }
+        const auto batchStart = std::chrono::steady_clock::now();
         UpdatePlumeModel(simulation);
         solver_.Step(steps);
         const double advanced = solver_.ConsumeAdvance();
@@ -1582,6 +1592,12 @@ double Renderer::AdvanceSolver(sim::Simulation& simulation, float realDt) {
         submitted += steps;
         if (advanced <= 0.0) {
             break;
+        }
+        if (budget.Enabled() && advancedTotal + 1e-9 < target && submitted < maxSteps) {
+            solver_.WaitForSteps();
+            budget.Record(steps, std::chrono::duration<double, std::milli>(
+                                     std::chrono::steady_clock::now() - batchStart)
+                                     .count());
         }
     }
     solverBudgetHit_ = advancedTotal + 1e-9 < target;

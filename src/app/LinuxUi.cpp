@@ -418,6 +418,13 @@ void DrawPhysics(LinuxUiState& state, const ex::sim::Simulation& simulation) {
              "the frame rate up but play the explosion slower; the playback "
              "time scale is the target.");
 
+        ImGui::SliderInt("Solver time/frame", &sim.solverFrameBudgetMs, 0, 500,
+                         "%d ms");
+        ApplyOnRelease(state);
+        Hint("Wall-clock limit for the solver steps of one frame (0 = off). "
+             "Keeps the first frames after the detonation short while the GPU "
+             "clocks up; when it is reached the explosion plays slower.");
+
         if (ImGui::Checkbox("Solver auto-scale", &sim.solverAutoScale)) {
             state.applySimulation = true;
         }

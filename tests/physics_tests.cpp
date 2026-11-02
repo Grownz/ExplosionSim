@@ -7,6 +7,7 @@
 #ifdef _WIN32
 #include "app/Settings.h"
 #endif
+#include "gfx/EulerSolverTypes.h"
 #include "gfx/Frustum.h"
 #include "scene/FireModel.h"
 #include "scene/PhysicsWorld.h"
@@ -630,6 +631,7 @@ void TestSettingsRoundTrip() {
     original.simulation.mode = ex::sim::SimulationMode::HighFidelity;
     original.simulation.solverResolution = 96;
     original.simulation.solverStepsPerFrame = 12;
+    original.simulation.solverFrameBudgetMs = 0;
     original.simulation.solverAutoScale = false;
     original.simulation.solverHemisphere = true;
     original.simulation.loop = true;
@@ -688,6 +690,7 @@ void TestSettingsRoundTrip() {
     CHECK(loaded.simulation.mode == ex::sim::SimulationMode::HighFidelity);
     CHECK(loaded.simulation.solverResolution == 96);
     CHECK(loaded.simulation.solverStepsPerFrame == 12);
+    CHECK(loaded.simulation.solverFrameBudgetMs == 0);
     CHECK(!loaded.simulation.solverAutoScale);
     CHECK(loaded.simulation.solverHemisphere);
     CHECK(loaded.simulation.loop);
@@ -832,6 +835,48 @@ void TestFrustumCulling() {
         CHECK(!frustum.ContainsSphere(behindPoint, 5.0f));
         CHECK(!frustum.ContainsSphere(XMFLOAT3(0.0f, 5000.0f, 0.0f), 5.0f));
     }
+}
+
+void TestSolverStepBudget() {
+    // Disabled: the step cap alone decides.
+    ex::gfx::SolverStepBudget off(0.0);
+    CHECK(!off.Enabled());
+    CHECK(off.Limit(130) == 130);
+
+    // A cold GPU (2.5 ms per step) against 100 ms: a single-step first batch,
+    // then only what still fits, then nothing.
+    ex::gfx::SolverStepBudget cold(100.0);
+    CHECK(cold.Enabled());
+    CHECK(cold.Limit(130) == ex::gfx::SolverStepBudget::kFirstBatch);
+    CHECK(ex::gfx::SolverStepBudget::kFirstBatch == 1);
+    cold.Record(1, 2.5);
+    CHECK(cold.Limit(64) == 39);
+    cold.Record(39, 97.5);
+    CHECK(cold.Limit(64) == 0);
+    CHECK_NEAR(cold.ElapsedMs(), 100.0, 1e-9);
+
+    // A warm GPU (0.6 ms per step): the whole step budget fits, so the
+    // budget does not change the result.
+    ex::gfx::SolverStepBudget warm(100.0);
+    int submitted = 0;
+    while (submitted < 130) {
+        const int steps = warm.Limit(std::min(64, 130 - submitted));
+        CHECK(steps > 0);
+        if (steps <= 0) {
+            break;
+        }
+        warm.Record(steps, 0.6 * steps);
+        submitted += steps;
+    }
+    CHECK(submitted == 130);
+    CHECK(warm.ElapsedMs() < 100.0);
+
+    // The estimate follows the latest batch, so a clock that ramps up during
+    // the frame is used right away.
+    ex::gfx::SolverStepBudget ramp(100.0);
+    ramp.Record(16, 48.0);                      // 3 ms per step
+    ramp.Record(10, 10.0);                      // 1 ms per step
+    CHECK(ramp.Limit(64) == 42);                // 42 ms left
 }
 
 void TestFrictionSliding() {
@@ -1963,6 +2008,7 @@ int main() {
     RUN(TestSceneDamage);
     RUN(TestSceneFire);
     RUN(TestFrustumCulling);
+    RUN(TestSolverStepBudget);
     RUN(TestBodyPositionRoundTrip);
     RUN(TestPhysicsWorld);
     RUN(TestFrictionSliding);

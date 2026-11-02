@@ -170,6 +170,8 @@ void LoadSettings(AppSettings& settings, const std::wstring& path) {
         std::clamp(ParseInt(values, "solverResolution", simulation.solverResolution), 32, 512);
     simulation.solverStepsPerFrame =
         std::clamp(ParseInt(values, "solverStepsPerFrame", simulation.solverStepsPerFrame), 8, 256);
+    simulation.solverFrameBudgetMs =
+        std::clamp(ParseInt(values, "solverFrameBudgetMs", simulation.solverFrameBudgetMs), 0, 500);
     simulation.solverAutoScale =
         ParseBool(values, "solverAutoScale", simulation.solverAutoScale);
     simulation.solverHemisphere =
@@ -279,6 +281,7 @@ void SaveSettings(const AppSettings& settings, const std::wstring& path) {
     stream << "simulationMode=" << int(simulation.mode) << "\n";
     stream << "solverResolution=" << simulation.solverResolution << "\n";
     stream << "solverStepsPerFrame=" << simulation.solverStepsPerFrame << "\n";
+    stream << "solverFrameBudgetMs=" << simulation.solverFrameBudgetMs << "\n";
     stream << "solverAutoScale=" << (simulation.solverAutoScale ? "true" : "false") << "\n";
     stream << "solverHemisphere=" << (simulation.solverHemisphere ? "true" : "false") << "\n";
     stream << "solverFlowAround=" << (simulation.solverFlowAround ? "true" : "false") << "\n";

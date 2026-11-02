@@ -100,6 +100,7 @@ struct Options {
     int maxFps = 144;
     int solverResolution = 0;
     int solverSteps = 0;
+    int solverFrameBudgetMs = 100;
     double solverTime = -1.0;
     bool solverAutoScale = true;
     bool solverAutoScaleSet = false;
@@ -325,6 +326,8 @@ void LoadSettingsFile(const std::string& path, Options& options) {
                    512);
     options.solverSteps =
         std::clamp(integer("solverStepsPerFrame", options.solverSteps), 8, 256);
+    options.solverFrameBudgetMs = std::clamp(
+        integer("solverFrameBudgetMs", options.solverFrameBudgetMs), 0, 500);
     options.solverAutoScale =
         boolean("solverAutoScale", options.solverAutoScale);
     options.solverAutoScaleSet = true;
@@ -438,6 +441,7 @@ bool SaveSettingsFile(const std::string& path, const Options& options) {
          << "\n";
     file << "solverStepsPerFrame="
          << (options.solverSteps > 0 ? options.solverSteps : 96) << "\n";
+    file << "solverFrameBudgetMs=" << options.solverFrameBudgetMs << "\n";
     file << "solverAutoScale=" << IniBoolText(options.solverAutoScale) << "\n";
     file << "solverHemisphere=" << IniBoolText(options.solverHemisphere)
          << "\n";
@@ -900,6 +904,7 @@ void ClampSimulationSettings(ex::sim::SimulationSettings& s) {
     s.fuseSeconds = std::clamp(s.fuseSeconds, 0.0, 30.0);
     s.solverResolution = std::clamp(s.solverResolution, 32, 512);
     s.solverStepsPerFrame = std::clamp(s.solverStepsPerFrame, 8, 256);
+    s.solverFrameBudgetMs = std::clamp(s.solverFrameBudgetMs, 0, 500);
     s.volumeResolution = std::clamp(s.volumeResolution, 32, 1024);
     s.scene.seed = std::min<uint32_t>(s.scene.seed, 1000000u);
     s.scene.density = std::clamp(s.scene.density, 0.0f, 4.0f);
@@ -922,6 +927,7 @@ void MirrorSettings(const ex::sim::SimulationSettings& s, Options& options) {
     options.highFidelity = s.mode == ex::sim::SimulationMode::HighFidelity;
     options.solverResolution = s.solverResolution;
     options.solverSteps = s.solverStepsPerFrame;
+    options.solverFrameBudgetMs = s.solverFrameBudgetMs;
     options.solverAutoScale = s.solverAutoScale;
     options.solverHemisphere = s.solverHemisphere;
     options.flowAround = s.solverFlowAround;
@@ -1473,6 +1479,8 @@ int main(int argc, char** argv) {
                    32, 512);
     simulationSettings.solverStepsPerFrame =
         std::clamp(options.solverSteps > 0 ? options.solverSteps : 96, 8, 256);
+    simulationSettings.solverFrameBudgetMs =
+        std::clamp(options.solverFrameBudgetMs, 0, 500);
     simulationSettings.solverAutoScale = options.solverAutoScale;
     simulationSettings.solverHemisphere = options.solverHemisphere;
     simulationSettings.solverFlowAround = options.flowAround;
@@ -1851,6 +1859,12 @@ int main(int argc, char** argv) {
         const int maxSteps =
             std::clamp(simulation.Settings().solverStepsPerFrame, 8, 256);
         const int batchMax = std::min(maxSteps, 64);
+        // Same wall-clock budget as Renderer::AdvanceSolver: a GPU that is
+        // still clocking up after the detonation gets fewer steps instead of
+        // stalling the frame. Only a batch that another batch follows is
+        // waited for and timed.
+        ex::gfx::SolverStepBudget budget(
+            double(simulation.Settings().solverFrameBudgetMs));
         double advanced = 0.0;
         int submitted = 0;
         while (advanced + 1e-9 < target && submitted < maxSteps) {
@@ -1861,6 +1875,11 @@ int main(int argc, char** argv) {
                 steps = std::clamp(steps, 1,
                                    std::min(batchMax, maxSteps - submitted));
             }
+            steps = budget.Limit(steps);
+            if (steps <= 0) {
+                break;
+            }
+            const double batchStart = NowSeconds();
             UpdatePlumeModel(highFidelityRuntime.solver, simulation);
             highFidelityRuntime.solver.Step(steps);
             const double advance = highFidelityRuntime.solver.ConsumeAdvance();
@@ -1868,6 +1887,11 @@ int main(int argc, char** argv) {
             submitted += steps;
             if (advance <= 0.0) {
                 break;
+            }
+            if (budget.Enabled() && advanced + 1e-9 < target &&
+                submitted < maxSteps) {
+                highFidelityRuntime.solver.WaitForSteps();
+                budget.Record(steps, (NowSeconds() - batchStart) * 1000.0);
             }
         }
         // The blast model, the town, the debris and the particles follow the

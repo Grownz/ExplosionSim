@@ -44,6 +44,9 @@ struct SimulationSettings {
     SimulationMode mode = SimulationMode::HighFidelity;
     int solverResolution = 128;
     int solverStepsPerFrame = 96; // max solver steps per rendered frame
+    // Wall-clock limit for the solver steps of one rendered frame (0 = off,
+    // gfx::SolverStepBudget). Keeps the frame short while the GPU clocks up.
+    int solverFrameBudgetMs = 100;
     bool solverAutoScale = true;
     bool solverHemisphere = false;
     // Flow-around variant: voxelize the procedural objects into a solid mask so

@@ -55,6 +55,10 @@ public:
     void SetFlowBodies(const std::vector<sim::FlowBody>& bodies);
     void ConsumeBodyFlow(std::vector<sim::BodyFlowSample>& samples);
     void Step(int steps);
+    // Counterpart of GpuEulerSolver::WaitForSteps for the step budget. Step()
+    // already waits for the submission fence of every batch, so the work is
+    // finished when it returns.
+    void WaitForSteps() {}
     void UpdateRenderVolume();
     // Precomputes the sun transmittance volume for the volume raymarcher.
     void UpdateLightVolume(const DirectX::XMFLOAT3& sunDirection);
