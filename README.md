@@ -180,6 +180,7 @@ the terrain.
 | `--high-fidelity` | Use the GPU Euler solver for the volume |
 | `--solver-resolution <n>` / `--solver-time <s>` | Solver grid and capture time |
 | `--benchmark` / `--frames <n>` | Offscreen render benchmark |
+| `--benchmark-sim` | Benchmark with the simulation (and the high-fidelity solver) running |
 | `--solver-benchmark` | Solver-only GPU timings |
 | `--scene-seed <n>` / `--scene-density <x>` / `--no-scene` | Procedural environment |
 | `--fire-propagation` / `--no-fire-propagation` | Fire spread model: fuel, burn-out, radiative ignition (default off) |

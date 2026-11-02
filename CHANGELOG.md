@@ -21,6 +21,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   body. The full walk took 1.2-1.5 ms per frame while ~8,000 chunks were
   falling. The result is bit-identical.
 
+### Fixed
+
+- **High-fidelity benchmark** - `--benchmark-sim` in high-fidelity mode only
+  advanced the analytic model; the Euler solver, its obstacle mask and the 4C
+  drag were never stepped, so the numbers left out most of the frame. The
+  benchmark now steps the solver exactly like the interactive loop on both
+  platforms (the Linux window and benchmark share one code path), and the Linux
+  summary reports the simulated and solver time like Windows. In the 26 t
+  reference town at 128³ a high-fidelity frame costs ~39 ms, of which physics
+  is 8-16 ms and the obstacle mask 0.05 ms; the rest is solver GPU time.
+
 ## [0.16.0] - 2026-11-02
 
 0.16.0 is a feature and parity release: the CPU simulation is bit-reproducible

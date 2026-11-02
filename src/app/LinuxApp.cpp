@@ -1836,6 +1836,52 @@ int main(int argc, char** argv) {
     // it once when its layout appears and again after a new charge or height.
     bool sceneFramed = options.headless;
     bool reframeAfterScene = false;
+    // One high-fidelity frame of the interactive loop: the solver advances by
+    // up to `dt` of simulated time (within the per-frame step budget) and the
+    // blast model, the town, the debris and the particles follow its time.
+    const auto advanceHighFidelity = [&](float dt) {
+        if (!highFidelityRuntime.Ensure(simulation)) {
+            return;
+        }
+        MaybeExpandSolver(highFidelityRuntime.solver, simulation, options,
+                          highFidelityRuntime.capWarned);
+        highFidelityRuntime.BeginFrame(simulation);
+        const double target =
+            std::max(0.0, double(dt) * simulation.Settings().timeScale);
+        const int maxSteps =
+            std::clamp(simulation.Settings().solverStepsPerFrame, 8, 256);
+        const int batchMax = std::min(maxSteps, 64);
+        double advanced = 0.0;
+        int submitted = 0;
+        while (advanced + 1e-9 < target && submitted < maxSteps) {
+            const float solverDt = highFidelityRuntime.solver.Stats().dt;
+            int steps = 1;
+            if (solverDt > 0.0f) {
+                steps = int(std::ceil((target - advanced) / double(solverDt)));
+                steps = std::clamp(steps, 1,
+                                   std::min(batchMax, maxSteps - submitted));
+            }
+            UpdatePlumeModel(highFidelityRuntime.solver, simulation);
+            highFidelityRuntime.solver.Step(steps);
+            const double advance = highFidelityRuntime.solver.ConsumeAdvance();
+            advanced += advance;
+            submitted += steps;
+            if (advance <= 0.0) {
+                break;
+            }
+        }
+        // The blast model, the town, the debris and the particles follow the
+        // solver's simulated time (as on Windows); without this they stay at
+        // t = 0 after the detonation.
+        if (advanced > 0.0) {
+            simulation.AdvanceExternal(advanced, double(dt));
+        }
+        highFidelityRuntime.EndFrame(simulation, advanced);
+        if (submitted > 0 || !highFidelityRuntime.published) {
+            highFidelityRuntime.Publish(preview, options);
+        }
+    };
+
     while (running) {
         if (window) {
             if (!window->Poll()) {
@@ -2089,50 +2135,8 @@ int main(int argc, char** argv) {
                     // Tick the fuse through the analytic model; the solver
                     // resets itself once the blast serial changes.
                     simulation.Update(dt);
-                } else if (highFidelityRuntime.Ensure(simulation)) {
-                    MaybeExpandSolver(highFidelityRuntime.solver, simulation,
-                                      options, highFidelityRuntime.capWarned);
-                    highFidelityRuntime.BeginFrame(simulation);
-                    const double target =
-                        std::max(0.0, double(dt) *
-                                          simulation.Settings().timeScale);
-                    const int maxSteps = std::clamp(
-                        simulation.Settings().solverStepsPerFrame, 8, 256);
-                    const int batchMax = std::min(maxSteps, 64);
-                    double advanced = 0.0;
-                    int submitted = 0;
-                    while (advanced + 1e-9 < target && submitted < maxSteps) {
-                        const float solverDt =
-                            highFidelityRuntime.solver.Stats().dt;
-                        int steps = 1;
-                        if (solverDt > 0.0f) {
-                            steps = int(std::ceil((target - advanced) /
-                                                  double(solverDt)));
-                            steps = std::clamp(
-                                steps, 1,
-                                std::min(batchMax, maxSteps - submitted));
-                        }
-                        UpdatePlumeModel(highFidelityRuntime.solver,
-                                         simulation);
-                        highFidelityRuntime.solver.Step(steps);
-                        const double advance =
-                            highFidelityRuntime.solver.ConsumeAdvance();
-                        advanced += advance;
-                        submitted += steps;
-                        if (advance <= 0.0) {
-                            break;
-                        }
-                    }
-                    // The blast model, the town, the debris and the particles
-                    // follow the solver's simulated time (as on Windows);
-                    // without this they stay at t = 0 after the detonation.
-                    if (advanced > 0.0) {
-                        simulation.AdvanceExternal(advanced, double(dt));
-                    }
-                    highFidelityRuntime.EndFrame(simulation, advanced);
-                    if (submitted > 0 || !highFidelityRuntime.published) {
-                        highFidelityRuntime.Publish(preview, options);
-                    }
+                } else {
+                    advanceHighFidelity(dt);
                 }
                 if (gpuParticlesReady) {
                     gpuParticles.Update(simulation.Particles());
@@ -2164,7 +2168,14 @@ int main(int argc, char** argv) {
         }
 
         if (options.benchmarkSim) {
-            simulation.Update(1.0f / 60.0f);
+            // Same stepping as the window loop, so a high-fidelity benchmark
+            // includes the solver that drives the blast and the debris.
+            constexpr float kBenchmarkDt = 1.0f / 60.0f;
+            if (highFidelity && !simulation.IsArmed()) {
+                advanceHighFidelity(kBenchmarkDt);
+            } else {
+                simulation.Update(kBenchmarkDt);
+            }
         }
         preview.Render(device.get(), simulation, camera, device->Width(),
                        device->Height(), options.vsync);
@@ -2195,6 +2206,9 @@ int main(int argc, char** argv) {
         ex::LogInfo("Average: %.2f ms/frame (%.1f fps)",
                     elapsed * 1000.0 / double(rendered),
                     double(rendered) / std::max(elapsed, 1e-9));
+        ex::LogInfo("Simulation time after benchmark: %.3f s (solver %.4f s)",
+                    simulation.Time(),
+                    highFidelity ? highFidelityRuntime.solver.Stats().time : 0.0);
         const ex::scene::SceneStats sceneStats = simulation.Scene().Stats();
         ex::LogInfo("Scene: %d buildings, %d vehicles, %d trees, %d chunks, "
                     "%d rigid bodies (%d static structure)",

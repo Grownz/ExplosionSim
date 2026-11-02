@@ -60,6 +60,7 @@ Useful flags:
 | `--body-drag` / `--no-body-drag` | Apply the solver's sampled flow as drag impulses to the debris bodies (default on). |
 | `--fire-propagation` / `--no-fire-propagation` | Fire spread model: fuel, burn-out and radiative ignition of neighbouring objects (default off; the panel checkbox is enabled only while the simulation is armed). |
 | `--benchmark --frames <n>` | Render a fixed frame count and report the average. |
+| `--benchmark-sim` | Like `--benchmark`, but advance the simulation each frame (in high-fidelity mode including the solver). |
 | `--solver-benchmark` | Report solver GPU timings per pass. |
 | `--splash-test` | Render the splash briefly and exit. |
 | `--debug` | Enable Vulkan validation layers when installed. |

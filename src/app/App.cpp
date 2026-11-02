@@ -990,7 +990,19 @@ int App::RunHeadless() {
         const double start = clock.Now();
         for (int frame = 0; frame < frames; ++frame) {
             if (options_.benchmarkSim) {
-                simulation_.Update(1.0f / 60.0f);
+                // Same stepping as the interactive loop: in high-fidelity mode
+                // the solver advances and drives the blast, the town and the
+                // debris (it is part of what the frame costs).
+                constexpr float kBenchmarkDt = 1.0f / 60.0f;
+                if (highFidelity && !simulation_.IsArmed()) {
+                    const double advance =
+                        renderer_.AdvanceSolver(simulation_, kBenchmarkDt);
+                    if (advance > 0.0) {
+                        simulation_.AdvanceExternal(advance, kBenchmarkDt);
+                    }
+                } else {
+                    simulation_.Update(kBenchmarkDt);
+                }
             }
             renderer_.Render(simulation_, camera_, settings_.render);
             graphics_.Present(false);
