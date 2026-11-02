@@ -6,6 +6,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Collapse frame cost** - the convex collision hulls of the Voronoi chunks are
+  built during the (background) town generation instead of in the frame a
+  building collapses. Before, a collapse created up to ~780 hulls in a single
+  frame, up to 30 ms on the reference machine. Generation takes about 45 ms
+  longer (216 -> 260 ms for 11,200 chunks); in the 26 t reference town the
+  first second after the blast drops from 16.9 to 11.8 ms per frame. The shapes
+  are identical, so the simulation stays bit-for-bit the same (golden hashes
+  unchanged).
+- **Physics transform sync** - `PhysicsWorld::Step` reads only Jolt's active
+  bodies (plus the ones that fell asleep in that step) instead of querying every
+  body. The full walk took 1.2-1.5 ms per frame while ~8,000 chunks were
+  falling. The result is bit-identical.
+
 ## [0.16.0] - 2026-11-02
 
 0.16.0 is a feature and parity release: the CPU simulation is bit-reproducible

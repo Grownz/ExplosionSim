@@ -394,7 +394,12 @@ up to +-28 % of a cell but never closer than 0.28 cell to their neighbour, which
 every chunk usable as an OBB while removing most of the grid's right angles. With
 `scene.voronoiChunks` (the default) the building is instead split into convex Voronoi
 cells clipped to its box; each cell keeps a flat-shaded hull for rendering, a PCA-fitted
-OBB as the collision proxy, and its shared faces define the support joints. The cap
+OBB as the collision proxy, and its shared faces define the support joints. The Jolt
+convex hull of each cell (shrunk by 5 % so neighbours do not wedge) is built on the
+generation workers together with the fracture and stored with the chunk, so a collapse
+only adds the prebuilt shapes instead of running the hull builder for hundreds of cells
+in one frame. After each step `PhysicsWorld` mirrors only the bodies in Jolt's active
+list plus the ones that just fell asleep. The cap
 polygon of each clipped cell is ordered with precomputed angles and a bounded insertion
 sort: an inlined `std::atan2` comparator fed to `std::sort` could violate the
 strict-weak-ordering contract under `/fp:fast` + AVX2 and walk past the cap array for

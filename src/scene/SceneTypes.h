@@ -76,6 +76,9 @@ struct SceneChunk {
     int bodyIndex = -1;
     int gridY = 0;
     bool detached = false;
+    // Collision hull built during the generation (null for the grid chunks
+    // and for degenerate hulls, which fall back to the fitted box).
+    CollisionShapeRef collisionShape;
     // Convex hull in building space, flat-shaded. Only filled for Voronoi
     // chunks; the grid path keeps using the shared beveled-box mesh.
     std::vector<DirectX::XMFLOAT3> hullPositions;

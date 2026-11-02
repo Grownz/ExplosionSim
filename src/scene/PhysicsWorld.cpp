@@ -209,7 +209,42 @@ void EnsureJoltRuntime() {
     (void)runtime;
 }
 
+JPH::RefConst<JPH::Shape> BuildHullShape(
+    const std::vector<DirectX::XMFLOAT3>& hullPoints) {
+    if (hullPoints.size() < 4) {
+        return nullptr;
+    }
+    JPH::Array<JPH::Vec3> points;
+    points.reserve(hullPoints.size());
+    for (const DirectX::XMFLOAT3& point : hullPoints) {
+        points.push_back(ToJolt(point));
+    }
+    JPH::ConvexHullShapeSettings hullSettings(points);
+    const JPH::ShapeSettings::ShapeResult result = hullSettings.Create();
+    if (!result.IsValid()) {
+        return nullptr;
+    }
+    return result.Get();
+}
+
 } // namespace
+
+class CollisionShape {
+public:
+    JPH::RefConst<JPH::Shape> shape;
+};
+
+CollisionShapeRef PhysicsWorld::CreateHullShape(
+    const std::vector<DirectX::XMFLOAT3>& points) {
+    EnsureJoltRuntime();
+    JPH::RefConst<JPH::Shape> shape = BuildHullShape(points);
+    if (!shape) {
+        return nullptr;
+    }
+    auto result = std::make_shared<CollisionShape>();
+    result->shape = std::move(shape);
+    return result;
+}
 
 static std::atomic<int> g_jobThreads{-1};
 
@@ -289,6 +324,9 @@ void PhysicsWorld::Clear() {
     }
     impl_->ids.clear();
     bodies_.clear();
+    watched_.clear();
+    activeStamp_.clear();
+    stepStamp_ = 0;
     contactEvents_.clear();
     impl_->contactCollector.Clear();
 }
@@ -325,30 +363,30 @@ int PhysicsWorld::AddBody(const RigidBody& body) {
                               3.0f / (copy.mass * (hx * hx + hy * hy)));
     }
 
-    const int index = int(bodies_.size());
-    bodies_.push_back(copy);
-
+    // Voronoi chunks use their real convex hull. The fitted box overlaps the
+    // neighbouring cells, which made Jolt push the pieces apart every step and
+    // kept the whole debris island awake forever. The scene normally supplies
+    // the hull prebuilt (CreateHullShape); building it here is the fallback.
     JPH::RefConst<JPH::Shape> shape;
-    if (copy.hullPoints.size() >= 4) {
-        // Voronoi chunks use their real convex hull. The fitted box overlaps
-        // the neighbouring cells, which made Jolt push the pieces apart every
-        // step and kept the whole debris island awake forever.
-        JPH::Array<JPH::Vec3> points;
-        points.reserve(copy.hullPoints.size());
-        for (const DirectX::XMFLOAT3& point : copy.hullPoints) {
-            points.push_back(ToJolt(point));
-        }
-        JPH::ConvexHullShapeSettings hullSettings(points);
-        const JPH::ShapeSettings::ShapeResult result = hullSettings.Create();
-        if (result.IsValid()) {
-            shape = result.Get();
-        }
+    if (copy.shape) {
+        shape = copy.shape->shape;
+    } else {
+        shape = BuildHullShape(copy.hullPoints);
     }
     if (!shape) {
         shape = new JPH::BoxShape(JPH::Vec3(hx, hy, hz));
     }
-    // The shape keeps its own copy of the points.
+    // The Jolt body keeps the shape and its own copy of the points; the
+    // mirror does not need them.
     copy.hullPoints.clear();
+    copy.hullPoints.shrink_to_fit();
+    copy.shape.reset();
+
+    const int index = int(bodies_.size());
+    bodies_.push_back(copy);
+    if (!copy.isStatic) {
+        watched_.push_back(index);
+    }
     JPH::BodyCreationSettings settings(
         shape.GetPtr(), ToJolt(copy.position),
         ToJolt(copy.orientation),
@@ -383,38 +421,65 @@ void PhysicsWorld::Step(float dt) {
     impl_->contactCollector.Clear();
     impl_->system.Update(dt, 1, &impl_->tempAllocator, &impl_->jobSystem);
 
-    const JPH::BodyInterface& bodyInterface = impl_->system.GetBodyInterface();
-    for (size_t i = 0; i < impl_->ids.size() && i < bodies_.size(); ++i) {
-        RigidBody& body = bodies_[i];
-        // Static structure never moves, and a sleeping body keeps its pose.
-        // Both used to cost four Jolt queries per body and physics step, which
-        // dominated the frame once thousands of chunks existed.
+    // Mirror the moving bodies. Static structure never moves and a sleeping
+    // body keeps its pose, so only Jolt's active list is read, plus the bodies
+    // that were awake before (they get one last copy on the step they fall
+    // asleep). Walking every body cost a Jolt query per body and step once
+    // thousands of chunks existed.
+    if (activeStamp_.size() < bodies_.size()) {
+        activeStamp_.resize(bodies_.size(), 0);
+    }
+    if (++stepStamp_ == 0) {
+        std::fill(activeStamp_.begin(), activeStamp_.end(), 0u);
+        stepStamp_ = 1;
+    }
+    const JPH::BodyLockInterfaceNoLock& lockInterface =
+        impl_->system.GetBodyLockInterfaceNoLock();
+    const auto copyState = [&](const JPH::Body& joltBody, RigidBody& body,
+                               bool active) {
+        body.position = FromJolt(joltBody.GetPosition());
+        body.orientation = FromJolt(joltBody.GetRotation());
+        body.velocity = FromJolt(joltBody.GetLinearVelocity());
+        body.angularVelocity = FromJoltAngular(joltBody.GetAngularVelocity());
+        body.sleeping = !active;
+    };
+    JPH::BodyIDVector active;
+    impl_->system.GetActiveBodies(JPH::EBodyType::RigidBody, active);
+    std::vector<int> nowActive;
+    nowActive.reserve(active.size());
+    for (const JPH::BodyID& id : active) {
+        const JPH::Body* joltBody = lockInterface.TryGetBody(id);
+        if (!joltBody) {
+            continue;
+        }
+        const uint64_t index = joltBody->GetUserData();
+        if (index >= bodies_.size()) {
+            continue;
+        }
+        RigidBody& body = bodies_[size_t(index)];
         if (body.isStatic) {
             continue;
         }
-        const JPH::BodyID id = impl_->ids[i];
-        if (id.IsInvalid()) {
-            continue;
-        }
-        const bool active = bodyInterface.IsActive(id);
-        if (!active && body.sleeping) {
-            continue;
-        }
-        JPH::RVec3 position;
-        JPH::Quat orientation;
-        bodyInterface.GetPositionAndRotation(id, position, orientation);
-        JPH::Vec3 linearVelocity;
-        JPH::Vec3 angularVelocity;
-        bodyInterface.GetLinearAndAngularVelocity(id, linearVelocity,
-                                                  angularVelocity);
-        body.position = FromJolt(position);
-        body.orientation = FromJolt(orientation);
-        body.velocity = FromJolt(linearVelocity);
-        body.angularVelocity = FromJoltAngular(angularVelocity);
-        // Copy once on the frame the body falls asleep, then skip it until it
-        // is woken again.
-        body.sleeping = !active;
+        copyState(*joltBody, body, true);
+        activeStamp_[size_t(index)] = stepStamp_;
+        nowActive.push_back(int(index));
     }
+    for (const int index : watched_) {
+        if (index < 0 || index >= int(bodies_.size()) ||
+            index >= int(impl_->ids.size()) ||
+            activeStamp_[size_t(index)] == stepStamp_) {
+            continue;
+        }
+        RigidBody& body = bodies_[size_t(index)];
+        if (body.isStatic || body.sleeping) {
+            continue;
+        }
+        const JPH::Body* joltBody = lockInterface.TryGetBody(impl_->ids[index]);
+        if (joltBody) {
+            copyState(*joltBody, body, false);
+        }
+    }
+    watched_ = std::move(nowActive);
 
     // Settle: Jolt only sleeps whole islands, and a debris pile is one island,
     // so a few moving chunks kept thousands of resting ones simulated. Bodies
@@ -539,6 +604,7 @@ void PhysicsWorld::SetBodyDynamic(int index, float mass,
     body.angularVelocity = angularVelocity;
     body.sleeping = false;
     body.sleepTimer = 0.0f;
+    watched_.push_back(index);
 
     const JPH::BodyID id = impl_->ids[index];
     JPH::BodyInterface& bodyInterface = impl_->system.GetBodyInterface();

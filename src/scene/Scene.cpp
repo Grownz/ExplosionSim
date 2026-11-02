@@ -345,7 +345,9 @@ void BuildVoronoiChunks(SceneObject& object, const DirectX::XMFLOAT3& size, int 
 // expressed relative to that pose. The fitted box used to be the collision
 // proxy, but neighbouring boxes overlap and Jolt resolved that penetration
 // every step, which kept the whole debris island awake.
-void AssignChunkHull(const SceneChunk& chunk, RigidBody& body) {
+void ChunkHullPoints(const SceneChunk& chunk,
+                     std::vector<DirectX::XMFLOAT3>& points) {
+    points.clear();
     if (chunk.hullPositions.size() < 4) {
         return;
     }
@@ -357,7 +359,7 @@ void AssignChunkHull(const SceneChunk& chunk, RigidBody& body) {
     const DirectX::XMMATRIX inverseRotation = DirectX::XMMatrixTranspose(
         DirectX::XMMatrixRotationQuaternion(
             DirectX::XMLoadFloat4(&chunk.orientation)));
-    body.hullPoints.reserve(chunk.hullPositions.size());
+    points.reserve(chunk.hullPositions.size());
     for (const DirectX::XMFLOAT3& position : chunk.hullPositions) {
         const DirectX::XMFLOAT3 relative(
             (position.x - chunk.center.x) * kCollisionScale,
@@ -367,8 +369,27 @@ void AssignChunkHull(const SceneChunk& chunk, RigidBody& body) {
         DirectX::XMStoreFloat3(
             &local, DirectX::XMVector3TransformNormal(
                         DirectX::XMLoadFloat3(&relative), inverseRotation));
-        body.hullPoints.push_back(local);
+        points.push_back(local);
     }
+}
+
+// Builds the collision hulls of a fractured building. Runs on the generation
+// workers, so the collapse frame only has to add the prebuilt shapes.
+void BuildChunkShapes(SceneObject& object) {
+    std::vector<DirectX::XMFLOAT3> points;
+    for (SceneChunk& chunk : object.chunks) {
+        ChunkHullPoints(chunk, points);
+        chunk.collisionShape =
+            points.empty() ? nullptr : PhysicsWorld::CreateHullShape(points);
+    }
+}
+
+void AssignChunkHull(const SceneChunk& chunk, RigidBody& body) {
+    if (chunk.collisionShape) {
+        body.shape = chunk.collisionShape;
+        return;
+    }
+    ChunkHullPoints(chunk, body.hullPoints);
 }
 
 } // namespace
@@ -795,6 +816,7 @@ bool Scene::GenerateInternal(const SceneSettings& settings,
         core::Rng local(object.fractureSeed);
         BuildVoronoiChunks(object, object.size, quality, object.chunkCount,
                            object.fractureSeed, local);
+        BuildChunkShapes(object);
     };
     if (settings_.voronoiChunks && buildingCount > 0) {
         if (pool) {

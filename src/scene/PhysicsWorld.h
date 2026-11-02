@@ -8,6 +8,12 @@
 
 namespace ex::scene {
 
+// Prebuilt collision shape (a Jolt shape behind an opaque handle). Building a
+// convex hull is expensive, so the scene creates the chunk hulls during the
+// background generation instead of in the frame a building collapses.
+class CollisionShape;
+using CollisionShapeRef = std::shared_ptr<const CollisionShape>;
+
 // 6-DOF rigid body. Collision uses the convex hull when one is supplied (the
 // Voronoi chunks), otherwise an oriented box; the inertia tensor is the
 // analytic box tensor, stored as a body-space diagonal.
@@ -32,8 +38,10 @@ struct RigidBody {
     // static geometry; an impact wakes it again.
     bool frozen = false;
     // Body-local collision hull (only used while the body is created); empty
-    // means the box described by halfExtents is used.
+    // means the box described by halfExtents is used. A prebuilt `shape`
+    // takes precedence over both.
     std::vector<DirectX::XMFLOAT3> hullPoints;
+    CollisionShapeRef shape;
 };
 
 // A contact impulse worth reporting to the scene (debris hitting structure).
@@ -60,6 +68,12 @@ public:
     // fewer than the hardware threads). The result must not depend on it; the
     // determinism test varies it.
     static void SetJobThreads(int threads);
+
+    // Builds the convex hull shape AddBody() would create from `points`
+    // (body-local). Thread safe; returns nullptr when the hull is degenerate,
+    // in which case AddBody() falls back to the box as before.
+    static CollisionShapeRef CreateHullShape(
+        const std::vector<DirectX::XMFLOAT3>& points);
 
     void Clear();
     int AddBody(const RigidBody& body);
@@ -107,6 +121,12 @@ private:
     std::unique_ptr<Impl> impl_;
     // Mirror of the Jolt body state, used by the renderer and the tests.
     std::vector<RigidBody> bodies_;
+    // Dynamic bodies that may still be marked awake in the mirror: the ones
+    // Jolt reported active in the last step plus bodies created or woken
+    // since. Step() only reads these instead of querying every body.
+    std::vector<int> watched_;
+    std::vector<uint32_t> activeStamp_;
+    uint32_t stepStamp_ = 0;
     std::vector<ContactEvent> contactEvents_;
 };
 
