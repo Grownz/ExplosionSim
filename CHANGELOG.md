@@ -6,6 +6,26 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.16.5] - 2026-11-04
+
+0.16.5 is a performance release for the moments right after the detonation: a
+building collapse no longer builds its collision hulls in the frame it happens,
+the physics sync only touches the moving bodies, and the first high-fidelity
+frame no longer stalls while the GPU clocks up. The simulation results are
+bit-for-bit the same as in 0.16.0 (golden hashes unchanged).
+
+### Highlights
+
+- **No stall after the high-fidelity detonation** - a new wall-clock budget per
+  frame (**Solver time/frame**, default 100 ms) keeps the first frames at
+  ~110 ms instead of 250-400 ms; warm frames are unaffected.
+- **Smoother collapses** - Voronoi chunk hulls are prebuilt during the
+  background town generation, and the physics sync reads only Jolt's active
+  bodies: the first second after the blast drops from 16.9 to 11.8 ms per frame
+  in the 26 t reference town.
+- **Honest high-fidelity benchmark** - `--benchmark-sim` now steps the Euler
+  solver like the interactive loop on both platforms.
+
 ### Added
 
 - **Solver time per frame (high fidelity)** - a wall-clock budget for the
@@ -1491,7 +1511,8 @@ First public version.
 - Deterministic headless screenshot mode and an offscreen benchmark mode.
 - Physics regression tests, CMake presets and a Windows CI workflow.
 
-[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/Grownz/ExplosionSim/compare/v0.16.5...HEAD
+[0.16.5]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.16.5
 [0.16.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.16.0
 [0.15.0]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.15.0
 [0.14.6]: https://github.com/Grownz/ExplosionSim/releases/tag/v0.14.6
